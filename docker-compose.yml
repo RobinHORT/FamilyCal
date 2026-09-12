@@ -1,0 +1,40 @@
+services:
+  yimly-familycal:
+    image: yimly-familycal:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yimly-familycal
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATA_DIR: /data
+
+    volumes:
+      - yimly_data:/data
+
+    networks:
+      cloudflared_bridge:
+        aliases:
+          - familycal
+          - yimly-familycal
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  yimly_data:
+    driver: local
+
+networks:
+  cloudflared_bridge:
+    external: true

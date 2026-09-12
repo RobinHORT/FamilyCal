@@ -1,0 +1,19 @@
+{
+  "name": "Yimly FamilyCal",
+  "short_name": "FamilyCal",
+  "description": "Self-hosted family calendar and organizer with shared schedules, tasks, and Google Calendar sync.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B0D13",
+  "theme_color": "#FF4FA3",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["lifestyle", "productivity", "family"]
+}

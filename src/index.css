@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .pb-calendar-mobile {
+    padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 32px);
+  }
+  .bottom-fab-mobile {
+    bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 16px);
+  }
+}
+
+.main-stage-scroll {
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 32px);
+}
+@media (min-width: 768px) {
+  .main-stage-scroll {
+    padding-bottom: 1.5rem;
+  }
+  .pb-calendar-mobile {
+    padding-bottom: 0px;
+  }
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}

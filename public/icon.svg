@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="128" fill="#121620"/>
+  <rect x="32" y="32" width="448" height="448" rx="96" fill="#1A202C" stroke="#242C3D" stroke-width="4"/>
+  <!-- Top bar -->
+  <path d="M64 160h384" stroke="#FF4FA3" stroke-width="8" stroke-linecap="round"/>
+  <!-- Rings -->
+  <rect x="144" y="64" width="24" height="64" rx="12" fill="#FF4FA3"/>
+  <rect x="344" y="64" width="24" height="64" rx="12" fill="#FF4FA3"/>
+  <!-- Calendar Grid Dots -->
+  <circle cx="156" cy="232" r="18" fill="#FF4FA3"/>
+  <circle cx="256" cy="232" r="18" fill="#06B6D4"/>
+  <circle cx="356" cy="232" r="18" fill="#10B981"/>
+  
+  <circle cx="156" cy="320" r="18" fill="#F59E0B"/>
+  <circle cx="256" cy="320" r="18" fill="#FF4FA3"/>
+  <circle cx="356" cy="320" r="18" fill="#8B5CF6"/>
+  
+  <!-- Heart Accent in Bottom Right -->
+  <path d="M256 390c-40-30-70-60-70-90 0-25 20-40 40-40 16 0 26 8 30 14 4-6 14-14 30-14 20 0 40 15 40 40 0 30-30 60-70 90z" fill="#FF4FA3" opacity="0.9"/>
+</svg>

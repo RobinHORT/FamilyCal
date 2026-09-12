@@ -1,0 +1,6 @@
+{
+  "name": "Yimly FamilyCal",
+  "description": "Self-hosted family calendar and organizer with shared and individual member schedules, tasks, and optional two-way Google Calendar synchronization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
