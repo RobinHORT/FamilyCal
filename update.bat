@@ -14,7 +14,6 @@ where git >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Git is not installed or not found in PATH.
     echo Please install Git for Windows to enable repository updates.
-    echo https://git-scm.com/download/win
     echo.
     pause
     exit /b 1
@@ -50,12 +49,21 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+if not exist "docker-compose.yml" (
+    echo [ERROR] docker-compose.yml was not found.
+    echo Expected:
+    echo C:\DockerApps\FamilyCal\docker-compose.yml
+    echo.
+    pause
+    exit /b 1
+)
+
 echo Repository and Docker verified.
 echo.
 
 :: [2/5] Pulling latest GitHub changes...
 echo [2/5] Pulling latest GitHub changes...
-git pull
+git pull origin main
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Failed to pull changes from remote GitHub repository.
     echo Please check your network connection and Git credentials.
@@ -65,12 +73,20 @@ if %ERRORLEVEL% neq 0 (
 )
 echo.
 
+:: Verify compose file after Git pull
+if not exist "docker-compose.yml" (
+    echo [ERROR] docker-compose.yml is missing after Git pull.
+    echo.
+    pause
+    exit /b 1
+)
+
 :: [3/5] Rebuilding Docker image...
 echo [3/5] Rebuilding Docker image...
-docker compose -f compose.yaml build --pull
+docker compose -f docker-compose.yml build --pull
 if %ERRORLEVEL% neq 0 (
-    echo [WARNING] Build with --pull had a notice, attempting standard build...
-    docker compose -f compose.yaml build
+    echo [WARNING] Build with --pull failed, attempting standard build...
+    docker compose -f docker-compose.yml build
     if %ERRORLEVEL% neq 0 (
         echo [ERROR] Docker image build failed.
         echo Review the error messages above for details.
@@ -83,7 +99,7 @@ echo.
 
 :: [4/5] Restarting FamilyCal...
 echo [4/5] Restarting FamilyCal...
-docker compose -f compose.yaml up -d
+docker compose -f docker-compose.yml up -d
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Failed to restart FamilyCal containers.
     echo.
@@ -120,19 +136,25 @@ for /f "delims=" %%s in ('docker inspect --format="{{.State.Health.Status}}" fam
 goto HEALTH_LOOP
 
 :HEALTH_FAILED
+echo.
 echo FamilyCal health check: FAILED
-docker compose -f compose.yaml ps
-docker compose -f compose.yaml logs --tail=100 familycal
+echo.
+docker compose -f docker-compose.yml ps
+echo.
+docker compose -f docker-compose.yml logs --tail=100 familycal
+echo.
+pause
 exit /b 1
 
 :HEALTH_PASSED
+echo.
 echo FamilyCal health check: HEALTHY
 echo.
 echo ========================================
 echo FamilyCal update complete.
 echo ========================================
 echo.
-docker compose -f compose.yaml ps
+docker compose -f docker-compose.yml ps
 echo.
 echo FamilyCal Networking Summary:
 echo - Compose Service: familycal
