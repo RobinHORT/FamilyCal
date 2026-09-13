@@ -1649,6 +1649,149 @@ router.delete('/events/:id', authenticateToken, (req: AuthRequest, res: Response
 // 5. TASKS & TO-DOS
 // ==========================================
 
+function addDaysToDate(d: Date, days: number): Date {
+  const res = new Date(d.getTime());
+  res.setDate(res.getDate() + days);
+  return res;
+}
+
+function addMonthsToDate(d: Date, months: number): Date {
+  const res = new Date(d.getTime());
+  const origDay = res.getDate();
+  res.setMonth(res.getMonth() + months);
+  // If month rollover overshot (e.g. Aug 31 -> Sep has 30 days -> overshoots to Oct 1)
+  if (res.getDate() !== origDay) {
+    res.setDate(0); // clamp to last day of target month
+  }
+  return res;
+}
+
+function formatDateYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function computeNextTaskOccurrenceDate(
+  currentDueDate: string | null | undefined,
+  rule: string,
+  interval?: number | null,
+  unit?: string | null
+): string {
+  const now = new Date();
+  const todayYMD = formatDateYMD(now);
+
+  const stepInterval = Math.max(1, Number(interval) || 1);
+  const normalizedUnit = (unit || 'day').toLowerCase();
+
+  const advanceOneStep = (date: Date): Date => {
+    switch (rule) {
+      case 'daily':
+        return addDaysToDate(date, 1);
+      case 'weekly':
+        return addDaysToDate(date, 7);
+      case 'fortnightly':
+        return addDaysToDate(date, 14);
+      case 'monthly':
+        return addMonthsToDate(date, 1);
+      case 'custom':
+        if (normalizedUnit.startsWith('month')) {
+          return addMonthsToDate(date, stepInterval);
+        } else if (normalizedUnit.startsWith('week')) {
+          return addDaysToDate(date, stepInterval * 7);
+        } else {
+          return addDaysToDate(date, stepInterval);
+        }
+      default:
+        return addDaysToDate(date, 1);
+    }
+  };
+
+  let baseDate: Date;
+  if (currentDueDate && /^\d{4}-\d{2}-\d{2}$/.test(currentDueDate)) {
+    const [y, m, d] = currentDueDate.split('-').map(Number);
+    baseDate = new Date(y, m - 1, d);
+  } else {
+    baseDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  // Advance by at least one step from scheduled occurrence
+  let nextDate = advanceOneStep(baseDate);
+  let nextDateYMD = formatDateYMD(nextDate);
+
+  // If the task is overdue and completed late, advance from the scheduled occurrence rather than creating duplicate catch-up tasks
+  let safetyCount = 0;
+  while (nextDateYMD < todayYMD && safetyCount < 1000) {
+    nextDate = advanceOneStep(nextDate);
+    nextDateYMD = formatDateYMD(nextDate);
+    safetyCount++;
+  }
+
+  return nextDateYMD;
+}
+
+function advanceRecurringTaskIfApplicable(
+  task: any,
+  familyId: string,
+  overrideRule?: string,
+  overrideInterval?: number,
+  overrideUnit?: string,
+  nowIso?: string
+) {
+  const rule = overrideRule !== undefined ? overrideRule : (task.recurring_rule || 'none');
+  const interval = overrideInterval !== undefined ? overrideInterval : (task.recurring_interval || 1);
+  const unit = overrideUnit !== undefined ? overrideUnit : (task.recurring_unit || 'day');
+
+  if (!rule || rule === 'none') {
+    return null;
+  }
+
+  const nextDueDate = computeNextTaskOccurrenceDate(
+    task.due_date,
+    rule,
+    interval,
+    unit
+  );
+
+  const nextTaskId = 'tsk_' + uuidv4().slice(0, 8);
+  const now = nowIso || new Date().toISOString();
+  const cleanReminder = task.reminder_minutes !== undefined && task.reminder_minutes !== null && task.reminder_minutes !== ''
+    ? Number(task.reminder_minutes)
+    : null;
+
+  db.prepare(`
+    INSERT INTO tasks (
+      id, family_id, title, description, due_date, due_time, reminder_minutes,
+      completed, completed_at, is_archived, assigned_member_id, priority,
+      recurring_rule, recurring_interval, recurring_unit, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    nextTaskId,
+    familyId,
+    task.title,
+    task.description || null,
+    nextDueDate,
+    task.due_time || null,
+    cleanReminder,
+    task.assigned_member_id || null,
+    task.priority || 'medium',
+    rule,
+    interval,
+    unit,
+    now,
+    now
+  );
+
+  return db.prepare(`
+    SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+    FROM tasks t
+    LEFT JOIN family_members m ON t.assigned_member_id = m.id
+    WHERE t.id = ?
+  `).get(nextTaskId) as any;
+}
+
 router.get('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     const tasks = db.prepare(`
@@ -1663,6 +1806,9 @@ router.get('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       ...t,
       completed: Boolean(t.completed),
       is_archived: Boolean(t.is_archived),
+      recurring_rule: t.recurring_rule || 'none',
+      recurring_interval: t.recurring_interval ? Number(t.recurring_interval) : 1,
+      recurring_unit: t.recurring_unit || 'day',
     })));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1671,7 +1817,20 @@ router.get('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
 
 router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
-    const { title, description, due_date, due_time, reminder_minutes, assigned_member_id, priority, is_archived } = req.body;
+    const {
+      title,
+      description,
+      due_date,
+      due_time,
+      reminder_minutes,
+      assigned_member_id,
+      priority,
+      is_archived,
+      recurring_rule,
+      recurring_interval,
+      recurring_unit,
+    } = req.body;
+
     if (!title) {
       return res.status(400).json({ error: 'Task title is required.' });
     }
@@ -1681,10 +1840,17 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
     const cleanReminder = reminder_minutes !== undefined && reminder_minutes !== null && reminder_minutes !== '' 
       ? Number(reminder_minutes) 
       : null;
+    const rule = recurring_rule || 'none';
+    const interval = recurring_interval ? Math.max(1, Number(recurring_interval)) : 1;
+    const unit = recurring_unit || 'day';
 
     db.prepare(`
-      INSERT INTO tasks (id, family_id, title, description, due_date, due_time, reminder_minutes, completed, is_archived, assigned_member_id, priority, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (
+        id, family_id, title, description, due_date, due_time, reminder_minutes,
+        completed, is_archived, assigned_member_id, priority,
+        recurring_rule, recurring_interval, recurring_unit, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       taskId,
       req.user!.family_id,
@@ -1696,6 +1862,9 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       is_archived ? 1 : 0,
       assigned_member_id || null,
       priority || 'medium',
+      rule,
+      interval,
+      unit,
       now,
       now
     );
@@ -1711,6 +1880,9 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       ...created,
       completed: false,
       is_archived: Boolean(created.is_archived),
+      recurring_rule: created.recurring_rule || 'none',
+      recurring_interval: created.recurring_interval ? Number(created.recurring_interval) : 1,
+      recurring_unit: created.recurring_unit || 'day',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1727,9 +1899,23 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
 
     if (!task) return res.status(404).json({ error: 'Task not found.' });
 
-    const { title, description, due_date, due_time, reminder_minutes, assigned_member_id, priority, completed, is_archived } = req.body;
+    const {
+      title,
+      description,
+      due_date,
+      due_time,
+      reminder_minutes,
+      assigned_member_id,
+      priority,
+      completed,
+      is_archived,
+      recurring_rule,
+      recurring_interval,
+      recurring_unit,
+    } = req.body;
     const now = new Date().toISOString();
 
+    const wasCompleted = Boolean(task.completed);
     const newCompleted = completed !== undefined ? (completed ? 1 : 0) : task.completed;
     const newCompletedAt = newCompleted ? (task.completed_at || now) : null;
     const newArchived = is_archived !== undefined ? (is_archived ? 1 : 0) : task.is_archived;
@@ -1737,9 +1923,15 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
       ? (reminder_minutes !== null && reminder_minutes !== '' ? Number(reminder_minutes) : null)
       : task.reminder_minutes;
 
+    const newRule = recurring_rule !== undefined ? (recurring_rule || 'none') : (task.recurring_rule || 'none');
+    const newInterval = recurring_interval !== undefined ? Math.max(1, Number(recurring_interval) || 1) : (task.recurring_interval || 1);
+    const newUnit = recurring_unit !== undefined ? (recurring_unit || 'day') : (task.recurring_unit || 'day');
+
     db.prepare(`
       UPDATE tasks
-      SET title = ?, description = ?, due_date = ?, due_time = ?, reminder_minutes = ?, assigned_member_id = ?, priority = ?, completed = ?, completed_at = ?, is_archived = ?, updated_at = ?
+      SET title = ?, description = ?, due_date = ?, due_time = ?, reminder_minutes = ?,
+          assigned_member_id = ?, priority = ?, completed = ?, completed_at = ?,
+          is_archived = ?, recurring_rule = ?, recurring_interval = ?, recurring_unit = ?, updated_at = ?
       WHERE id = ? AND family_id = ?
     `).run(
       title !== undefined ? title.trim() : task.title,
@@ -1752,10 +1944,35 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
       newCompleted,
       newCompletedAt,
       newArchived,
+      newRule,
+      newInterval,
+      newUnit,
       now,
       id,
       req.user!.family_id
     );
+
+    // If transitioned from incomplete to complete, advance recurring task
+    if (!wasCompleted && newCompleted === 1) {
+      const updatedForAdvance = {
+        ...task,
+        title: title !== undefined ? title.trim() : task.title,
+        description: description !== undefined ? description : task.description,
+        due_date: due_date !== undefined ? due_date : task.due_date,
+        due_time: due_time !== undefined ? due_time : task.due_time,
+        reminder_minutes: newReminder,
+        assigned_member_id: assigned_member_id !== undefined ? assigned_member_id : task.assigned_member_id,
+        priority: priority !== undefined ? priority : task.priority,
+      };
+      advanceRecurringTaskIfApplicable(
+        updatedForAdvance,
+        req.user!.family_id,
+        newRule,
+        newInterval,
+        newUnit,
+        now
+      );
+    }
 
     const updated = db.prepare(`
       SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
@@ -1768,6 +1985,9 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
       ...updated,
       completed: Boolean(updated.completed),
       is_archived: Boolean(updated.is_archived),
+      recurring_rule: updated.recurring_rule || 'none',
+      recurring_interval: updated.recurring_interval ? Number(updated.recurring_interval) : 1,
+      recurring_unit: updated.recurring_unit || 'day',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1784,14 +2004,28 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
 
     if (!task) return res.status(404).json({ error: 'Task not found.' });
 
-    const newCompleted = task.completed ? 0 : 1;
+    const wasCompleted = Boolean(task.completed);
+    const willComplete = !wasCompleted;
+    const newCompleted = willComplete ? 1 : 0;
     const now = new Date().toISOString();
 
     db.prepare(`
       UPDATE tasks
       SET completed = ?, completed_at = ?, updated_at = ?
       WHERE id = ? AND family_id = ?
-    `).run(newCompleted, newCompleted ? now : null, now, id, req.user!.family_id);
+    `).run(newCompleted, willComplete ? now : null, now, id, req.user!.family_id);
+
+    // If transitioned from incomplete to complete, advance recurring task
+    if (!wasCompleted && willComplete) {
+      advanceRecurringTaskIfApplicable(
+        task,
+        req.user!.family_id,
+        task.recurring_rule,
+        task.recurring_interval,
+        task.recurring_unit,
+        now
+      );
+    }
 
     const updated = db.prepare(`
       SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
@@ -1804,6 +2038,9 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
       ...updated,
       completed: Boolean(updated.completed),
       is_archived: Boolean(updated.is_archived),
+      recurring_rule: updated.recurring_rule || 'none',
+      recurring_interval: updated.recurring_interval ? Number(updated.recurring_interval) : 1,
+      recurring_unit: updated.recurring_unit || 'day',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1840,6 +2077,9 @@ router.post('/tasks/:id/archive', authenticateToken, (req: AuthRequest, res: Res
       ...updated,
       completed: Boolean(updated.completed),
       is_archived: Boolean(updated.is_archived),
+      recurring_rule: updated.recurring_rule || 'none',
+      recurring_interval: updated.recurring_interval ? Number(updated.recurring_interval) : 1,
+      recurring_unit: updated.recurring_unit || 'day',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -1,6 +1,6 @@
 // Service Worker for FamilyCal PWA
-const CACHE_NAME = 'familycal-pwa-v2';
-const ICON_CACHE = 'familycal-icons-v2';
+const CACHE_NAME = 'familycal-pwa-v3';
+const ICON_CACHE = 'familycal-icons-v3';
 
 const STATIC_ASSETS = [
   '/',

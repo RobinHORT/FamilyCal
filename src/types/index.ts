@@ -136,6 +136,7 @@ export interface CalendarEvent {
 }
 
 export type Priority = 'low' | 'medium' | 'high';
+export type TaskRecurrenceRule = 'none' | 'daily' | 'weekly' | 'fortnightly' | 'monthly' | 'custom';
 
 export interface Task {
   id: string;
@@ -153,6 +154,9 @@ export interface Task {
   member_color?: string | null;
   member_avatar?: string | null;
   priority: Priority;
+  recurring_rule?: TaskRecurrenceRule | null;
+  recurring_interval?: number | null;
+  recurring_unit?: 'day' | 'week' | 'month' | null;
   created_at?: string;
   updated_at?: string;
 }

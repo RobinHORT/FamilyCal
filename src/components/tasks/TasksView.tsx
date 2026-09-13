@@ -15,12 +15,32 @@ import {
   Edit2,
   AlertTriangle,
   Bell,
+  Repeat,
 } from 'lucide-react';
 import { format, isPast, isToday, isTomorrow, parseISO } from 'date-fns';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
 import { Priority, Task } from '../../types';
 import { formatReminderLabel } from '../../utils/taskNotifications';
+
+function formatTaskRepeatLabel(rule?: string | null, interval?: number | null, unit?: string | null): string | null {
+  if (!rule || rule === 'none') return null;
+  if (rule === 'daily') return 'Daily';
+  if (rule === 'weekly') return 'Weekly';
+  if (rule === 'fortnightly') return 'Fortnightly';
+  if (rule === 'monthly') return 'Monthly';
+  if (rule === 'custom') {
+    const num = interval && interval > 1 ? interval : 1;
+    const u = unit || 'day';
+    if (num === 1) {
+      if (u === 'week') return 'Weekly';
+      if (u === 'month') return 'Monthly';
+      return 'Daily';
+    }
+    return `Every ${num} ${u}s`;
+  }
+  return null;
+}
 
 type TaskStatusFilter = 'all' | 'open' | 'completed' | 'archived';
 type TaskSortOption = 'due_date' | 'priority' | 'title' | 'created_at';
@@ -474,6 +494,17 @@ export const TasksView: React.FC = () => {
                       >
                         <Bell className="w-3 h-3 text-emerald-600 shrink-0" />
                         <span className="truncate max-w-[100px]">{formatReminderLabel(task.reminder_minutes)}</span>
+                      </span>
+                    )}
+
+                    {/* Repeat Badge */}
+                    {task.recurring_rule && task.recurring_rule !== 'none' && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200"
+                        title={`Repeats: ${formatTaskRepeatLabel(task.recurring_rule, task.recurring_interval, task.recurring_unit)}`}
+                      >
+                        <Repeat className="w-3 h-3 text-indigo-600 shrink-0" />
+                        <span className="truncate max-w-[95px]">{formatTaskRepeatLabel(task.recurring_rule, task.recurring_interval, task.recurring_unit)}</span>
                       </span>
                     )}
                   </div>

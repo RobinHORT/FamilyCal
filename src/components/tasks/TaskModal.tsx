@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CheckSquare, Calendar, Clock, AlertCircle, Trash2, Archive, Check, Bell, BellOff, BellRing } from 'lucide-react';
+import { X, CheckSquare, Calendar, Clock, AlertCircle, Trash2, Archive, Check, Bell, BellOff, BellRing, Repeat } from 'lucide-react';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
-import { Priority, Task } from '../../types';
+import { Priority, Task, TaskRecurrenceRule } from '../../types';
 import { getNotificationPermission, requestNotificationPermission, NotificationPermissionState } from '../../utils/taskNotifications';
 
 export const TaskModal: React.FC = () => {
@@ -27,6 +27,9 @@ export const TaskModal: React.FC = () => {
   const [dueDate, setDueDate] = useState('');
   const [dueTime, setDueTime] = useState('');
   const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
+  const [recurringRule, setRecurringRule] = useState<TaskRecurrenceRule>('none');
+  const [recurringInterval, setRecurringInterval] = useState<number>(1);
+  const [recurringUnit, setRecurringUnit] = useState<'day' | 'week' | 'month'>('day');
   const [assignedMemberId, setAssignedMemberId] = useState<string>('');
   const [priority, setPriority] = useState<Priority>('medium');
   const [isArchived, setIsArchived] = useState(false);
@@ -48,6 +51,9 @@ export const TaskModal: React.FC = () => {
             ? Number(editingTask.reminder_minutes)
             : null
         );
+        setRecurringRule(editingTask.recurring_rule || 'none');
+        setRecurringInterval(editingTask.recurring_interval ? Number(editingTask.recurring_interval) : 1);
+        setRecurringUnit(editingTask.recurring_unit || 'day');
         setAssignedMemberId(editingTask.assigned_member_id || '');
         setPriority(editingTask.priority || 'medium');
         setIsArchived(Boolean(editingTask.is_archived));
@@ -59,6 +65,9 @@ export const TaskModal: React.FC = () => {
         setDueDate(format(initial, 'yyyy-MM-dd'));
         setDueTime('');
         setReminderMinutes(null);
+        setRecurringRule('none');
+        setRecurringInterval(1);
+        setRecurringUnit('day');
         setAssignedMemberId('');
         setPriority('medium');
         setIsArchived(false);
@@ -111,6 +120,9 @@ export const TaskModal: React.FC = () => {
         priority,
         is_archived: isArchived ? 1 : 0,
         completed: isCompleted,
+        recurring_rule: recurringRule,
+        recurring_interval: recurringRule === 'custom' ? recurringInterval : 1,
+        recurring_unit: recurringRule === 'custom' ? recurringUnit : 'day',
       };
 
       if (editingTask) {
@@ -274,6 +286,53 @@ export const TaskModal: React.FC = () => {
                   className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
                 />
               </div>
+            </div>
+
+            {/* Repeat Option */}
+            <div>
+              <label htmlFor="task-repeat" className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                <Repeat className="w-3.5 h-3.5 text-emerald-600" />
+                Repeat
+              </label>
+              <select
+                id="task-repeat"
+                value={recurringRule}
+                onChange={(e) => setRecurringRule(e.target.value as TaskRecurrenceRule)}
+                className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all cursor-pointer"
+              >
+                <option value="none">None</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="fortnightly">Fortnightly</option>
+                <option value="monthly">Monthly</option>
+                <option value="custom">Custom</option>
+              </select>
+
+              {/* Custom Repeat Configuration */}
+              {recurringRule === 'custom' && (
+                <div className="mt-2.5 p-3 bg-emerald-50/60 border border-emerald-100 rounded-xl flex items-center gap-2 text-xs">
+                  <span className="font-semibold text-slate-700 whitespace-nowrap">Repeat every</span>
+                  <input
+                    id="task-custom-interval"
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={recurringInterval}
+                    onChange={(e) => setRecurringInterval(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-16 px-2.5 py-1.5 bg-white border border-emerald-200 rounded-lg text-slate-800 text-sm text-center font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                  />
+                  <select
+                    id="task-custom-unit"
+                    value={recurringUnit}
+                    onChange={(e) => setRecurringUnit(e.target.value as 'day' | 'week' | 'month')}
+                    className="px-3 py-1.5 bg-white border border-emerald-200 rounded-lg text-slate-800 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/30 cursor-pointer"
+                  >
+                    <option value="day">{recurringInterval === 1 ? 'Day' : 'Days'}</option>
+                    <option value="week">{recurringInterval === 1 ? 'Week' : 'Weeks'}</option>
+                    <option value="month">{recurringInterval === 1 ? 'Month' : 'Months'}</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             {/* Device Reminder Settings */}

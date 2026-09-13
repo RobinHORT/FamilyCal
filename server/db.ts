@@ -130,6 +130,9 @@ export function initDatabase() {
       is_archived INTEGER DEFAULT 0,
       assigned_member_id TEXT,
       priority TEXT DEFAULT 'medium', -- low, medium, high
+      recurring_rule TEXT DEFAULT 'none', -- none, daily, weekly, fortnightly, monthly, custom
+      recurring_interval INTEGER DEFAULT 1,
+      recurring_unit TEXT DEFAULT 'day',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
@@ -257,6 +260,24 @@ export function initDatabase() {
     if (!hasReminderMinutes) {
       db.prepare(`ALTER TABLE tasks ADD COLUMN reminder_minutes INTEGER;`).run();
       console.log('Migration applied: added reminder_minutes column to tasks table.');
+    }
+
+    const hasRecurringRule = taskCols.some((col) => col.name === 'recurring_rule');
+    if (!hasRecurringRule) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN recurring_rule TEXT DEFAULT 'none';`).run();
+      console.log('Migration applied: added recurring_rule column to tasks table.');
+    }
+
+    const hasRecurringInterval = taskCols.some((col) => col.name === 'recurring_interval');
+    if (!hasRecurringInterval) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN recurring_interval INTEGER DEFAULT 1;`).run();
+      console.log('Migration applied: added recurring_interval column to tasks table.');
+    }
+
+    const hasRecurringUnit = taskCols.some((col) => col.name === 'recurring_unit');
+    if (!hasRecurringUnit) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN recurring_unit TEXT DEFAULT 'day';`).run();
+      console.log('Migration applied: added recurring_unit column to tasks table.');
     }
   } catch (taskMigErr) {
     console.warn('Tasks table migration check warning:', taskMigErr);
