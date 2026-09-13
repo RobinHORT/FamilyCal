@@ -52,7 +52,7 @@ export const TabletViewer: React.FC<TabletViewerProps> = () => {
       </header>
 
       {/* --- MAIN VIEWER BODY (Standard FamilyCal Calendar) --- */}
-      <main id="tablet-viewer-content" className="flex-1 flex flex-col min-h-0 overflow-y-auto p-2.5 sm:p-4 md:p-5 bg-[#FAFAFA]">
+      <main id="tablet-viewer-content" className="flex-1 flex flex-col min-h-0 overflow-hidden p-2 sm:p-3 md:p-3.5 bg-[#FAFAFA]">
         <CalendarContainer isViewer={true} />
       </main>
 

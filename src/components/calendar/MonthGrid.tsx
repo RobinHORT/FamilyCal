@@ -113,7 +113,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
   return (
     <div className={`flex flex-col flex-1 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-2xs ${className}`}>
       {/* 7 Days Header */}
-      <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50/70 text-center text-[11px] sm:text-xs font-bold text-gray-500 py-2 sm:py-2.5 select-none">
+      <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50/70 text-center text-[11px] sm:text-xs font-bold text-gray-500 py-1.5 sm:py-2 shrink-0 select-none">
         <div>Mon</div>
         <div>Tue</div>
         <div>Wed</div>
@@ -124,7 +124,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
       </div>
 
       {/* Week Rows */}
-      <div className="flex-1 flex flex-col divide-y divide-gray-100 bg-gray-50/20">
+      <div className="flex-1 flex flex-col divide-y divide-gray-100 bg-gray-50/20 min-h-0 h-full">
         {weeks.map((weekDays, weekIdx) => {
           // Map events in this week
           const weekEventsMap = new Map<string, WeekEventSlot>();
@@ -212,7 +212,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
           });
 
           return (
-            <div key={weekIdx} className="flex-1 flex flex-col min-h-[90px] sm:min-h-[105px] border-b border-gray-100 last:border-b-0 relative">
+            <div key={weekIdx} className="flex-1 flex flex-col min-h-0 border-b border-gray-100 last:border-b-0 relative">
               {/* Day Cells Grid */}
               <div className="grid grid-cols-7 flex-1 divide-x divide-gray-100 relative h-full">
                 {weekDays.map((dayDate, colIdx) => {

@@ -129,7 +129,7 @@ export const CalendarHeader: React.FC = () => {
     selectedCalendarIds.filter((id) => familyCalendarLayers.some((c) => c.id === id)).length;
 
   return (
-    <div id="calendar-header-section" className="flex flex-col gap-3 pb-3 border-b border-gray-200">
+    <div id="calendar-header-section" className="flex flex-col gap-3 pb-3 border-b border-gray-200 shrink-0">
       {/* Top Bar: Navigation, Title, View Mode & Action (Desktop) */}
       <div className="hidden md:flex items-center justify-between gap-3">
         {/* Left: Date controls */}

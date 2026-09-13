@@ -189,15 +189,15 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
 
   // --- HOUSEHOLD VIEWER MONTH VIEW ---
   return (
-    <div id="calendar-month-view-viewer" className="flex flex-col flex-1 gap-4">
+    <div id="calendar-month-view-viewer" className="flex flex-col flex-1 min-h-0 h-full gap-2.5 sm:gap-3 overflow-hidden">
       {/* 1. TABLET / IPAD / PC: SIDE-BY-SIDE (MONTH CALENDAR on Left, SELECTED DAY DAY VIEW on Right) */}
       <div
         id="household-desktop-month-split"
         {...swipeHandlers}
-        className="hidden md:grid md:grid-cols-12 gap-3.5 lg:gap-4 flex-1 items-start min-h-0 touch-pan-y"
+        className="hidden md:grid md:grid-cols-12 gap-3.5 lg:gap-4 flex-1 items-stretch min-h-0 h-full touch-pan-y overflow-hidden"
       >
-        {/* Left: MONTH CALENDAR */}
-        <div className="md:col-span-7 lg:col-span-7 xl:col-span-8 flex flex-col min-w-0">
+        {/* Left: MONTH CALENDAR (Locked, fully visible, non-scrollable) */}
+        <div className="md:col-span-7 lg:col-span-7 xl:col-span-8 flex flex-col min-w-0 h-full min-h-0 overflow-hidden">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={monthKey}
@@ -211,6 +211,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
                 x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
               }}
               transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
+              className="flex-1 flex flex-col min-h-0 h-full overflow-hidden"
             >
               <MonthGrid
                 currentDate={currentDate}
@@ -221,14 +222,15 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
                 eventTypes={eventTypes}
                 onEditEvent={openEditEventModal}
                 maxVisibleSlots={2}
+                className="h-full flex-1 min-h-0 overflow-hidden"
               />
             </motion.div>
           </AnimatePresence>
         </div>
 
-        {/* Right: SELECTED DAY DAY VIEW */}
-        <div className="md:col-span-5 lg:col-span-5 xl:col-span-4 flex flex-col min-w-0 sticky top-2">
-          <DayView currentDate={selectedDay} isViewer={true} />
+        {/* Right: SELECTED DAY DAY VIEW (Only internal event list is scrollable) */}
+        <div className="md:col-span-5 lg:col-span-5 xl:col-span-4 flex flex-col min-w-0 h-full min-h-0 overflow-hidden">
+          <DayView currentDate={selectedDay} isViewer={true} className="h-full min-h-0" />
         </div>
       </div>
 

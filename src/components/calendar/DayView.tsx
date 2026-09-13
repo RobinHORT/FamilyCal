@@ -103,7 +103,7 @@ export const DayView: React.FC<DayViewProps> = ({
       } ${className}`}
     >
       {/* Day Title Bar */}
-      <div className="py-3 sm:py-4 px-4 sm:px-6 border-b border-gray-200 bg-gray-50/75 flex items-center justify-between">
+      <div className="py-2.5 sm:py-3.5 px-3.5 sm:px-5 border-b border-gray-200 bg-gray-50/75 flex items-center justify-between shrink-0">
         <div className="min-w-0">
           <h3 className="text-base sm:text-lg lg:text-xl font-bold text-gray-900 tracking-tight font-serif truncate">
             {format(activeDate, 'EEEE, MMMM d, yyyy')}
@@ -126,8 +126,8 @@ export const DayView: React.FC<DayViewProps> = ({
 
       {/* Daily Schedule Stream */}
       <div
-        className={`flex-1 overflow-y-auto p-4 space-y-3 bg-white scrollbar-thin ${
-          !isEmbedded ? 'max-h-[640px] pb-calendar-mobile md:pb-4' : 'min-h-0'
+        className={`flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-white scrollbar-thin min-h-0 ${
+          !isEmbedded ? 'pb-calendar-mobile md:pb-4' : ''
         }`}
       >
         <AnimatePresence mode="wait" initial={false}>
