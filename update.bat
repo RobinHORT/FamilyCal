@@ -123,7 +123,7 @@ set /a "ELAPSED+=5"
 echo Waiting for FamilyCal health... !ELAPSED!s
 timeout /t 5 >nul
 
-for /f "delims=" %%s in ('docker inspect --format="{{.State.Health.Status}}" familycal 2^>nul') do (
+for /f "delims=" %%s in ('docker inspect --format="{{.State.Health.Status}}" yimly-familycal 2^>nul') do (
     if "%%s"=="healthy" (
         set "HEALTHY=1"
         goto HEALTH_PASSED
@@ -141,7 +141,7 @@ echo FamilyCal health check: FAILED
 echo.
 docker compose -f docker-compose.yml ps
 echo.
-docker compose -f docker-compose.yml logs --tail=100 familycal
+docker compose -f docker-compose.yml logs --tail=100 yimly-familycal
 echo.
 pause
 exit /b 1
@@ -157,7 +157,7 @@ echo.
 docker compose -f docker-compose.yml ps
 echo.
 echo FamilyCal Networking Summary:
-echo - Compose Service: familycal
+echo - Compose Service: yimly-familycal
 echo - Docker Network: cloudflared_bridge
 echo - Network Alias: familycal
 echo - Internal Port: 3000
