@@ -175,6 +175,12 @@ interface EventPillProps {
   eventTypes?: EventType[];
   onClick?: (e: React.MouseEvent) => void;
   className?: string;
+  showTitle?: boolean;
+  isMultiDayStart?: boolean;
+  isMultiDayMiddle?: boolean;
+  isMultiDayEnd?: boolean;
+  isStartOfWeek?: boolean;
+  isEndOfWeek?: boolean;
 }
 
 export const EventPill: React.FC<EventPillProps> = ({
@@ -183,9 +189,40 @@ export const EventPill: React.FC<EventPillProps> = ({
   eventTypes,
   onClick,
   className = '',
+  showTitle = true,
+  isMultiDayStart = false,
+  isMultiDayMiddle = false,
+  isMultiDayEnd = false,
+  isStartOfWeek = false,
+  isEndOfWeek = false,
 }) => {
   const assignmentInfo = getEventAssignmentInfo(event, members);
   const eventType = getEventTypeInfo(event.title, event.event_type, eventTypes);
+
+  const isMultiDay = isMultiDayStart || isMultiDayMiddle || isMultiDayEnd || isStartOfWeek || isEndOfWeek;
+
+  let roundedClasses = 'rounded-md';
+  let borderClasses = 'border';
+  let marginClasses = '';
+
+  if (isMultiDay) {
+    if (isMultiDayMiddle) {
+      roundedClasses = 'rounded-none';
+      borderClasses = 'border-y border-x-0';
+      marginClasses = '-mx-[5px] sm:-mx-[7px] z-10';
+    } else if (isMultiDayStart && isMultiDayEnd) {
+      roundedClasses = 'rounded-md';
+      marginClasses = '';
+    } else if (isMultiDayStart) {
+      roundedClasses = isStartOfWeek ? 'rounded-none' : 'rounded-l-md rounded-r-none';
+      borderClasses = isStartOfWeek ? 'border-y border-x-0' : 'border-y border-l border-r-0';
+      marginClasses = '-mr-[5px] sm:-mr-[7px] z-10';
+    } else if (isMultiDayEnd) {
+      roundedClasses = isEndOfWeek ? 'rounded-none' : 'rounded-r-md rounded-l-none';
+      borderClasses = isEndOfWeek ? 'border-y border-x-0' : 'border-y border-r border-l-0';
+      marginClasses = '-ml-[5px] sm:-ml-[7px] z-10';
+    }
+  }
 
   return (
     <div
@@ -196,7 +233,7 @@ export const EventPill: React.FC<EventPillProps> = ({
           : assignmentInfo.primaryColorInfo.hex,
         borderColor: assignmentInfo.borderHex,
       }}
-      className={`relative px-1.5 py-0.5 rounded-md border text-[11px] font-bold text-slate-900 truncate flex items-center gap-1 shadow-2xs hover:shadow-xs transition-shadow cursor-pointer overflow-hidden ${className}`}
+      className={`relative px-1 sm:px-1.5 py-0.5 text-[10px] sm:text-[11px] font-bold text-slate-900 truncate flex items-center gap-1 shadow-2xs hover:shadow-xs transition-shadow cursor-pointer overflow-hidden h-5 sm:h-5.5 ${roundedClasses} ${borderClasses} ${marginClasses} ${className}`}
       title={`${event.title} (${assignmentInfo.label} • ${eventType.name})`}
     >
       {/* Divided boundary lines for family events on small pills */}
@@ -211,19 +248,107 @@ export const EventPill: React.FC<EventPillProps> = ({
         </div>
       )}
 
-      {/* Event Category Icon */}
-      <span
-        className="relative z-10 w-3.5 h-3.5 rounded-full shrink-0 flex items-center justify-center text-[8px] text-white shadow-2xs"
-        style={{ backgroundColor: eventType.bgHex }}
-        title={eventType.name}
-      >
-        {eventType.icon}
-      </span>
+      {showTitle && (
+        <span className="relative z-10 truncate font-extrabold text-slate-900 leading-none">
+          {event.title} {isStartOfWeek && !isMultiDayStart ? '(cont.)' : ''}
+        </span>
+      )}
+    </div>
+  );
+};
 
-      {/* Event Title */}
-      <span className="relative z-10 truncate font-extrabold text-slate-900 leading-none">
-        {event.title}
-      </span>
+export interface MultiDayEventBarProps {
+  event: CalendarEvent;
+  startCol: number;
+  endCol: number;
+  spanCount: number;
+  isStartOfWeek: boolean;
+  isEndOfWeek: boolean;
+  members: FamilyMember[];
+  eventTypes?: EventType[];
+  onClick?: (e: React.MouseEvent) => void;
+  className?: string;
+}
+
+export const MultiDayEventBar: React.FC<MultiDayEventBarProps> = ({
+  event,
+  startCol,
+  endCol,
+  spanCount,
+  isStartOfWeek,
+  isEndOfWeek,
+  members,
+  eventTypes,
+  onClick,
+  className = '',
+}) => {
+  const assignmentInfo = getEventAssignmentInfo(event, members);
+  const eventType = getEventTypeInfo(event.title, event.event_type, eventTypes);
+
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        gridColumnStart: startCol + 1,
+        gridColumnEnd: endCol + 2,
+      }}
+      className={`relative h-5 sm:h-5.5 flex items-center cursor-pointer select-none pointer-events-auto group z-10 ${className}`}
+      title={`${event.title} (${assignmentInfo.label} • ${eventType.name})`}
+    >
+      {/* Background Layer: Visually split at each calendar-day boundary */}
+      <div
+        className="absolute inset-0 grid gap-x-1 sm:gap-x-1.5 pointer-events-none"
+        style={{ gridTemplateColumns: `repeat(${spanCount}, minmax(0, 1fr))` }}
+      >
+        {Array.from({ length: spanCount }).map((_, idx) => {
+          const isFirstSegment = idx === 0;
+          const isLastSegment = idx === spanCount - 1;
+
+          let roundedClass = 'rounded-none';
+          if (isFirstSegment && isLastSegment) {
+            roundedClass = isStartOfWeek && isEndOfWeek
+              ? 'rounded-none'
+              : isStartOfWeek
+              ? 'rounded-r-md'
+              : isEndOfWeek
+              ? 'rounded-l-md'
+              : 'rounded-md';
+          } else if (isFirstSegment) {
+            roundedClass = isStartOfWeek ? 'rounded-none' : 'rounded-l-md';
+          } else if (isLastSegment) {
+            roundedClass = isEndOfWeek ? 'rounded-none' : 'rounded-r-md';
+          }
+
+          return (
+            <div
+              key={idx}
+              style={{
+                background: assignmentInfo.isFamilyEvent
+                  ? assignmentInfo.segmentedGradient
+                  : assignmentInfo.primaryColorInfo.hex,
+                borderColor: assignmentInfo.borderHex,
+              }}
+              className={`h-full border shadow-2xs group-hover:shadow-xs transition-shadow ${roundedClass}`}
+            >
+              {assignmentInfo.isFamilyEvent && (
+                <div className="inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0 h-full">
+                  {assignmentInfo.participatingMembers.map((m, mIdx) => (
+                    <div
+                      key={m.id || mIdx}
+                      className="flex-1 h-full border-r border-black/8 last:border-r-0"
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Title Layer: Continuous visible title across full event span */}
+      <div className="relative z-10 px-1.5 sm:px-2 w-full truncate font-extrabold text-slate-900 text-[10px] sm:text-[11px] leading-none">
+        {event.title} {isStartOfWeek && startCol === 0 ? '(cont.)' : ''}
+      </div>
     </div>
   );
 };

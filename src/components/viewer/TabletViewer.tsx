@@ -2,10 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   format,
   startOfMonth,
-  endOfMonth,
-  startOfWeek,
-  endOfWeek,
-  addDays,
   isSameMonth,
   isSameDay,
   isToday,
@@ -16,8 +12,8 @@ import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { useCalendarSwipe } from '../../hooks/useCalendarSwipe';
-import { getEventAssignmentInfo } from '../../utils/colors';
 import { EventCard } from '../calendar/EventCard';
+import { MonthGrid } from '../calendar/MonthGrid';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, LogOut } from 'lucide-react';
 
 interface TabletViewerProps {
@@ -81,19 +77,6 @@ export const TabletViewer: React.FC<TabletViewerProps> = ({ onExit }) => {
     maxTime: 700,
     preventScrollToleranceRatio: 1.3,
   });
-
-  // Month Grid Calculation (Monday to Sunday weekStartsOn: 1)
-  const monthStart = startOfMonth(currentDate);
-  const monthEnd = endOfMonth(monthStart);
-  const startDate = startOfWeek(monthStart, { weekStartsOn: 1 });
-  const endDate = endOfWeek(monthEnd, { weekStartsOn: 1 });
-
-  const days: Date[] = [];
-  let day = startDate;
-  while (day <= endDate) {
-    days.push(day);
-    day = addDays(day, 1);
-  }
 
   const getEventsForDay = (dayDate: Date) => {
     return filteredEvents.filter((evt) => {
@@ -190,7 +173,7 @@ export const TabletViewer: React.FC<TabletViewerProps> = ({ onExit }) => {
               className="col-span-7 xl:col-span-8 flex flex-col bg-white rounded-2xl border border-gray-200 p-4 shadow-2xs overflow-hidden touch-pan-y"
             >
               {/* Month Navigation & Title Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center justify-between pb-3 mb-2 border-b border-gray-100">
                 <div className="flex items-center gap-2">
                   <button
                     onClick={goToPreviousPeriod}
@@ -219,19 +202,8 @@ export const TabletViewer: React.FC<TabletViewerProps> = ({ onExit }) => {
                 </h2>
               </div>
 
-              {/* Day Names Header */}
-              <div className="grid grid-cols-7 text-center text-xs font-bold text-gray-400 py-2.5 border-b border-gray-100/60 select-none">
-                <span>Mon</span>
-                <span>Tue</span>
-                <span>Wed</span>
-                <span>Thu</span>
-                <span>Fri</span>
-                <span>Sat</span>
-                <span>Sun</span>
-              </div>
-
               {/* Days Grid with Slide Transition */}
-              <div className="flex-1 flex flex-col justify-center overflow-hidden pt-2">
+              <div className="flex-1 flex flex-col overflow-hidden">
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div
                     key={monthKey}
@@ -245,63 +217,17 @@ export const TabletViewer: React.FC<TabletViewerProps> = ({ onExit }) => {
                       x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
                     }}
                     transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
-                    className="grid grid-cols-7 gap-y-2 sm:gap-y-3 h-full items-center text-center"
+                    className="h-full flex flex-col"
                   >
-                    {days.map((dayDate) => {
-                      const isCurrentMonth = isSameMonth(dayDate, monthStart);
-                      const isSelected = isSameDay(dayDate, selectedDay);
-                      const isDayToday = isToday(dayDate);
-                      const dayEvents = getEventsForDay(dayDate);
-
-                      return (
-                        <button
-                          key={dayDate.toISOString()}
-                          type="button"
-                          onClick={() => setSelectedDay(dayDate)}
-                          className={`flex flex-col items-center justify-center p-1 sm:p-2 rounded-xl transition-all cursor-pointer focus:outline-none ${
-                            isSelected ? 'bg-blue-50/60' : 'hover:bg-gray-50'
-                          }`}
-                        >
-                          <span
-                            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
-                              isSelected
-                                ? 'bg-blue-600 text-white font-black shadow-sm ring-2 ring-blue-500/40'
-                                : isDayToday
-                                ? 'bg-blue-100/80 text-blue-700 font-extrabold'
-                                : isCurrentMonth
-                                ? 'text-slate-800'
-                                : 'text-gray-300'
-                            }`}
-                          >
-                            {format(dayDate, 'd')}
-                          </span>
-
-                          {/* Member Color Dots under date */}
-                          <div className="flex items-center justify-center gap-0.5 h-2.5 mt-1 flex-wrap max-w-[32px]">
-                            {dayEvents.slice(0, 4).map((evt) => {
-                              const assignment = getEventAssignmentInfo(evt, members);
-                              if (assignment.isFamilyEvent) {
-                                return (
-                                  <span
-                                    key={evt.id}
-                                    className="w-1.5 h-1.5 rounded-full ring-[0.5px] ring-black/20"
-                                    style={{ backgroundColor: assignment.adminColorInfo.dotHex }}
-                                    title="Family Event"
-                                  />
-                                );
-                              }
-                              return (
-                                <span
-                                  key={evt.id}
-                                  className="w-1.5 h-1.5 rounded-full"
-                                  style={{ backgroundColor: assignment.primaryColorInfo.dotHex }}
-                                />
-                              );
-                            })}
-                          </div>
-                        </button>
-                      );
-                    })}
+                    <MonthGrid
+                      currentDate={currentDate}
+                      selectedDay={selectedDay}
+                      onSelectDay={(d) => setSelectedDay(d)}
+                      filteredEvents={filteredEvents}
+                      members={members}
+                      eventTypes={eventTypes}
+                      maxVisibleSlots={2}
+                    />
                   </motion.div>
                 </AnimatePresence>
               </div>
@@ -352,15 +278,15 @@ export const TabletViewer: React.FC<TabletViewerProps> = ({ onExit }) => {
             </div>
           </div>
         ) : (
-          /* --- PORTRAIT ORIENTATION (Phone/Tablet Portrait: Existing Phone Month View) --- */
+          /* --- PORTRAIT ORIENTATION (Phone/Tablet Portrait: Phone Month View) --- */
           <div
             {...swipeHandlers}
             className="flex flex-col gap-4 h-full overflow-y-auto pb-6 touch-pan-y max-w-2xl mx-auto"
           >
             {/* Month Header & Grid */}
-            <div className="bg-white rounded-2xl border border-gray-200 p-3.5 shadow-2xs overflow-hidden">
+            <div className="bg-white rounded-2xl border border-gray-200 p-3.5 shadow-2xs overflow-hidden flex flex-col">
               {/* Month Title & Navigation */}
-              <div className="flex items-center justify-between pb-2 mb-1 border-b border-gray-100">
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-100">
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={goToPreviousPeriod}
@@ -387,17 +313,6 @@ export const TabletViewer: React.FC<TabletViewerProps> = ({ onExit }) => {
                 </h2>
               </div>
 
-              {/* Day Names Header */}
-              <div className="grid grid-cols-7 text-center text-[11px] font-bold text-gray-400 py-1 select-none">
-                <span>Mon</span>
-                <span>Tue</span>
-                <span>Wed</span>
-                <span>Thu</span>
-                <span>Fri</span>
-                <span>Sat</span>
-                <span>Sun</span>
-              </div>
-
               {/* Days Grid with Slide Transition */}
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
@@ -413,61 +328,15 @@ export const TabletViewer: React.FC<TabletViewerProps> = ({ onExit }) => {
                   }}
                   transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
                 >
-                  <div className="grid grid-cols-7 gap-y-2 text-center pt-2">
-                    {days.map((dayDate) => {
-                      const isCurrentMonth = isSameMonth(dayDate, monthStart);
-                      const isSelected = isSameDay(dayDate, selectedDay);
-                      const isDayToday = isToday(dayDate);
-                      const dayEvents = getEventsForDay(dayDate);
-
-                      return (
-                        <button
-                          key={dayDate.toISOString()}
-                          type="button"
-                          onClick={() => setSelectedDay(dayDate)}
-                          className="flex flex-col items-center justify-center p-1 cursor-pointer focus:outline-none"
-                        >
-                          <span
-                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                              isSelected
-                                ? 'bg-blue-600 text-white font-extrabold shadow-xs'
-                                : isDayToday
-                                ? 'bg-blue-100 text-blue-700 font-bold'
-                                : isCurrentMonth
-                                ? 'text-slate-800'
-                                : 'text-gray-300'
-                            }`}
-                          >
-                            {format(dayDate, 'd')}
-                          </span>
-
-                          {/* Member Color Dots under date */}
-                          <div className="flex items-center justify-center gap-0.5 h-2 mt-0.5 flex-wrap max-w-[28px]">
-                            {dayEvents.slice(0, 3).map((evt) => {
-                              const assignment = getEventAssignmentInfo(evt, members);
-                              if (assignment.isFamilyEvent) {
-                                return (
-                                  <span
-                                    key={evt.id}
-                                    className="w-1.5 h-1.5 rounded-full ring-[0.5px] ring-black/20"
-                                    style={{ backgroundColor: assignment.adminColorInfo.dotHex }}
-                                    title="Family Event"
-                                  />
-                                );
-                              }
-                              return (
-                                <span
-                                  key={evt.id}
-                                  className="w-1.5 h-1.5 rounded-full"
-                                  style={{ backgroundColor: assignment.primaryColorInfo.dotHex }}
-                                />
-                              );
-                            })}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <MonthGrid
+                    currentDate={currentDate}
+                    selectedDay={selectedDay}
+                    onSelectDay={(d) => setSelectedDay(d)}
+                    filteredEvents={filteredEvents}
+                    members={members}
+                    eventTypes={eventTypes}
+                    maxVisibleSlots={2}
+                  />
                 </motion.div>
               </AnimatePresence>
             </div>
