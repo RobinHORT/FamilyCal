@@ -93,6 +93,7 @@ export function initDatabase() {
       recurring_rule TEXT DEFAULT 'none', -- none, daily, weekly, monthly, yearly
       recurring_until TEXT,
       assigned_member_ids TEXT DEFAULT '[]', -- JSON array of member IDs
+      reminder_minutes INTEGER,
       google_event_id TEXT,
       google_calendar_id TEXT,
       etag TEXT,
@@ -123,8 +124,10 @@ export function initDatabase() {
       description TEXT,
       due_date TEXT,
       due_time TEXT,
+      reminder_minutes INTEGER,
       completed INTEGER DEFAULT 0,
       completed_at TEXT,
+      is_archived INTEGER DEFAULT 0,
       assigned_member_id TEXT,
       priority TEXT DEFAULT 'medium', -- low, medium, high
       created_at TEXT NOT NULL,
@@ -241,6 +244,24 @@ export function initDatabase() {
     console.warn('User table migration check warning:', userMigErr);
   }
 
+  // Safe startup migration: Ensure is_archived and reminder_minutes columns exist on tasks in existing databases
+  try {
+    const taskCols = db.prepare(`PRAGMA table_info(tasks);`).all() as Array<{ name: string }>;
+    const hasArchived = taskCols.some((col) => col.name === 'is_archived');
+    if (!hasArchived) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN is_archived INTEGER DEFAULT 0;`).run();
+      console.log('Migration applied: added is_archived column to tasks table.');
+    }
+
+    const hasReminderMinutes = taskCols.some((col) => col.name === 'reminder_minutes');
+    if (!hasReminderMinutes) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN reminder_minutes INTEGER;`).run();
+      console.log('Migration applied: added reminder_minutes column to tasks table.');
+    }
+  } catch (taskMigErr) {
+    console.warn('Tasks table migration check warning:', taskMigErr);
+  }
+
   // Safe startup migration: Ensure event_type column exists on events in existing databases
   try {
     const eventCols = db.prepare(`PRAGMA table_info(events);`).all() as Array<{ name: string }>;
@@ -248,6 +269,12 @@ export function initDatabase() {
     if (!hasEventType) {
       db.prepare(`ALTER TABLE events ADD COLUMN event_type TEXT DEFAULT 'Other';`).run();
       console.log('Migration applied: added event_type column to events table.');
+    }
+
+    const hasEventReminder = eventCols.some((col) => col.name === 'reminder_minutes');
+    if (!hasEventReminder) {
+      db.prepare(`ALTER TABLE events ADD COLUMN reminder_minutes INTEGER;`).run();
+      console.log('Migration applied: added reminder_minutes column to events table.');
     }
 
     // Assign default 'Other' to any existing event that has no event type

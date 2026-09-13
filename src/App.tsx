@@ -10,6 +10,8 @@ import { WeekView } from './components/calendar/WeekView';
 import { DayView } from './components/calendar/DayView';
 import { AgendaView } from './components/calendar/AgendaView';
 import { EventModal } from './components/calendar/EventModal';
+import { CalendarAddChoiceModal } from './components/calendar/CalendarAddChoiceModal';
+import { TaskModal } from './components/tasks/TaskModal';
 import { FamilyView } from './components/family/FamilyView';
 import { NotificationsView } from './components/notifications/NotificationsView';
 import { IntegrationsView } from './components/settings/IntegrationsView';
@@ -25,7 +27,16 @@ import { Plus, Loader2 } from 'lucide-react';
 
 function MainDashboard() {
   const { user, isLoading, checkAuth } = useAuth();
-  const [activeTab, setActiveTab] = useState<MainTabType>('calendar');
+  const [activeTab, setActiveTab] = useState<MainTabType>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam && ['calendar', 'family', 'tasks', 'notifications', 'settings', 'profile'].includes(tabParam)) {
+        return tabParam as MainTabType;
+      }
+    }
+    return 'calendar';
+  });
   const [currentPath, setCurrentPath] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
   const [isViewerMode, setIsViewerMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -45,6 +56,11 @@ function MainDashboard() {
       setCurrentPath(path);
       if (path === '/viewer' || window.location.search.includes('mode=viewer')) {
         setIsViewerMode(true);
+      }
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam && ['calendar', 'family', 'tasks', 'notifications', 'settings', 'profile'].includes(tabParam)) {
+        setActiveTab(tabParam as MainTabType);
       }
     };
     window.addEventListener('popstate', handleLocationChange);
@@ -133,17 +149,23 @@ function MainDashboard() {
         >
           {activeTab === 'calendar' && <CalendarContainer />}
           {activeTab === 'family' && <FamilyView />}
+          {activeTab === 'tasks' && <TasksView />}
           {activeTab === 'notifications' && <NotificationsView />}
           {activeTab === 'settings' && <IntegrationsView />}
           {activeTab === 'profile' && <ProfileView />}
           {/* Fallbacks if accessed via state */}
-          {activeTab === ('tasks' as any) && <TasksView />}
           {activeTab === ('birthdays' as any) && <BirthdaysView />}
         </main>
       </div>
 
+      {/* Small Choice Modal for + (Event vs Task) */}
+      <CalendarAddChoiceModal />
+
       {/* Global Event Modal for Add / Edit */}
       <EventModal />
+
+      {/* Global Task Modal for Add / Edit */}
+      <TaskModal />
 
       {/* Bottom Navigation for Mobile Devices */}
       <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} />

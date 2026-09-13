@@ -1323,6 +1323,7 @@ router.get('/events', authenticateToken, (req: AuthRequest, res: Response) => {
         event_type: evt.event_type || 'Other',
         all_day: Boolean(evt.all_day),
         assigned_member_ids: assignedMemberIds,
+        reminder_minutes: evt.reminder_minutes !== null && evt.reminder_minutes !== undefined ? Number(evt.reminder_minutes) : null,
       };
     });
 
@@ -1355,6 +1356,7 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
       recurring_rule,
       recurring_until,
       assigned_member_ids,
+      reminder_minutes,
     } = req.body;
 
     if (!title || !start_time || !end_time) {
@@ -1409,6 +1411,9 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
     }
 
     const finalEventType = (event_type && typeof event_type === 'string' && event_type.trim()) ? event_type.trim() : 'Other';
+    const reminderMinutesVal = reminder_minutes !== undefined && reminder_minutes !== null && reminder_minutes !== ''
+      ? Number(reminder_minutes)
+      : null;
 
     const memberIdsJson = JSON.stringify(finalMemberIds);
     const isGoogleCal = cal?.source === 'google';
@@ -1419,9 +1424,9 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
       INSERT INTO events (
         id, family_id, calendar_id, title, description, location, color, event_type,
         start_time, end_time, all_day, recurring_rule, recurring_until,
-        assigned_member_ids, sync_status, created_by, created_at, updated_at
+        assigned_member_ids, reminder_minutes, sync_status, created_by, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       eventId,
       req.user!.family_id,
@@ -1437,6 +1442,7 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
       recurring_rule || 'none',
       recurring_until || null,
       memberIdsJson,
+      reminderMinutesVal,
       syncStatus,
       req.user!.id,
       now,
@@ -1455,6 +1461,7 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
       event_type: created.event_type || finalEventType,
       all_day: Boolean(created.all_day),
       assigned_member_ids: JSON.parse(created.assigned_member_ids || '[]'),
+      reminder_minutes: created.reminder_minutes !== null && created.reminder_minutes !== undefined ? Number(created.reminder_minutes) : null,
     });
 
     // Non-blocking Google Calendar synchronization
@@ -1484,6 +1491,7 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
       recurring_rule,
       recurring_until,
       assigned_member_ids,
+      reminder_minutes,
     } = req.body;
 
     const existing = db.prepare('SELECT * FROM events WHERE id = ? AND family_id = ?').get(
@@ -1521,6 +1529,9 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
     }
 
     const finalEventType = event_type !== undefined ? (event_type?.trim() || 'Other') : null;
+    const finalReminderMinutes = reminder_minutes !== undefined
+      ? (reminder_minutes !== null && reminder_minutes !== '' ? Number(reminder_minutes) : null)
+      : (existing.reminder_minutes !== null && existing.reminder_minutes !== undefined ? Number(existing.reminder_minutes) : null);
 
     db.prepare(`
       UPDATE events
@@ -1536,6 +1547,7 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
           recurring_rule = COALESCE(?, recurring_rule),
           recurring_until = ?,
           assigned_member_ids = ?,
+          reminder_minutes = ?,
           sync_status = ?,
           updated_at = ?
       WHERE id = ? AND family_id = ?
@@ -1552,6 +1564,7 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
       recurring_rule || null,
       recurring_until !== undefined ? recurring_until : existing.recurring_until,
       assigned_member_ids ? JSON.stringify(assigned_member_ids) : existing.assigned_member_ids,
+      finalReminderMinutes,
       syncStatus,
       now,
       id,
@@ -1570,6 +1583,7 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
       event_type: updated.event_type || 'Other',
       all_day: Boolean(updated.all_day),
       assigned_member_ids: JSON.parse(updated.assigned_member_ids || '[]'),
+      reminder_minutes: updated.reminder_minutes !== null && updated.reminder_minutes !== undefined ? Number(updated.reminder_minutes) : null,
     });
 
     // Non-blocking Google Calendar synchronization
@@ -1645,7 +1659,11 @@ router.get('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       ORDER BY t.completed ASC, t.due_date ASC, t.created_at DESC
     `).all(req.user!.family_id);
 
-    res.json(tasks.map((t: any) => ({ ...t, completed: Boolean(t.completed) })));
+    res.json(tasks.map((t: any) => ({
+      ...t,
+      completed: Boolean(t.completed),
+      is_archived: Boolean(t.is_archived),
+    })));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1653,17 +1671,20 @@ router.get('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
 
 router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
-    const { title, description, due_date, due_time, assigned_member_id, priority } = req.body;
+    const { title, description, due_date, due_time, reminder_minutes, assigned_member_id, priority, is_archived } = req.body;
     if (!title) {
       return res.status(400).json({ error: 'Task title is required.' });
     }
 
     const taskId = 'tsk_' + uuidv4().slice(0, 8);
     const now = new Date().toISOString();
+    const cleanReminder = reminder_minutes !== undefined && reminder_minutes !== null && reminder_minutes !== '' 
+      ? Number(reminder_minutes) 
+      : null;
 
     db.prepare(`
-      INSERT INTO tasks (id, family_id, title, description, due_date, due_time, completed, assigned_member_id, priority, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+      INSERT INTO tasks (id, family_id, title, description, due_date, due_time, reminder_minutes, completed, is_archived, assigned_member_id, priority, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
     `).run(
       taskId,
       req.user!.family_id,
@@ -1671,6 +1692,8 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       description || null,
       due_date || null,
       due_time || null,
+      cleanReminder,
+      is_archived ? 1 : 0,
       assigned_member_id || null,
       priority || 'medium',
       now,
@@ -1684,7 +1707,68 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       WHERE t.id = ?
     `).get(taskId) as any;
 
-    res.status(201).json({ ...created, completed: false });
+    res.status(201).json({
+      ...created,
+      completed: false,
+      is_archived: Boolean(created.is_archived),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
+      id,
+      req.user!.family_id
+    ) as any;
+
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+
+    const { title, description, due_date, due_time, reminder_minutes, assigned_member_id, priority, completed, is_archived } = req.body;
+    const now = new Date().toISOString();
+
+    const newCompleted = completed !== undefined ? (completed ? 1 : 0) : task.completed;
+    const newCompletedAt = newCompleted ? (task.completed_at || now) : null;
+    const newArchived = is_archived !== undefined ? (is_archived ? 1 : 0) : task.is_archived;
+    const newReminder = reminder_minutes !== undefined 
+      ? (reminder_minutes !== null && reminder_minutes !== '' ? Number(reminder_minutes) : null)
+      : task.reminder_minutes;
+
+    db.prepare(`
+      UPDATE tasks
+      SET title = ?, description = ?, due_date = ?, due_time = ?, reminder_minutes = ?, assigned_member_id = ?, priority = ?, completed = ?, completed_at = ?, is_archived = ?, updated_at = ?
+      WHERE id = ? AND family_id = ?
+    `).run(
+      title !== undefined ? title.trim() : task.title,
+      description !== undefined ? (description || null) : task.description,
+      due_date !== undefined ? (due_date || null) : task.due_date,
+      due_time !== undefined ? (due_time || null) : task.due_time,
+      newReminder,
+      assigned_member_id !== undefined ? (assigned_member_id || null) : task.assigned_member_id,
+      priority !== undefined ? priority : task.priority,
+      newCompleted,
+      newCompletedAt,
+      newArchived,
+      now,
+      id,
+      req.user!.family_id
+    );
+
+    const updated = db.prepare(`
+      SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+      FROM tasks t
+      LEFT JOIN family_members m ON t.assigned_member_id = m.id
+      WHERE t.id = ?
+    `).get(id) as any;
+
+    res.json({
+      ...updated,
+      completed: Boolean(updated.completed),
+      is_archived: Boolean(updated.is_archived),
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1716,7 +1800,47 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
       WHERE t.id = ?
     `).get(id) as any;
 
-    res.json({ ...updated, completed: Boolean(updated.completed) });
+    res.json({
+      ...updated,
+      completed: Boolean(updated.completed),
+      is_archived: Boolean(updated.is_archived),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/tasks/:id/archive', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
+      id,
+      req.user!.family_id
+    ) as any;
+
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+
+    const newArchived = task.is_archived ? 0 : 1;
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      UPDATE tasks
+      SET is_archived = ?, updated_at = ?
+      WHERE id = ? AND family_id = ?
+    `).run(newArchived, now, id, req.user!.family_id);
+
+    const updated = db.prepare(`
+      SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+      FROM tasks t
+      LEFT JOIN family_members m ON t.assigned_member_id = m.id
+      WHERE t.id = ?
+    `).get(id) as any;
+
+    res.json({
+      ...updated,
+      completed: Boolean(updated.completed),
+      is_archived: Boolean(updated.is_archived),
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

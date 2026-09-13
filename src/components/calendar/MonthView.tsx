@@ -28,6 +28,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
     goToPreviousPeriod,
     goToNextPeriod,
     navigationDirection,
+    setSelectedCalendarDate,
   } = useCalendar();
   const { members } = useFamily();
   const { user } = useAuth();
@@ -44,13 +45,18 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
 
   const [selectedDay, setSelectedDay] = useState<Date>(currentDate);
 
+  const handleSelectDay = (d: Date) => {
+    setSelectedDay(d);
+    setSelectedCalendarDate(d);
+  };
+
   // Synchronize selected day when navigating to a different month
   useEffect(() => {
     if (!isSameMonth(selectedDay, currentDate)) {
       if (isSameMonth(new Date(), currentDate)) {
-        setSelectedDay(new Date());
+        handleSelectDay(new Date());
       } else {
-        setSelectedDay(startOfMonth(currentDate));
+        handleSelectDay(startOfMonth(currentDate));
       }
     }
   }, [currentDate]);
@@ -112,7 +118,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
           <MonthGrid
             currentDate={currentDate}
             selectedDay={selectedDay}
-            onSelectDay={(d) => setSelectedDay(d)}
+            onSelectDay={handleSelectDay}
             filteredEvents={filteredEvents}
             members={members}
             eventTypes={eventTypes}
@@ -147,7 +153,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
               <MonthGrid
                 currentDate={currentDate}
                 selectedDay={selectedDay}
-                onSelectDay={(d) => setSelectedDay(d)}
+                onSelectDay={handleSelectDay}
                 filteredEvents={filteredEvents}
                 members={members}
                 eventTypes={eventTypes}

@@ -1,20 +1,28 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { subMonths, addMonths, subWeeks, addWeeks, subDays, addDays } from 'date-fns';
-import { Calendar, CalendarEvent, CalendarViewMode, GoogleAccount, EventType } from '../types';
+import { Calendar, CalendarEvent, CalendarViewMode, GoogleAccount, EventType, Task } from '../types';
 import { api } from '../api/client';
 import { useAuth } from './AuthContext';
 import { useFamily } from './FamilyContext';
+import { useTaskReminderScheduler } from '../hooks/useTaskReminderScheduler';
 
 interface CalendarContextType {
   calendars: Calendar[];
   events: CalendarEvent[];
   filteredEvents: CalendarEvent[];
   eventTypes: EventType[];
+  tasks: Task[];
   currentDate: Date;
+  selectedCalendarDate: Date;
   viewMode: CalendarViewMode;
   selectedEvent: CalendarEvent | null;
   isEventModalOpen: boolean;
   eventModalInitialDate: Date | null;
+  isAddChoiceModalOpen: boolean;
+  addChoiceInitialDate: Date | null;
+  isTaskModalOpen: boolean;
+  taskModalInitialDate: Date | null;
+  editingTask: Task | null;
   selectedCalendarIds: string[]; // for multi-calendar layer toggle
   selectedMemberIds: string[]; // for multi-member layer toggle
   isSyncing: boolean;
@@ -23,13 +31,19 @@ interface CalendarContextType {
   isLoading: boolean;
   navigationDirection: number;
   setCurrentDate: (d: Date) => void;
+  setSelectedCalendarDate: (d: Date) => void;
   setViewMode: (v: CalendarViewMode) => void;
   goToPreviousPeriod: () => void;
   goToNextPeriod: () => void;
   goToToday: () => void;
+  openAddChoiceModal: (initialDate?: Date) => void;
+  closeAddChoiceModal: () => void;
   openCreateEventModal: (initialDate?: Date) => void;
   openEditEventModal: (event: CalendarEvent) => void;
   closeEventModal: () => void;
+  openCreateTaskModal: (initialDate?: Date) => void;
+  openEditTaskModal: (task: Task) => void;
+  closeTaskModal: () => void;
   toggleCalendarSelection: (id: string) => void;
   toggleMemberFilter: (id: string) => void;
   selectAllMembers: () => void;
@@ -37,6 +51,7 @@ interface CalendarContextType {
   selectAllCalendars: () => void;
   deselectAllCalendars: () => void;
   fetchCalendarData: () => Promise<void>;
+  fetchTasks: () => Promise<void>;
   createEvent: (data: Partial<CalendarEvent>) => Promise<CalendarEvent>;
   updateEvent: (id: string, data: Partial<CalendarEvent>) => Promise<CalendarEvent>;
   deleteEvent: (id: string) => Promise<void>;
@@ -46,19 +61,26 @@ interface CalendarContextType {
   createEventType: (data: { name: string; color: string; icon?: string }) => Promise<EventType>;
   updateEventType: (id: string, data: Partial<EventType>) => Promise<EventType>;
   deleteEventType: (id: string) => Promise<void>;
+  createTask: (data: Partial<Task>) => Promise<Task>;
+  updateTask: (id: string, data: Partial<Task>) => Promise<Task>;
+  toggleTask: (id: string) => Promise<Task>;
+  archiveTask: (id: string) => Promise<Task>;
+  deleteTask: (id: string) => Promise<void>;
   triggerGoogleSync: () => Promise<{ success: boolean; eventsSynced: number }>;
 }
 
 const CalendarContext = createContext<CalendarContextType | undefined>(undefined);
 
 export function CalendarProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, memberProfile } = useAuth();
   const { members } = useFamily();
 
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date>(new Date());
   const [viewMode, setViewMode] = useState<CalendarViewMode>(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       return 'week';
@@ -68,6 +90,16 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [eventModalInitialDate, setEventModalInitialDate] = useState<Date | null>(null);
+  
+  // Add Choice Modal (+ popup with Event vs Task)
+  const [isAddChoiceModalOpen, setIsAddChoiceModalOpen] = useState(false);
+  const [addChoiceInitialDate, setAddChoiceInitialDate] = useState<Date | null>(null);
+
+  // Task Modal state
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [taskModalInitialDate, setTaskModalInitialDate] = useState<Date | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -101,6 +133,35 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     setCurrentDate(new Date());
   }, []);
 
+  // Automatic Device Reminder Scheduler: checks and fires real device notifications on due reminders
+  // only to members involved in the Event or Task
+  useTaskReminderScheduler(events, tasks, user, memberProfile, members);
+
+  // Deep-link handler: open event modal if ?eventId=... is in URL
+  useEffect(() => {
+    if (typeof window === 'undefined' || events.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const targetEventId = params.get('eventId');
+    if (targetEventId) {
+      const match = events.find((e) => e.id === targetEventId);
+      if (match) {
+        try {
+          const d = new Date(match.start_time);
+          if (!isNaN(d.getTime())) {
+            setCurrentDate(d);
+            setSelectedCalendarDate(d);
+          }
+        } catch {}
+        setSelectedEvent(match);
+        setIsEventModalOpen(true);
+        // Clean URL parameter without reload
+        const url = new URL(window.location.href);
+        url.searchParams.delete('eventId');
+        window.history.replaceState(null, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''));
+      }
+    }
+  }, [events]);
+
   // Synchronize member layer filter when members load
   useEffect(() => {
     if (members.length > 0) {
@@ -113,21 +174,36 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     }
   }, [members]);
 
+  const fetchTasks = useCallback(async () => {
+    if (!user) {
+      setTasks([]);
+      return;
+    }
+    try {
+      const data = await api.getTasks();
+      setTasks(data);
+    } catch (err) {
+      console.error('Failed to load tasks:', err);
+    }
+  }, [user]);
+
   const fetchCalendarData = useCallback(async () => {
     if (!user) {
       setCalendars([]);
       setEvents([]);
       setEventTypes([]);
+      setTasks([]);
       return;
     }
 
     setIsLoading(true);
     try {
-      const [calsRes, evtsRes, gAccountsRes, eventTypesRes] = await Promise.all([
+      const [calsRes, evtsRes, gAccountsRes, eventTypesRes, tasksRes] = await Promise.all([
         api.getCalendars(),
         api.getEvents(),
         api.getGoogleAccounts().catch(() => []),
         api.getEventTypes().catch(() => []),
+        api.getTasks().catch(() => []),
       ]);
 
       const validCals = calsRes.filter(
@@ -138,6 +214,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
       setEvents(evtsRes);
       setGoogleAccounts(gAccountsRes);
       setEventTypes(eventTypesRes);
+      setTasks(tasksRes);
 
       // Default select all calendars initially if not set
       setSelectedCalendarIds((prev) => {
@@ -196,9 +273,19 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     return true;
   });
 
+  const openAddChoiceModal = (initialDate?: Date) => {
+    setAddChoiceInitialDate(initialDate || selectedCalendarDate || currentDate);
+    setIsAddChoiceModalOpen(true);
+  };
+
+  const closeAddChoiceModal = () => {
+    setIsAddChoiceModalOpen(false);
+    setAddChoiceInitialDate(null);
+  };
+
   const openCreateEventModal = (initialDate?: Date) => {
     setSelectedEvent(null);
-    setEventModalInitialDate(initialDate || currentDate);
+    setEventModalInitialDate(initialDate || selectedCalendarDate || currentDate);
     setIsEventModalOpen(true);
   };
 
@@ -212,6 +299,24 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     setIsEventModalOpen(false);
     setSelectedEvent(null);
     setEventModalInitialDate(null);
+  };
+
+  const openCreateTaskModal = (initialDate?: Date) => {
+    setEditingTask(null);
+    setTaskModalInitialDate(initialDate || selectedCalendarDate || currentDate);
+    setIsTaskModalOpen(true);
+  };
+
+  const openEditTaskModal = (task: Task) => {
+    setEditingTask(task);
+    setTaskModalInitialDate(task.due_date ? new Date(task.due_date) : new Date());
+    setIsTaskModalOpen(true);
+  };
+
+  const closeTaskModal = () => {
+    setIsTaskModalOpen(false);
+    setEditingTask(null);
+    setTaskModalInitialDate(null);
   };
 
   const toggleCalendarSelection = (id: string) => {
@@ -294,6 +399,35 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     await fetchCalendarData();
   };
 
+  const createTask = async (data: Partial<Task>) => {
+    const created = await api.createTask(data);
+    await fetchTasks();
+    return created;
+  };
+
+  const updateTask = async (id: string, data: Partial<Task>) => {
+    const updated = await api.updateTask(id, data);
+    await fetchTasks();
+    return updated;
+  };
+
+  const toggleTask = async (id: string) => {
+    const updated = await api.toggleTask(id);
+    await fetchTasks();
+    return updated;
+  };
+
+  const archiveTask = async (id: string) => {
+    const updated = await api.archiveTask(id);
+    await fetchTasks();
+    return updated;
+  };
+
+  const deleteTask = async (id: string) => {
+    await api.deleteTask(id);
+    await fetchTasks();
+  };
+
   const triggerGoogleSync = async () => {
     setIsSyncing(true);
     try {
@@ -313,11 +447,18 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         events,
         filteredEvents,
         eventTypes,
+        tasks,
         currentDate,
+        selectedCalendarDate,
         viewMode,
         selectedEvent,
         isEventModalOpen,
         eventModalInitialDate,
+        isAddChoiceModalOpen,
+        addChoiceInitialDate,
+        isTaskModalOpen,
+        taskModalInitialDate,
+        editingTask,
         selectedCalendarIds,
         selectedMemberIds,
         isSyncing,
@@ -326,13 +467,19 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         isLoading,
         navigationDirection,
         setCurrentDate,
+        setSelectedCalendarDate,
         setViewMode,
         goToPreviousPeriod,
         goToNextPeriod,
         goToToday,
+        openAddChoiceModal,
+        closeAddChoiceModal,
         openCreateEventModal,
         openEditEventModal,
         closeEventModal,
+        openCreateTaskModal,
+        openEditTaskModal,
+        closeTaskModal,
         toggleCalendarSelection,
         toggleMemberFilter,
         selectAllMembers,
@@ -340,6 +487,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         selectAllCalendars,
         deselectAllCalendars,
         fetchCalendarData,
+        fetchTasks,
         createEvent,
         updateEvent,
         deleteEvent,
@@ -349,6 +497,11 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         createEventType,
         updateEventType,
         deleteEventType,
+        createTask,
+        updateTask,
+        toggleTask,
+        archiveTask,
+        deleteTask,
         triggerGoogleSync,
       }}
     >

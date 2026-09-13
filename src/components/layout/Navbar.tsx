@@ -3,13 +3,14 @@ import { useAuth } from '../../context/AuthContext';
 import {
   Calendar as CalIcon,
   Users,
+  CheckSquare,
   Bell,
   Settings,
   SlidersHorizontal,
 } from 'lucide-react';
 import { getPastelColorInfo } from '../../utils/colors';
 
-export type MainTabType = 'calendar' | 'family' | 'notifications' | 'settings' | 'profile';
+export type MainTabType = 'calendar' | 'family' | 'tasks' | 'notifications' | 'settings' | 'profile';
 
 interface NavbarProps {
   activeTab: MainTabType;
@@ -54,12 +55,13 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
         </button>
       </div>
 
-      {/* PC Center Navigation Tabs: Calendar | Family | Notifications | Settings */}
+      {/* PC Center Navigation Tabs: Calendar | Family | Tasks | Notifications | Settings */}
       <nav className="hidden md:flex items-center gap-2">
         {(
           [
             { id: 'calendar', label: 'Calendar', icon: CalIcon },
             { id: 'family', label: 'Family', icon: Users },
+            { id: 'tasks', label: 'Tasks', icon: CheckSquare },
             { id: 'notifications', label: 'Notifications', icon: Bell },
             { id: 'settings', label: 'Settings', icon: Settings },
           ] as const
@@ -71,7 +73,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
               key={tab.id}
               id={`nav-tab-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              className={`flex items-center gap-2 px-3.5 lg:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 isActive
                   ? 'bg-blue-50 text-blue-600 font-bold'
                   : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'

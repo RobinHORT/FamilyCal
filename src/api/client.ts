@@ -220,8 +220,19 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  updateTask: (id: string, data: Partial<Task>) =>
+    fetchJson<Task>(`/api/tasks/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
   toggleTask: (id: string) =>
     fetchJson<Task>(`/api/tasks/${id}/toggle`, {
+      method: 'POST',
+    }),
+
+  archiveTask: (id: string) =>
+    fetchJson<Task>(`/api/tasks/${id}/archive`, {
       method: 'POST',
     }),
 

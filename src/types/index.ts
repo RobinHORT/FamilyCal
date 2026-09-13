@@ -126,6 +126,7 @@ export interface CalendarEvent {
   recurring_rule: RecurrenceRule;
   recurring_until?: string | null;
   assigned_member_ids: string[];
+  reminder_minutes?: number | null;
   google_event_id?: string | null;
   google_calendar_id?: string | null;
   sync_status: SyncStatus;
@@ -143,13 +144,17 @@ export interface Task {
   description?: string | null;
   due_date?: string | null;
   due_time?: string | null;
+  reminder_minutes?: number | null;
   completed: boolean;
   completed_at?: string | null;
+  is_archived?: boolean | number;
   assigned_member_id?: string | null;
   member_name?: string | null;
   member_color?: string | null;
   member_avatar?: string | null;
   priority: Priority;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface BirthdayItem {

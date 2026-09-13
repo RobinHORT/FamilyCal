@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Calendar,
   Users,
+  CheckSquare,
   Bell,
   Settings,
 } from 'lucide-react';
@@ -16,6 +17,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activeTab, setActiveTab })
   const tabs = [
     { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'family', label: 'Family', icon: Users },
+    { id: 'tasks', label: 'Tasks', icon: CheckSquare },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'settings', label: 'Settings', icon: Settings },
   ] as const;

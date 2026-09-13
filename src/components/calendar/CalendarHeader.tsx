@@ -35,11 +35,13 @@ export const CalendarHeader: React.FC = () => {
   const {
     currentDate,
     setCurrentDate,
+    selectedCalendarDate,
     viewMode,
     setViewMode,
     goToPreviousPeriod,
     goToNextPeriod,
     goToToday,
+    openAddChoiceModal,
     openCreateEventModal,
     calendars,
     selectedCalendarIds,
@@ -385,15 +387,15 @@ export const CalendarHeader: React.FC = () => {
             <ChevronRight className="w-4 h-4" />
           </button>
 
-          {/* Add Event Button */}
+          {/* Add Button */}
           {canCreateEvent && (
             <button
               id="cal-add-event-btn"
-              onClick={() => openCreateEventModal()}
+              onClick={() => openAddChoiceModal(selectedCalendarDate || currentDate)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-98"
             >
               <Plus className="w-4 h-4" />
-              <span>Add Event</span>
+              <span>Add</span>
             </button>
           )}
         </div>

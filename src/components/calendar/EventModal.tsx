@@ -17,6 +17,8 @@ import {
   Globe,
   Check,
   Sparkles,
+  Bell,
+  BellOff,
 } from 'lucide-react';
 import {
   PREDEFINED_EVENT_TYPES,
@@ -24,6 +26,11 @@ import {
   getEventTypeInfo,
   getEventAssignmentInfo,
 } from '../../utils/colors';
+import {
+  getNotificationPermission,
+  requestNotificationPermission,
+  NotificationPermissionState,
+} from '../../utils/taskNotifications';
 
 export const EventModal: React.FC = () => {
   const {
@@ -55,6 +62,8 @@ export const EventModal: React.FC = () => {
   const [recurringRule, setRecurringRule] = useState<RecurrenceRule>('none');
   const [recurringUntil, setRecurringUntil] = useState('');
   const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
+  const [permState, setPermState] = useState<NotificationPermissionState>('default');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,6 +96,11 @@ export const EventModal: React.FC = () => {
       setAllDay(Boolean(selectedEvent.all_day));
       setRecurringRule(selectedEvent.recurring_rule || 'none');
       setRecurringUntil(selectedEvent.recurring_until ? selectedEvent.recurring_until.slice(0, 10) : '');
+      setReminderMinutes(
+        selectedEvent.reminder_minutes !== undefined && selectedEvent.reminder_minutes !== null
+          ? Number(selectedEvent.reminder_minutes)
+          : null
+      );
 
       const isSharedCal = sharedCalendars.some((c) => c.id === selectedEvent.calendar_id);
       if (isSharedCal) {
@@ -120,6 +134,7 @@ export const EventModal: React.FC = () => {
       setAllDay(false);
       setRecurringRule('none');
       setRecurringUntil('');
+      setReminderMinutes(null);
 
       // Default Calendar & Member assignment
       setSelectedCalendarOption('SELECTED_MEMBERS');
@@ -132,6 +147,7 @@ export const EventModal: React.FC = () => {
         setCalendarId(calendars.find((c) => c.name !== 'Family Hub')?.id || '');
       }
     }
+    setPermState(getNotificationPermission());
     setError(null);
   }, [isEventModalOpen, selectedEvent, eventModalInitialDate, calendars, members]);
 
@@ -238,6 +254,7 @@ export const EventModal: React.FC = () => {
         recurring_rule: recurringRule,
         recurring_until: recurringUntil ? `${recurringUntil}T23:59:59Z` : null,
         assigned_member_ids: finalAssignedMemberIds,
+        reminder_minutes: reminderMinutes,
       };
 
       if (selectedEvent) {
@@ -251,6 +268,11 @@ export const EventModal: React.FC = () => {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleRequestPermissionClick = async () => {
+    const res = await requestNotificationPermission();
+    setPermState(res);
   };
 
   const handleDelete = async () => {
@@ -736,6 +758,68 @@ export const EventModal: React.FC = () => {
                   onChange={(e) => setRecurringUntil(e.target.value)}
                   className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 text-xs text-gray-900 focus:outline-none focus:border-gray-900"
                 />
+              </div>
+            )}
+          </div>
+
+          {/* Reminder (Device Notification) */}
+          <div className="pt-1">
+            <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Bell className="w-3.5 h-3.5 text-gray-500" /> Reminder (Device Notification)
+              </span>
+              <span className="text-[10px] text-gray-400 font-normal">
+                Only involved members receive alert
+              </span>
+            </label>
+            <select
+              id="event-reminder-select"
+              value={reminderMinutes === null ? '' : reminderMinutes}
+              disabled={!canSave}
+              onChange={(e) => {
+                const val = e.target.value;
+                setReminderMinutes(val === '' ? null : Number(val));
+              }}
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 cursor-pointer disabled:opacity-70 font-medium"
+            >
+              <option value="">No reminder</option>
+              <option value="0">At start of event</option>
+              <option value="5">5 minutes before</option>
+              <option value="15">15 minutes before</option>
+              <option value="30">30 minutes before</option>
+              <option value="60">1 hour before</option>
+              <option value="1440">1 day before</option>
+            </select>
+
+            {reminderMinutes !== null && (
+              <div className="mt-2 space-y-1.5">
+                {permState === 'default' && (
+                  <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-xs flex items-center justify-between gap-2">
+                    <span>Enable device notifications to receive this reminder on your phone or PC.</span>
+                    <button
+                      type="button"
+                      onClick={handleRequestPermissionClick}
+                      className="px-2.5 py-1 bg-blue-600 text-white font-bold text-[11px] rounded-lg hover:bg-blue-700 shrink-0 cursor-pointer"
+                    >
+                      Allow
+                    </button>
+                  </div>
+                )}
+
+                {permState === 'denied' && (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-start gap-2">
+                    <BellOff className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                    <span>
+                      Notifications are blocked in your browser settings. To receive event reminders on your lock screen or notification shade, please allow notifications for FamilyCal in your browser / OS settings.
+                    </span>
+                  </div>
+                )}
+
+                {permState === 'granted' && (
+                  <p className="text-[11px] text-gray-500">
+                    A real OS/device notification will be sent to the assigned family member(s) before this event starts. Tapping it opens this event directly.
+                  </p>
+                )}
               </div>
             )}
           </div>

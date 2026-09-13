@@ -1,24 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
-import { Task, FamilyMember, GoogleSyncLog } from '../../types';
+import { GoogleSyncLog } from '../../types';
 import { useFamily } from '../../context/FamilyContext';
 import { useCalendar } from '../../context/CalendarContext';
-import { useAuth } from '../../context/AuthContext';
 import {
   Bell,
   Cake,
-  CheckSquare,
-  Square,
   Globe,
   Clock,
-  Sparkles,
-  Calendar,
   AlertCircle,
   CheckCircle2,
   RefreshCw,
-  Gift,
-  Plus,
-  ArrowRight,
 } from 'lucide-react';
 import { format, differenceInDays, addYears, isAfter } from 'date-fns';
 import { getPastelColorInfo } from '../../utils/colors';
@@ -26,24 +18,15 @@ import { getPastelColorInfo } from '../../utils/colors';
 export const NotificationsView: React.FC = () => {
   const { members } = useFamily();
   const { isSyncing, lastSyncedAt, triggerGoogleSync, googleAccounts } = useCalendar();
-  const { user } = useAuth();
 
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [syncLogs, setSyncLogs] = useState<GoogleSyncLog[]>([]);
-  const [filter, setFilter] = useState<'all' | 'birthdays' | 'tasks' | 'sync'>('all');
+  const [filter, setFilter] = useState<'all' | 'birthdays' | 'sync'>('all');
   const [isLoading, setIsLoading] = useState(false);
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskMemberId, setNewTaskMemberId] = useState('');
-  const [isAddingTask, setIsAddingTask] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [tasksRes, logsRes] = await Promise.all([
-        api.getTasks().catch(() => []),
-        api.getGoogleLogs().catch(() => []),
-      ]);
-      setTasks(tasksRes);
+      const logsRes = await api.getGoogleLogs().catch(() => []);
       setSyncLogs(logsRes);
     } catch (err) {
       console.error('Failed to load notifications data:', err);
@@ -56,39 +39,12 @@ export const NotificationsView: React.FC = () => {
     loadData();
   }, []);
 
-  const handleToggleTask = async (task: Task) => {
-    try {
-      const updated = await api.toggleTask(task.id);
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-    } catch (err) {
-      console.error('Failed to toggle task:', err);
-    }
-  };
-
-  const handleCreateTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTaskTitle.trim()) return;
-    try {
-      const created = await api.createTask({
-        title: newTaskTitle.trim(),
-        assigned_member_id: newTaskMemberId || null,
-        priority: 'medium',
-      });
-      setTasks((prev) => [created, ...prev]);
-      setNewTaskTitle('');
-      setNewTaskMemberId('');
-      setIsAddingTask(false);
-    } catch (err) {
-      console.error('Failed to create task:', err);
-    }
-  };
-
   // Calculate upcoming birthdays
   const today = new Date();
   const activeMembersWithBirthday = members
-    .filter((m) => m.birth_date && m.is_active !== 0)
+    .filter((m) => m.birthday && m.is_active !== 0)
     .map((m) => {
-      const bDate = new Date(m.birth_date!);
+      const bDate = new Date(m.birthday!);
       let nextBirthday = new Date(today.getFullYear(), bDate.getMonth(), bDate.getDate());
       if (isAfter(today, nextBirthday) && differenceInDays(today, nextBirthday) > 0) {
         nextBirthday = addYears(nextBirthday, 1);
@@ -104,8 +60,6 @@ export const NotificationsView: React.FC = () => {
     })
     .sort((a, b) => a.daysUntil - b.daysUntil);
 
-  const pendingTasks = tasks.filter((t) => t.status !== 'completed');
-
   return (
     <div id="notifications-view-container" className="max-w-4xl mx-auto w-full space-y-6 pb-12">
       {/* View Header */}
@@ -116,7 +70,7 @@ export const NotificationsView: React.FC = () => {
             Notifications & Family Activity
           </h2>
           <p className="text-xs text-gray-500 mt-1">
-            Stay updated with upcoming family birthdays, household tasks, and calendar sync logs.
+            Stay updated with upcoming family birthdays and calendar sync logs.
           </p>
         </div>
 
@@ -126,7 +80,6 @@ export const NotificationsView: React.FC = () => {
             [
               { id: 'all', label: 'All Updates' },
               { id: 'birthdays', label: `Birthdays (${activeMembersWithBirthday.length})` },
-              { id: 'tasks', label: `Tasks (${pendingTasks.length})` },
               { id: 'sync', label: 'Sync Log' },
             ] as const
           ).map((t) => (
@@ -216,121 +169,7 @@ export const NotificationsView: React.FC = () => {
         </div>
       )}
 
-      {/* 2. Household Tasks Section */}
-      {(filter === 'all' || filter === 'tasks') && (
-        <div className="space-y-3 pt-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wider flex items-center gap-2">
-              <CheckSquare className="w-4 h-4 text-emerald-600" />
-              Household Tasks & To-Dos
-            </h3>
-
-            <button
-              onClick={() => setIsAddingTask(!isAddingTask)}
-              className="text-xs font-semibold text-[#DB2777] hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" /> Add Task
-            </button>
-          </div>
-
-          {/* Quick Add Task inline */}
-          {isAddingTask && (
-            <form onSubmit={handleCreateTask} className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs space-y-3">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  required
-                  placeholder="Task title (e.g. Buy groceries, Pick up dry cleaning...)"
-                  value={newTaskTitle}
-                  onChange={(e) => setNewTaskTitle(e.target.value)}
-                  className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-[#DB2777]"
-                />
-                <select
-                  value={newTaskMemberId}
-                  onChange={(e) => setNewTaskMemberId(e.target.value)}
-                  className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-700 focus:outline-none focus:border-[#DB2777]"
-                >
-                  <option value="">Assign to Anyone</option>
-                  {members.filter((m) => m.is_active !== 0).map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800 cursor-pointer"
-                >
-                  Add
-                </button>
-              </div>
-            </form>
-          )}
-
-          {tasks.length === 0 ? (
-            <div className="p-6 text-center bg-white rounded-2xl border border-gray-200 text-gray-400 text-xs">
-              No tasks currently pending.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {tasks.slice(0, 10).map((task) => {
-                const assignedMember = members.find((m) => m.id === task.assigned_member_id);
-                const isDone = task.status === 'completed';
-
-                return (
-                  <div
-                    key={task.id}
-                    className={`p-3.5 rounded-2xl bg-white border border-gray-200 flex items-center justify-between gap-3 transition-colors ${
-                      isDone ? 'opacity-50' : 'hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <button
-                        onClick={() => handleToggleTask(task)}
-                        className="text-gray-400 hover:text-emerald-600 transition-colors cursor-pointer"
-                      >
-                        {isDone ? (
-                          <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                        ) : (
-                          <Square className="w-5 h-5" />
-                        )}
-                      </button>
-
-                      <div className="min-w-0">
-                        <span
-                          className={`text-xs font-semibold block truncate ${
-                            isDone ? 'line-through text-gray-400' : 'text-gray-900'
-                          }`}
-                        >
-                          {task.title}
-                        </span>
-                        {task.due_date && (
-                          <span className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
-                            <Clock className="w-3 h-3" /> Due: {format(new Date(task.due_date), 'MMM d')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {assignedMember && (
-                      <span
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 border"
-                        style={{
-                          backgroundColor: getPastelColorInfo(assignedMember.color).bgSoft,
-                          color: getPastelColorInfo(assignedMember.color).textHex,
-                          borderColor: getPastelColorInfo(assignedMember.color).borderHex,
-                        }}
-                      >
-                        {assignedMember.name}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 3. Google Calendar Sync & Activity Log */}
+      {/* 2. Google Calendar Sync & Activity Log */}
       {(filter === 'all' || filter === 'sync') && (
         <div className="space-y-3 pt-2">
           <div className="flex items-center justify-between">
@@ -385,7 +224,7 @@ export const NotificationsView: React.FC = () => {
                           <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
                         )}
                         <span className="text-gray-800 font-medium">
-                          {log.events_synced} events synced ({log.direction})
+                          {log.events_synced} events synced ({log.sync_type || 'auto'})
                         </span>
                       </div>
                       <span className="text-[10px] text-gray-400 font-mono">
