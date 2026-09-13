@@ -73,7 +73,9 @@ export const CalendarHeader: React.FC = () => {
   const activeMembers = members.filter((m) => m.is_active !== 0);
 
   // Group calendars into Member Calendars and Family-wide / Non-login Calendar Layers
-  const familyCalendarLayers = calendars.filter((c) => !c.member_id);
+  const familyCalendarLayers = calendars.filter(
+    (c) => !c.member_id && c.name !== 'Family Hub' && c.name.toLowerCase() !== 'family hub'
+  );
   const memberCalendars = calendars.filter((c) => !!c.member_id);
 
   const handlePrev = () => {

@@ -52,7 +52,9 @@ export const Sidebar: React.FC = () => {
   const [newCalMemberId, setNewCalMemberId] = useState('');
 
   const activeMembers = members.filter((m) => m.is_active !== 0);
-  const familyCalendarLayers = calendars.filter((c) => !c.member_id);
+  const familyCalendarLayers = calendars.filter(
+    (c) => !c.member_id && c.name !== 'Family Hub' && c.name.toLowerCase() !== 'family hub'
+  );
 
   const toggleHouseholdCalendars = () => {
     setIsCalendarsCollapsed((prev) => {

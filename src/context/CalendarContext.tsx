@@ -130,15 +130,19 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         api.getEventTypes().catch(() => []),
       ]);
 
-      setCalendars(calsRes);
+      const validCals = calsRes.filter(
+        (c) => c.name !== 'Family Hub' && c.name.toLowerCase() !== 'family hub'
+      );
+
+      setCalendars(validCals);
       setEvents(evtsRes);
       setGoogleAccounts(gAccountsRes);
       setEventTypes(eventTypesRes);
 
       // Default select all calendars initially if not set
       setSelectedCalendarIds((prev) => {
-        if (prev.length === 0 && calsRes.length > 0) {
-          return calsRes.map((c) => c.id);
+        if (prev.length === 0 && validCals.length > 0) {
+          return validCals.map((c) => c.id);
         }
         return prev;
       });

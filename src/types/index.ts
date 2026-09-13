@@ -97,7 +97,7 @@ export interface Calendar {
   sync_enabled: number;
 }
 
-export type RecurrenceRule = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+export type RecurrenceRule = 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly';
 export type SyncStatus = 'local_only' | 'synced' | 'pending';
 
 export interface EventType {

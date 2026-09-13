@@ -5,6 +5,7 @@ import {
   addDays,
   isSameDay,
   isToday,
+  differenceInCalendarDays,
 } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCalendar } from '../../context/CalendarContext';
@@ -51,6 +52,12 @@ export const WeekView: React.FC = () => {
       }
       if (evt.recurring_rule === 'weekly' && day >= evtStart) {
         if (day.getDay() === evtStart.getDay()) {
+          if (!evt.recurring_until || day <= new Date(evt.recurring_until)) return true;
+        }
+      }
+      if (evt.recurring_rule === 'biweekly' && day >= evtStart) {
+        const diffDays = differenceInCalendarDays(day, evtStart);
+        if (diffDays >= 0 && diffDays % 14 === 0) {
           if (!evt.recurring_until || day <= new Date(evt.recurring_until)) return true;
         }
       }

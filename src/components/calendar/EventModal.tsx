@@ -45,6 +45,7 @@ export const EventModal: React.FC = () => {
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   const [calendarId, setCalendarId] = useState('');
+  const [selectedCalendarOption, setSelectedCalendarOption] = useState<string>('SELECTED_MEMBERS');
   const [eventType, setEventType] = useState('Other');
   const [startDate, setStartDate] = useState('');
   const [startTime, setStartTime] = useState('09:00');
@@ -63,6 +64,17 @@ export const EventModal: React.FC = () => {
   // Available event types (either loaded from database or predefined fallback)
   const availableEventTypes = eventTypes && eventTypes.length > 0 ? eventTypes : PREDEFINED_EVENT_TYPES;
 
+  const sharedCalendars = calendars.filter(
+    (c) => !c.member_id && c.name !== 'Family Hub' && c.name.toLowerCase() !== 'family hub'
+  );
+
+  const selectedMembersList = members.filter((m) => assignedMemberIds.includes(m.id));
+  const selectedMemberNames = selectedMembersList.map((m) => m.name).join(', ');
+  const selectedMembersLabel =
+    selectedMembersList.length > 0
+      ? `Selected Members (${selectedMemberNames})`
+      : 'Selected Members';
+
   // Initialize form when modal opens or selectedEvent changes
   useEffect(() => {
     if (!isEventModalOpen) return;
@@ -71,11 +83,19 @@ export const EventModal: React.FC = () => {
       setTitle(selectedEvent.title);
       setDescription(selectedEvent.description || '');
       setLocation(selectedEvent.location || '');
-      setCalendarId(selectedEvent.calendar_id);
       setEventType(selectedEvent.event_type || 'Other');
       setAllDay(Boolean(selectedEvent.all_day));
       setRecurringRule(selectedEvent.recurring_rule || 'none');
       setRecurringUntil(selectedEvent.recurring_until ? selectedEvent.recurring_until.slice(0, 10) : '');
+
+      const isSharedCal = sharedCalendars.some((c) => c.id === selectedEvent.calendar_id);
+      if (isSharedCal) {
+        setSelectedCalendarOption(selectedEvent.calendar_id);
+        setCalendarId(selectedEvent.calendar_id);
+      } else {
+        setSelectedCalendarOption('SELECTED_MEMBERS');
+        setCalendarId(selectedEvent.calendar_id);
+      }
       setAssignedMemberIds(selectedEvent.assigned_member_ids || []);
 
       const sDate = new Date(selectedEvent.start_time);
@@ -102,20 +122,14 @@ export const EventModal: React.FC = () => {
       setRecurringUntil('');
 
       // Default Calendar & Member assignment
-      const defaultCal = calendars.find((c) => c.is_default) || calendars[0];
-      if (defaultCal) {
-        setCalendarId(defaultCal.id);
-        if (defaultCal.member_id) {
-          setAssignedMemberIds([defaultCal.member_id]);
-        } else if (members.length > 0) {
-          setAssignedMemberIds([members[0].id]);
-        } else {
-          setAssignedMemberIds([]);
-        }
-      } else if (members.length > 0) {
+      setSelectedCalendarOption('SELECTED_MEMBERS');
+      if (members.length > 0) {
         setAssignedMemberIds([members[0].id]);
+        const matchingCal = calendars.find((c) => c.member_id === members[0].id);
+        setCalendarId(matchingCal?.id || calendars.find((c) => c.name !== 'Family Hub')?.id || '');
       } else {
         setAssignedMemberIds([]);
+        setCalendarId(calendars.find((c) => c.name !== 'Family Hub')?.id || '');
       }
     }
     setError(null);
@@ -142,10 +156,12 @@ export const EventModal: React.FC = () => {
 
   const handleSelectWholeFamily = () => {
     setAssignedMemberIds(members.map((m) => m.id));
+    setSelectedCalendarOption('SELECTED_MEMBERS');
   };
 
   const handleSelectSingleMember = (memberId: string) => {
     setAssignedMemberIds([memberId]);
+    setSelectedCalendarOption('SELECTED_MEMBERS');
     const matchingCal = calendars.find((c) => c.member_id === memberId);
     if (matchingCal) {
       setCalendarId(matchingCal.id);
@@ -153,6 +169,7 @@ export const EventModal: React.FC = () => {
   };
 
   const toggleMemberAssignment = (memberId: string) => {
+    setSelectedCalendarOption('SELECTED_MEMBERS');
     setAssignedMemberIds((prev) => {
       if (prev.includes(memberId)) {
         return prev.filter((id) => id !== memberId);
@@ -188,17 +205,31 @@ export const EventModal: React.FC = () => {
         endIso = new Date(`${endDate || startDate}T${endTime}:00`).toISOString();
       }
 
-      const selectedCal = calendars.find((c) => c.id === calendarId);
-      // Member colour or dedicated calendar layer colour
-      const finalColor = previewAssignment.isFamilyEvent
-        ? previewAssignment.adminMember?.color || '#FF4FA3'
-        : previewAssignment.singleMember?.color || selectedCal?.color || '#FF4FA3';
+      let targetCalendarId = calendarId;
+      let finalAssignedMemberIds: string[] = [];
+
+      if (selectedCalendarOption === 'SELECTED_MEMBERS') {
+        finalAssignedMemberIds = assignedMemberIds;
+        const matchingCal = calendars.find((c) => c.member_id === assignedMemberIds[0]);
+        targetCalendarId = matchingCal?.id || calendarId || calendars.find((c) => c.name !== 'Family Hub')?.id || '';
+      } else {
+        targetCalendarId = selectedCalendarOption;
+        finalAssignedMemberIds = [];
+      }
+
+      const selectedCal = calendars.find((c) => c.id === targetCalendarId);
+      const finalColor =
+        selectedCalendarOption === 'SELECTED_MEMBERS'
+          ? (previewAssignment.isFamilyEvent
+              ? previewAssignment.adminMember?.color || '#FF4FA3'
+              : previewAssignment.singleMember?.color || selectedCal?.color || '#FF4FA3')
+          : (selectedCal?.color || '#FF4FA3');
 
       const eventPayload: Partial<CalendarEvent> = {
         title: title.trim(),
         description: description.trim() || null,
         location: location.trim() || null,
-        calendar_id: calendarId || calendars[0]?.id,
+        calendar_id: targetCalendarId,
         color: finalColor,
         event_type: eventType,
         start_time: startIso,
@@ -206,7 +237,7 @@ export const EventModal: React.FC = () => {
         all_day: allDay,
         recurring_rule: recurringRule,
         recurring_until: recurringUntil ? `${recurringUntil}T23:59:59Z` : null,
-        assigned_member_ids: assignedMemberIds,
+        assigned_member_ids: finalAssignedMemberIds,
       };
 
       if (selectedEvent) {
@@ -687,6 +718,7 @@ export const EventModal: React.FC = () => {
                 <option value="none">Does not repeat</option>
                 <option value="daily">Every day</option>
                 <option value="weekly">Every week</option>
+                <option value="biweekly">Every 2 weeks</option>
                 <option value="monthly">Every month</option>
                 <option value="yearly">Every year</option>
               </select>
@@ -715,16 +747,32 @@ export const EventModal: React.FC = () => {
             </label>
             <select
               id="event-calendar-select"
-              value={calendarId}
+              value={selectedCalendarOption}
               disabled={!canSave}
-              onChange={(e) => setCalendarId(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedCalendarOption(val);
+                if (val !== 'SELECTED_MEMBERS') {
+                  setCalendarId(val);
+                }
+              }}
               className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 cursor-pointer disabled:opacity-70 font-medium"
             >
-              {calendars.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} {c.member_name ? `(${c.member_name})` : ''}
+              <optgroup label="Members">
+                <option value="SELECTED_MEMBERS">
+                  {selectedMembersLabel}
                 </option>
-              ))}
+              </optgroup>
+
+              {sharedCalendars.length > 0 && (
+                <optgroup label="Shared Calendars">
+                  {sharedCalendars.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
 

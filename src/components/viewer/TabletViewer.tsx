@@ -9,6 +9,7 @@ import {
   isSameMonth,
   isSameDay,
   isToday,
+  differenceInCalendarDays,
 } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCalendar } from '../../context/CalendarContext';
@@ -106,6 +107,12 @@ export const TabletViewer: React.FC<TabletViewerProps> = ({ onExit }) => {
       }
       if (evt.recurring_rule === 'weekly' && dayDate >= evtStart) {
         if (dayDate.getDay() === evtStart.getDay()) {
+          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
+        }
+      }
+      if (evt.recurring_rule === 'biweekly' && dayDate >= evtStart) {
+        const diffDays = differenceInCalendarDays(dayDate, evtStart);
+        if (diffDays >= 0 && diffDays % 14 === 0) {
           if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
         }
       }

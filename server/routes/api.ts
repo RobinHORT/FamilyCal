@@ -919,7 +919,7 @@ router.get('/calendars', authenticateToken, (req: AuthRequest, res: Response) =>
         m.color as member_color
       FROM calendars c
       LEFT JOIN family_members m ON c.member_id = m.id AND m.family_id = c.family_id
-      WHERE c.family_id = ?
+      WHERE c.family_id = ? AND c.name != 'Family Hub'
     `;
     const params: any[] = [req.user!.family_id];
 
@@ -1329,10 +1329,10 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
       return res.status(400).json({ error: 'Title, start time, and end time are required.' });
     }
 
-    // Default to first family calendar if not provided
+    // Default to first non-Family-Hub calendar if not provided
     let targetCalId = calendar_id;
     if (!targetCalId) {
-      const defaultCal = db.prepare('SELECT id FROM calendars WHERE family_id = ? ORDER BY is_default DESC LIMIT 1').get(
+      const defaultCal = db.prepare("SELECT id FROM calendars WHERE family_id = ? AND name != 'Family Hub' ORDER BY is_default DESC, created_at ASC LIMIT 1").get(
         req.user!.family_id
       ) as { id: string } | undefined;
       targetCalId = defaultCal?.id;
@@ -1341,10 +1341,20 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
     const eventId = 'evt_' + uuidv4().slice(0, 8);
     const now = new Date().toISOString();
 
-    const cal = db.prepare('SELECT * FROM calendars WHERE id = ? AND family_id = ?').get(
+    let cal = db.prepare('SELECT * FROM calendars WHERE id = ? AND family_id = ?').get(
       targetCalId,
       req.user!.family_id
     ) as any;
+
+    if (cal && cal.name === 'Family Hub') {
+      const altCal = db.prepare("SELECT * FROM calendars WHERE family_id = ? AND name != 'Family Hub' ORDER BY is_default DESC, created_at ASC LIMIT 1").get(
+        req.user!.family_id
+      ) as any;
+      if (altCal) {
+        cal = altCal;
+        targetCalId = altCal.id;
+      }
+    }
 
     // Automatically inherit member assignment from calendar if not explicitly provided
     let finalMemberIds: string[] = [];

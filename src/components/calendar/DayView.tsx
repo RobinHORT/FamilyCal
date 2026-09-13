@@ -2,6 +2,7 @@ import React from 'react';
 import {
   format,
   isSameDay,
+  differenceInCalendarDays,
 } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCalendar } from '../../context/CalendarContext';
@@ -34,7 +35,35 @@ export const DayView: React.FC = () => {
   const dayEvents = filteredEvents.filter((evt) => {
     const evtStart = new Date(evt.start_time);
     const evtEnd = new Date(evt.end_time);
-    return isSameDay(evtStart, currentDate) || (currentDate >= evtStart && currentDate <= evtEnd);
+
+    if (isSameDay(evtStart, currentDate) || (currentDate >= evtStart && currentDate <= evtEnd)) return true;
+
+    if (evt.recurring_rule === 'daily' && currentDate >= evtStart) {
+      if (!evt.recurring_until || currentDate <= new Date(evt.recurring_until)) return true;
+    }
+    if (evt.recurring_rule === 'weekly' && currentDate >= evtStart) {
+      if (currentDate.getDay() === evtStart.getDay()) {
+        if (!evt.recurring_until || currentDate <= new Date(evt.recurring_until)) return true;
+      }
+    }
+    if (evt.recurring_rule === 'biweekly' && currentDate >= evtStart) {
+      const diffDays = differenceInCalendarDays(currentDate, evtStart);
+      if (diffDays >= 0 && diffDays % 14 === 0) {
+        if (!evt.recurring_until || currentDate <= new Date(evt.recurring_until)) return true;
+      }
+    }
+    if (evt.recurring_rule === 'monthly' && currentDate >= evtStart) {
+      if (currentDate.getDate() === evtStart.getDate()) {
+        if (!evt.recurring_until || currentDate <= new Date(evt.recurring_until)) return true;
+      }
+    }
+    if (evt.recurring_rule === 'yearly' && currentDate >= evtStart) {
+      if (currentDate.getMonth() === evtStart.getMonth() && currentDate.getDate() === evtStart.getDate()) {
+        if (!evt.recurring_until || currentDate <= new Date(evt.recurring_until)) return true;
+      }
+    }
+
+    return false;
   });
 
   const dayKey = format(currentDate, 'yyyy-MM-dd');
