@@ -54,7 +54,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return Boolean(user.permissions[key]);
   };
 
+  const isViewerModeActive =
+    user?.role === 'viewer' ||
+    (typeof window !== 'undefined' && (
+      localStorage.getItem('familycal_viewer_mode') === 'true' ||
+      window.location.pathname === '/viewer' ||
+      window.location.search.includes('mode=viewer') ||
+      window.location.search.includes('viewer=1')
+    ));
+
   const canEditEvent = (event?: CalendarEvent | null): boolean => {
+    if (isViewerModeActive) return false;
     if (!user || !event) return false;
     if (user.role === 'administrator') return true;
     if (hasPermission('event_edit_all')) return true;
@@ -73,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const canDeleteEvent = (event?: CalendarEvent | null): boolean => {
+    if (isViewerModeActive) return false;
     if (!user || !event) return false;
     if (user.role === 'administrator') return true;
     if (hasPermission('event_delete_all')) return true;

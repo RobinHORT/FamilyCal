@@ -8,13 +8,23 @@ import { DayView } from './DayView';
 import { AgendaView } from './AgendaView';
 import { Plus } from 'lucide-react';
 
-export function CalendarContainer() {
+interface CalendarContainerProps {
+  isViewer?: boolean;
+}
+
+export function CalendarContainer({ isViewer: isViewerProp }: CalendarContainerProps = {}) {
   const { viewMode, openCreateEventModal } = useCalendar();
   const { user, hasPermission, isAdmin } = useAuth();
 
   const isViewer =
-    user?.role === 'viewer' ||
-    (typeof window !== 'undefined' && localStorage.getItem('familycal_viewer_mode') === 'true');
+    isViewerProp ??
+    (user?.role === 'viewer' ||
+    (typeof window !== 'undefined' && (
+      localStorage.getItem('familycal_viewer_mode') === 'true' ||
+      window.location.pathname === '/viewer' ||
+      window.location.search.includes('mode=viewer') ||
+      window.location.search.includes('viewer=1')
+    )));
 
   const canCreateEvent = !isViewer && (isAdmin || hasPermission('event_create'));
 
@@ -23,7 +33,7 @@ export function CalendarContainer() {
       <CalendarHeader />
       <div className="flex-1 flex flex-col min-h-0">
         {viewMode === 'month' && <MonthView />}
-        {viewMode === 'week' && <WeekView />}
+        {viewMode === 'week' && <WeekView isViewer={isViewer} />}
         {viewMode === 'day' && <DayView />}
         {viewMode === 'agenda' && <AgendaView />}
       </div>
