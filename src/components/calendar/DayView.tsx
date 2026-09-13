@@ -126,7 +126,7 @@ export const DayView: React.FC<DayViewProps> = ({
 
       {/* Daily Schedule Stream */}
       <div
-        className={`flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-white scrollbar-thin min-h-0 ${
+        className={`flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-white scrollbar-thin min-h-0 w-full max-w-full min-w-0 ${
           !isEmbedded ? 'pb-calendar-mobile md:pb-4' : ''
         }`}
       >
@@ -145,7 +145,7 @@ export const DayView: React.FC<DayViewProps> = ({
               y: isEmbedded ? -6 : 0,
             }}
             transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
-            className="space-y-3"
+            className="space-y-3 w-full max-w-full min-w-0"
           >
             {dayEvents.length === 0 ? (
               <div className="py-12 sm:py-16 text-center text-gray-400">

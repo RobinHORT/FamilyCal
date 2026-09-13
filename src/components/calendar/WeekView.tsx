@@ -279,7 +279,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
                   return (
                     <div
                       key={day.toISOString()}
-                      className="flex items-start gap-3 sm:gap-4 p-2.5 sm:p-3 rounded-2xl bg-white border border-gray-200/80 shadow-2xs hover:bg-gray-50/60 transition-colors"
+                      className="flex items-start gap-3 sm:gap-4 p-2.5 sm:p-3 rounded-2xl bg-white border border-gray-200/80 shadow-2xs hover:bg-gray-50/60 transition-colors w-full max-w-full min-w-0"
                     >
                       {/* Left Day/Date Column */}
                       <div className="w-14 sm:w-16 shrink-0 pt-0.5 flex flex-col items-start select-none">
@@ -296,7 +296,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
                       </div>
 
                       {/* Right Events Stack */}
-                      <div className="flex-1 flex flex-col gap-2.5">
+                      <div className="flex-1 min-w-0 max-w-full flex flex-col gap-2.5">
                         {dayEvents.length === 0 ? (
                           <div className="py-2.5 px-3 rounded-xl bg-gray-50/40 border border-dashed border-gray-200 text-gray-400 text-xs font-medium">
                             No events
@@ -391,7 +391,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
       <div
         id="mobile-week-calendar-container"
         {...swipeHandlers}
-        className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y"
+        className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
         style={{
           paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
         }}
@@ -409,14 +409,14 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
               x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
             }}
             transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
-            className="flex flex-col gap-4"
+            className="flex flex-col gap-4 w-full max-w-full min-w-0"
           >
             {weekDays.map((day) => {
               const dayEvents = getEventsForDay(day);
               const isDayToday = isToday(day);
 
               return (
-                <div key={day.toISOString()} className="flex items-start gap-3">
+                <div key={day.toISOString()} className="flex items-start gap-3 w-full max-w-full min-w-0">
                   {/* Left Day Column */}
                   <div className="w-12 shrink-0 pt-0.5 flex flex-col items-start select-none">
                     <span className="text-[11px] font-bold text-gray-400 uppercase">
@@ -432,9 +432,9 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
                   </div>
 
                   {/* Right Events Stack */}
-                  <div className="flex-1 flex flex-col gap-2.5">
+                  <div className="flex-1 min-w-0 max-w-full flex flex-col gap-2.5">
                     {dayEvents.length === 0 ? (
-                      <div className="py-2.5 px-3 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium">
+                      <div className="py-2.5 px-3 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium w-full">
                         No events
                       </div>
                     ) : (

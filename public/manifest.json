@@ -1,14 +1,16 @@
 {
   "id": "/",
-  "name": "FamilyCal",
+  "name": "Yimly FamilyCal",
   "short_name": "FamilyCal",
-  "description": "Self-hosted family calendar and organizer with shared schedules, tasks, and Google Calendar sync.",
+  "description": "Self-hosted family calendar and organizer",
+  "lang": "en-AU",
+  "dir": "ltr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#FFFFFF",
   "theme_color": "#FFFFFF",
-  "orientation": "portrait-primary",
   "icons": [
     {
       "src": "/favicon-16x16.png",
@@ -51,13 +53,11 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
-    },
-    {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
     }
   ],
-  "categories": ["lifestyle", "productivity", "family"]
+  "categories": [
+    "lifestyle",
+    "productivity",
+    "family"
+  ]
 }

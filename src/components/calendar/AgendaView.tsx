@@ -133,7 +133,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
       </div>
 
       {/* Events Stream */}
-      <div className="flex-1 overflow-y-auto max-h-[640px] p-4 pb-calendar-mobile md:pb-4 space-y-6 bg-white scrollbar-thin">
+      <div className="flex-1 overflow-y-auto max-h-[640px] p-4 pb-calendar-mobile md:pb-4 space-y-6 bg-white scrollbar-thin w-full max-w-full min-w-0">
         {isViewer ? (
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
@@ -148,7 +148,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
                 x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
               }}
               transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
-              className="space-y-6"
+              className="space-y-6 w-full max-w-full min-w-0"
             >
               {dateKeys.length === 0 ? (
                 <div className="py-16 text-center text-gray-400">
@@ -162,9 +162,9 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
                   const isDayToday = isToday(dateObj);
 
                   return (
-                    <div key={dateKey} className="space-y-2">
+                    <div key={dateKey} className="space-y-2 w-full max-w-full min-w-0">
                       {/* Date Group Heading */}
-                      <div className="flex items-center gap-2 sticky top-0 bg-white/95 backdrop-blur-xs py-1.5 z-10">
+                      <div className="flex items-center gap-2 sticky top-0 bg-white/95 backdrop-blur-xs py-1.5 z-10 w-full max-w-full min-w-0">
                         <span
                           className={`text-xs font-bold px-2.5 py-1 rounded-xl ${
                             isDayToday ? 'bg-gray-900 text-white shadow-xs' : 'bg-gray-100 text-gray-800 border border-gray-200'
@@ -179,7 +179,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
                       </div>
 
                       {/* Event Cards */}
-                      <div className="space-y-2.5 pl-1">
+                      <div className="space-y-2.5 pl-1 w-full max-w-full min-w-0">
                         {dayEvents.map((evt) => (
                           <EventCard
                             key={evt.id}
@@ -211,9 +211,9 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
                 const isDayToday = isToday(dateObj);
 
                 return (
-                  <div key={dateKey} className="space-y-2">
+                  <div key={dateKey} className="space-y-2 w-full max-w-full min-w-0">
                     {/* Date Group Heading */}
-                    <div className="flex items-center gap-2 sticky top-0 bg-white/95 backdrop-blur-xs py-1.5 z-10">
+                    <div className="flex items-center gap-2 sticky top-0 bg-white/95 backdrop-blur-xs py-1.5 z-10 w-full max-w-full min-w-0">
                       <span
                         className={`text-xs font-bold px-2.5 py-1 rounded-xl ${
                           isDayToday ? 'bg-gray-900 text-white shadow-xs' : 'bg-gray-100 text-gray-800 border border-gray-200'
@@ -228,7 +228,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
                     </div>
 
                     {/* Event Cards */}
-                    <div className="space-y-2.5 pl-1">
+                    <div className="space-y-2.5 pl-1 w-full max-w-full min-w-0">
                       {dayEvents.map((evt) => (
                         <EventCard
                           key={evt.id}

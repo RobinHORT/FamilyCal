@@ -39,7 +39,7 @@ export const EventCard: React.FC<EventCardProps> = ({
           : assignmentInfo.primaryColorInfo.hex,
         borderColor: assignmentInfo.borderHex,
       }}
-      className={`relative p-3.5 sm:p-4 rounded-2xl border shadow-2xs hover:shadow-md active:scale-99 transition-all cursor-pointer flex flex-col justify-between gap-2.5 group overflow-hidden ${className}`}
+      className={`relative p-3.5 sm:p-4 rounded-2xl border shadow-2xs hover:shadow-md active:scale-99 transition-all cursor-pointer flex flex-col justify-between gap-2.5 group overflow-hidden w-full max-w-full min-w-0 box-border ${className}`}
     >
       {/* Visible boundary dividers for multi-colour Family event card */}
       {assignmentInfo.isFamilyEvent && (
@@ -54,8 +54,8 @@ export const EventCard: React.FC<EventCardProps> = ({
       )}
 
       {/* Card Header: Member / Family Label + Event Type Badge */}
-      <div className="relative z-10 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="relative z-10 flex items-center justify-between gap-2 w-full max-w-full min-w-0 flex-wrap sm:flex-nowrap">
+        <div className="flex items-center gap-2 min-w-0 flex-1 max-w-full">
           {assignmentInfo.isFamilyEvent ? (
             <>
               {/* Administrator colour reference avatar */}
@@ -66,11 +66,11 @@ export const EventCard: React.FC<EventCardProps> = ({
               >
                 <Users className="w-3.5 h-3.5 stroke-[2.5]" />
               </div>
-              <span className="text-xs font-extrabold text-slate-900 tracking-tight">
+              <span className="text-xs font-extrabold text-slate-900 tracking-tight shrink-0">
                 Family
               </span>
               {/* Visual representation of all participating family members */}
-              <div className="flex -space-x-1 items-center ml-0.5">
+              <div className="flex -space-x-1 items-center ml-0.5 shrink-0">
                 {assignmentInfo.participatingMembers.map((m) => {
                   const mColor = getPastelColorInfo(m.color);
                   return (
@@ -102,7 +102,7 @@ export const EventCard: React.FC<EventCardProps> = ({
                   ? '🏖️'
                   : assignmentInfo.label.slice(0, 1).toUpperCase()}
               </div>
-              <span className="text-xs font-bold text-slate-800 tracking-tight truncate">
+              <span className="text-xs font-bold text-slate-800 tracking-tight truncate min-w-0 flex-1">
                 {assignmentInfo.label}
               </span>
             </>
@@ -110,44 +110,44 @@ export const EventCard: React.FC<EventCardProps> = ({
         </div>
 
         {/* Event Type Badge */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0 max-w-full">
           {event.recurring_rule && event.recurring_rule !== 'none' && (
-            <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-black/10 text-slate-800">
+            <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-black/10 text-slate-800 shrink-0">
               <Repeat className="w-2.5 h-2.5" />
             </span>
           )}
           {isGoogle && (
-            <span className="flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-900">
+            <span className="flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-900 shrink-0">
               <Globe className="w-2.5 h-2.5" />
             </span>
           )}
           <div
-            className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold text-white flex items-center gap-1 shadow-2xs"
+            className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold text-white flex items-center gap-1 shadow-2xs max-w-[140px] sm:max-w-none min-w-0"
             style={{ backgroundColor: eventType.bgHex }}
             title={eventType.name}
           >
-            <span>{eventType.icon}</span>
-            <span>{eventType.name}</span>
+            <span className="shrink-0">{eventType.icon}</span>
+            <span className="truncate">{eventType.name}</span>
           </div>
         </div>
       </div>
 
       {/* Card Body: Title & Time */}
-      <div className="relative z-10 flex flex-col">
-        <h4 className="text-sm font-bold text-slate-900 leading-snug group-hover:text-blue-900 transition-colors">
+      <div className="relative z-10 flex flex-col min-w-0 w-full max-w-full">
+        <h4 className="text-sm font-bold text-slate-900 leading-snug group-hover:text-blue-900 transition-colors w-full min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
           {event.title}
         </h4>
 
         {showDescription && event.description && (
-          <p className="text-xs text-slate-700 opacity-90 line-clamp-2 leading-relaxed mt-1">
+          <p className="text-xs text-slate-700 opacity-90 line-clamp-2 leading-relaxed mt-1 w-full min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
             {event.description}
           </p>
         )}
 
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 opacity-90 mt-1">
-          <span className="flex items-center gap-1">
-            <Clock className="w-3 h-3 opacity-70" />
-            <span>
+        <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-slate-700 opacity-90 mt-1 w-full min-w-0 max-w-full">
+          <span className="flex items-center gap-1 shrink-0">
+            <Clock className="w-3 h-3 opacity-70 shrink-0" />
+            <span className="whitespace-nowrap">
               {event.all_day
                 ? 'All Day'
                 : `${format(startD, 'h:mm a')} – ${format(endD, 'h:mm a')}`}
@@ -156,10 +156,10 @@ export const EventCard: React.FC<EventCardProps> = ({
 
           {showLocation && event.location && (
             <>
-              <span className="opacity-40">•</span>
-              <span className="flex items-center gap-1 truncate">
-                <MapPin className="w-3 h-3 opacity-70" />
-                <span className="truncate">{event.location}</span>
+              <span className="opacity-40 hidden sm:inline shrink-0">•</span>
+              <span className="flex items-center gap-1 min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
+                <MapPin className="w-3 h-3 opacity-70 shrink-0" />
+                <span className="truncate break-words [overflow-wrap:anywhere]">{event.location}</span>
               </span>
             </>
           )}

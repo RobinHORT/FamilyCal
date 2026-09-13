@@ -1,11 +1,10 @@
 // Service Worker for FamilyCal PWA
-const CACHE_NAME = 'familycal-pwa-v3';
-const ICON_CACHE = 'familycal-icons-v3';
+const CACHE_NAME = 'familycal-pwa-v4';
+const ICON_CACHE = 'familycal-icons-v4';
 
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
-  '/manifest.webmanifest',
   '/icon.svg',
   '/pwa-192x192.png',
   '/pwa-512x512.png',

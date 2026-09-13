@@ -29,9 +29,9 @@ export function CalendarContainer({ isViewer: isViewerProp }: CalendarContainerP
   const canCreateEvent = !isViewer && (isAdmin || hasPermission('event_create'));
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 h-full gap-3 sm:gap-4 max-w-7xl mx-auto w-full relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full gap-3 sm:gap-4 max-w-7xl mx-auto w-full max-w-full min-w-0 relative">
       <CalendarHeader />
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 w-full max-w-full min-w-0">
         {viewMode === 'month' && <MonthView isViewer={isViewer} />}
         {viewMode === 'week' && <WeekView isViewer={isViewer} />}
         {viewMode === 'day' && <DayView isViewer={isViewer} />}

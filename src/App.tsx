@@ -141,11 +141,11 @@ function MainDashboard() {
       />
 
       {/* Main Workspace Body */}
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex flex-1 overflow-hidden relative w-full max-w-full min-w-0">
         {/* Dynamic Center Stage (NO SIDEBAR) */}
         <main
           id="main-stage-content"
-          className="flex-1 flex flex-col overflow-y-auto p-3 sm:p-6 main-stage-scroll bg-[#FAFAFA]"
+          className="flex-1 flex flex-col overflow-y-auto p-3 sm:p-6 main-stage-scroll bg-[#FAFAFA] w-full max-w-full min-w-0"
         >
           {activeTab === 'calendar' && <CalendarContainer />}
           {activeTab === 'family' && <FamilyView />}

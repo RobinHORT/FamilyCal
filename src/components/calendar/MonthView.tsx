@@ -131,7 +131,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
         <div
           id="mobile-month-calendar-container"
           {...swipeHandlers}
-          className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y"
+          className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
           style={{
             paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
           }}
@@ -149,6 +149,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
                 x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
               }}
               transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
+              className="w-full max-w-full min-w-0"
             >
               <MonthGrid
                 currentDate={currentDate}
@@ -164,14 +165,14 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
           </AnimatePresence>
 
           {/* Selected Day Agenda Section */}
-          <div className="flex flex-col gap-3 pt-1">
-            <h3 className="text-base font-bold text-slate-900 px-1 font-serif tracking-tight">
+          <div className="flex flex-col gap-3 pt-1 w-full max-w-full min-w-0">
+            <h3 className="text-base font-bold text-slate-900 px-1 font-serif tracking-tight truncate">
               {format(selectedDay, 'EEEE, d MMMM')}
             </h3>
 
-            <div className="flex flex-col gap-2.5">
+            <div className="flex flex-col gap-2.5 w-full max-w-full min-w-0">
               {selectedDayEvents.length === 0 ? (
-                <div className="py-6 px-4 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium text-center shadow-2xs">
+                <div className="py-6 px-4 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium text-center shadow-2xs w-full">
                   No events scheduled for this date
                 </div>
               ) : (
@@ -244,7 +245,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
       <div
         id="household-mobile-month-container"
         {...swipeHandlers}
-        className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y"
+        className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
         style={{
           paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
         }}
@@ -262,6 +263,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
               x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
             }}
             transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
+            className="w-full max-w-full min-w-0"
           >
             <MonthGrid
               currentDate={currentDate}
@@ -277,14 +279,14 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
         </AnimatePresence>
 
         {/* Selected Day Agenda Section */}
-        <div className="flex flex-col gap-3 pt-1">
-          <h3 className="text-base font-bold text-slate-900 px-1 font-serif tracking-tight">
+        <div className="flex flex-col gap-3 pt-1 w-full max-w-full min-w-0">
+          <h3 className="text-base font-bold text-slate-900 px-1 font-serif tracking-tight truncate">
             {format(selectedDay, 'EEEE, d MMMM')}
           </h3>
 
-          <div className="flex flex-col gap-2.5">
+          <div className="flex flex-col gap-2.5 w-full max-w-full min-w-0">
             {selectedDayEvents.length === 0 ? (
-              <div className="py-6 px-4 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium text-center shadow-2xs">
+              <div className="py-6 px-4 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium text-center shadow-2xs w-full">
                 No events scheduled for this date
               </div>
             ) : (
