@@ -57,7 +57,11 @@ export const CalendarHeader: React.FC = () => {
   } = useCalendar();
 
   const { members } = useFamily();
-  const { hasPermission, isAdmin } = useAuth();
+  const { user, hasPermission, isAdmin } = useAuth();
+
+  const isViewer =
+    user?.role === 'viewer' ||
+    (typeof window !== 'undefined' && localStorage.getItem('familycal_viewer_mode') === 'true');
 
   const [isCalendarsDropdownOpen, setIsCalendarsDropdownOpen] = useState(false);
   const [editingCalendar, setEditingCalendar] = useState<Calendar | null>(null);
@@ -66,10 +70,10 @@ export const CalendarHeader: React.FC = () => {
   const [newCalColor, setNewCalColor] = useState('#F8BBD0');
   const [newCalMemberId, setNewCalMemberId] = useState('');
 
-  const canCreateEvent = isAdmin || hasPermission('event_create');
-  const canCreateCalendar = isAdmin || hasPermission('calendar_create');
-  const canEditCalendar = isAdmin || hasPermission('calendar_edit');
-  const canAssignCalendar = isAdmin || hasPermission('calendar_assign');
+  const canCreateEvent = !isViewer && (isAdmin || hasPermission('event_create'));
+  const canCreateCalendar = !isViewer && (isAdmin || hasPermission('calendar_create'));
+  const canEditCalendar = !isViewer && (isAdmin || hasPermission('calendar_edit'));
+  const canAssignCalendar = !isViewer && (isAdmin || hasPermission('calendar_assign'));
   const activeMembers = members.filter((m) => m.is_active !== 0);
 
   // Group calendars into Member Calendars and Family-wide / Non-login Calendar Layers
@@ -129,11 +133,11 @@ export const CalendarHeader: React.FC = () => {
       {/* Top Bar: Navigation, Title, View Mode & Action (Desktop) */}
       <div className="hidden md:flex items-center justify-between gap-3">
         {/* Left: Date controls */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
           <button
             id="cal-prev-btn"
             onClick={handlePrev}
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-600 transition-colors cursor-pointer"
+            className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-600 transition-colors cursor-pointer"
             aria-label="Previous"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -141,33 +145,33 @@ export const CalendarHeader: React.FC = () => {
           <button
             id="cal-today-btn"
             onClick={handleToday}
-            className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-white border border-gray-200 shadow-2xs hover:bg-gray-50 text-slate-800 transition-colors cursor-pointer"
+            className="px-3 py-1.5 min-h-[38px] text-xs font-bold rounded-xl bg-white border border-gray-200 shadow-2xs hover:bg-gray-50 text-slate-800 transition-colors cursor-pointer"
           >
             Today
           </button>
           <button
             id="cal-next-btn"
             onClick={handleNext}
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-600 transition-colors cursor-pointer"
+            className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-600 transition-colors cursor-pointer"
             aria-label="Next"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
 
-          <h2 id="calendar-current-title" className="text-base sm:text-lg font-bold text-slate-900 tracking-tight flex items-center gap-1.5 cursor-pointer hover:opacity-80">
-            <span>{formattedHeaderTitle()}</span>
-            <ChevronDown className="w-4 h-4 text-slate-400 stroke-[2.5]" />
+          <h2 id="calendar-current-title" className="text-sm sm:text-base md:text-lg font-bold text-slate-900 tracking-tight flex items-center gap-1.5 cursor-pointer hover:opacity-80 min-w-0 truncate">
+            <span className="truncate">{formattedHeaderTitle()}</span>
+            <ChevronDown className="w-4 h-4 text-slate-400 stroke-[2.5] shrink-0" />
           </h2>
         </div>
 
         {/* Right: Calendar Selector, View Mode Switcher, and Add Event Button */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {/* Calendars Filter Dropdown */}
           <div className="relative">
             <button
               id="calendars-dropdown-toggle-btn"
               onClick={() => setIsCalendarsDropdownOpen(!isCalendarsDropdownOpen)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer shadow-xs"
+              className="flex items-center gap-1.5 px-3 py-2 min-h-[38px] rounded-xl bg-white border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer shadow-xs"
             >
               <Layers className="w-3.5 h-3.5 text-gray-500" />
               <span className="hidden sm:inline">
@@ -355,14 +359,14 @@ export const CalendarHeader: React.FC = () => {
             )}
           </div>
 
-          {/* View Mode Switcher (Week / Month) */}
+          {/* View Mode Switcher (Month / Week / Day / Agenda) */}
           <div id="calendar-view-mode-tabs" className="flex items-center bg-blue-50/80 p-1 rounded-xl border border-blue-200/60 shadow-2xs">
-            {(['week', 'month'] as CalendarViewMode[]).map((mode) => (
+            {(['month', 'week', 'day', 'agenda'] as CalendarViewMode[]).map((mode) => (
               <button
                 key={mode}
                 id={`cal-mode-${mode}`}
                 onClick={() => setViewMode(mode)}
-                className={`px-4 py-1.5 text-xs font-bold capitalize rounded-lg transition-all cursor-pointer ${
+                className={`px-2.5 sm:px-3.5 py-1.5 min-h-[36px] text-xs font-bold capitalize rounded-lg transition-all cursor-pointer ${
                   viewMode === mode
                     ? 'bg-blue-600 text-white shadow-xs'
                     : 'text-blue-700 hover:bg-blue-100/60'
@@ -425,13 +429,13 @@ export const CalendarHeader: React.FC = () => {
           </h2>
         </div>
 
-        {/* View Switcher Bar on Mobile */}
-        <div className="flex items-center justify-between bg-blue-50/80 p-1 rounded-xl border border-blue-200/60">
-          {(['week', 'month'] as CalendarViewMode[]).map((mode) => (
+        {/* View Switcher Bar on Mobile & Small Tablets */}
+        <div className="flex items-center justify-between bg-blue-50/80 p-1 rounded-xl border border-blue-200/60 gap-1">
+          {(['month', 'week', 'day', 'agenda'] as CalendarViewMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => setViewMode(mode)}
-              className={`flex-1 py-1.5 text-xs font-bold capitalize rounded-lg transition-all text-center cursor-pointer ${
+              className={`flex-1 py-2 min-h-[40px] text-xs font-bold capitalize rounded-lg transition-all text-center cursor-pointer ${
                 viewMode === mode
                   ? 'bg-blue-600 text-white shadow-2xs'
                   : 'text-blue-700 hover:bg-blue-100/60'

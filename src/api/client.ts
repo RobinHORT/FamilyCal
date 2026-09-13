@@ -89,13 +89,15 @@ export const api = {
     fetchJson<{ user: User; family: Family; memberProfile?: FamilyMember }>('/api/auth/me'),
 
   // Viewer & Auth
-  getViewerInfo: () =>
-    fetchJson<{ familyId: string; familyName: string; hasViewerPassword: boolean }>('/api/viewer/info'),
+  getViewerInfo: (householdName?: string) =>
+    fetchJson<{ familyId?: string; familyName?: string; hasViewerPassword?: boolean; found?: boolean }>(
+      `/api/viewer/info${householdName ? `?householdName=${encodeURIComponent(householdName)}` : ''}`
+    ),
 
-  viewerLogin: (password: string) =>
+  viewerLogin: (householdName: string, password?: string) =>
     fetchJson<{ user: User; token: string; family: Family }>('/api/auth/viewer-login', {
       method: 'POST',
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ householdName, username: householdName, password }),
     }),
 
   // Family & Members

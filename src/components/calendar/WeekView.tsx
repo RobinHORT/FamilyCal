@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
 import { useCalendarSwipe } from '../../hooks/useCalendarSwipe';
+import { useAuth } from '../../context/AuthContext';
 import { Plus } from 'lucide-react';
 import { EventCard } from './EventCard';
 
@@ -26,6 +27,13 @@ export const WeekView: React.FC = () => {
     navigationDirection,
   } = useCalendar();
   const { members } = useFamily();
+  const { user, isAdmin, hasPermission } = useAuth();
+
+  const isViewer =
+    user?.role === 'viewer' ||
+    (typeof window !== 'undefined' && localStorage.getItem('familycal_viewer_mode') === 'true');
+
+  const canCreateEvent = !isViewer && (isAdmin || hasPermission('event_create'));
 
   // Mobile horizontal swipe navigation handlers
   const swipeHandlers = useCalendarSwipe({
@@ -108,13 +116,19 @@ export const WeekView: React.FC = () => {
               {/* Right Events Grid (Side by side cards like Reference Image) */}
               <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-3.5 min-h-[72px]">
                 {dayEvents.length === 0 ? (
-                  <button
-                    onClick={() => openCreateEventModal(day)}
-                    className="h-full min-h-[64px] rounded-2xl border border-dashed border-gray-200/80 bg-white/40 hover:bg-white text-gray-400 hover:text-gray-600 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer group"
-                  >
-                    <Plus className="w-4 h-4 group-hover:scale-110 transition-transform text-blue-500" />
-                    <span>Add event for {format(day, 'EEEE')}</span>
-                  </button>
+                  canCreateEvent ? (
+                    <button
+                      onClick={() => openCreateEventModal(day)}
+                      className="h-full min-h-[64px] rounded-2xl border border-dashed border-gray-200/80 bg-white/40 hover:bg-white text-gray-400 hover:text-gray-600 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer group"
+                    >
+                      <Plus className="w-4 h-4 group-hover:scale-110 transition-transform text-blue-500" />
+                      <span>Add event for {format(day, 'EEEE')}</span>
+                    </button>
+                  ) : (
+                    <div className="h-full min-h-[64px] rounded-2xl border border-dashed border-gray-200/60 bg-white/20 text-gray-400 text-xs font-medium flex items-center justify-center">
+                      No events
+                    </div>
+                  )
                 ) : (
                   dayEvents.map((evt) => (
                     <EventCard

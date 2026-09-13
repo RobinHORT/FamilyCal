@@ -226,11 +226,26 @@ router.post('/auth/logout', (req: Request, res: Response) => {
 
 router.get('/viewer/info', (req: Request, res: Response) => {
   try {
-    const family = db.prepare('SELECT id, name, viewer_password_hash FROM families LIMIT 1').get() as any;
-    if (!family) {
-      return res.status(404).json({ error: 'No household found.' });
+    const householdNameParam = (req.query.householdName || req.query.username || req.query.name || '').toString().trim();
+    let family: any = null;
+
+    if (householdNameParam) {
+      family = db.prepare('SELECT id, name, viewer_password_hash FROM families WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))').get(householdNameParam) as any;
+    } else {
+      family = db.prepare('SELECT id, name, viewer_password_hash FROM families ORDER BY created_at ASC LIMIT 1').get() as any;
     }
+
+    if (!family) {
+      return res.status(404).json({
+        found: false,
+        familyName: householdNameParam || '',
+        hasViewerPassword: false,
+        error: 'Household not found.',
+      });
+    }
+
     res.json({
+      found: true,
       familyId: family.id,
       familyName: family.name,
       hasViewerPassword: Boolean(family.viewer_password_hash),
@@ -242,16 +257,33 @@ router.get('/viewer/info', (req: Request, res: Response) => {
 
 router.post('/auth/viewer-login', (req: Request, res: Response) => {
   try {
-    const { password } = req.body;
-    const family = db.prepare('SELECT id, name, timezone, viewer_password_hash FROM families LIMIT 1').get() as any;
-    if (!family) {
-      return res.status(404).json({ error: 'No household found.' });
+    const { householdName, username, name, password } = req.body;
+    const identifier = (householdName || username || name || '').trim();
+    const inputPassword = (password || '').trim();
+
+    if (!identifier) {
+      return res.status(400).json({ error: 'Please enter the Household Name.' });
     }
 
-    if (family.viewer_password_hash) {
-      if (!password || !verifyPassword(password, family.viewer_password_hash)) {
-        return res.status(401).json({ error: 'Incorrect Household Viewer password.' });
-      }
+    // Lookup matching household by Household Name (case-insensitive)
+    const family = db.prepare('SELECT id, name, timezone, viewer_password_hash FROM families WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))').get(identifier) as any;
+
+    if (!family) {
+      return res.status(404).json({ error: `Household "${identifier}" not found. Please check the Household Name.` });
+    }
+
+    // Check if Household Viewer Password is set by admin
+    if (!family.viewer_password_hash) {
+      return res.status(400).json({
+        error: `No Household Viewer Password has been configured yet by the administrator for ${family.name}.`,
+        code: 'NO_PASSWORD_CONFIGURED',
+        hasViewerPassword: false,
+      });
+    }
+
+    // Verify password against this household's specific password hash
+    if (!inputPassword || !verifyPassword(inputPassword, family.viewer_password_hash)) {
+      return res.status(401).json({ error: 'Incorrect Household Viewer password for this household. Please try again.' });
     }
 
     const JWT_SECRET = process.env.SESSION_SECRET || 'yimly-familycal-super-secret-key-2026';

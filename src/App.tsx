@@ -16,40 +16,12 @@ import { IntegrationsView } from './components/settings/IntegrationsView';
 import { ProfileView } from './components/profile/ProfileView';
 import { TasksView } from './components/tasks/TasksView';
 import { BirthdaysView } from './components/birthdays/BirthdaysView';
+import { CalendarContainer } from './components/calendar/CalendarContainer';
 import { TabletViewer } from './components/viewer/TabletViewer';
 import { ViewerLogin } from './components/viewer/ViewerLogin';
 import { AuthModal } from './components/auth/AuthModal';
 import { PrivacyPolicy } from './components/privacy/PrivacyPolicy';
 import { Plus, Loader2 } from 'lucide-react';
-
-function CalendarContainer() {
-  const { viewMode, openCreateEventModal } = useCalendar();
-
-  return (
-    <div className="flex flex-col flex-1 min-h-full md:h-full gap-4 max-w-7xl mx-auto w-full relative">
-      <CalendarHeader />
-      <div className="flex-1 flex flex-col min-h-0">
-        {viewMode === 'month' && <MonthView />}
-        {viewMode === 'week' && <WeekView />}
-        {viewMode === 'day' && <DayView />}
-        {viewMode === 'agenda' && <AgendaView />}
-      </div>
-
-      {/* Floating Action Add Button on Mobile (Positioned above bottom nav & safe-area) */}
-      <button
-        id="mobile-create-event-fab"
-        onClick={() => openCreateEventModal()}
-        className="md:hidden fixed right-5 w-12 h-12 rounded-full bg-blue-600 text-white shadow-lg flex items-center justify-center hover:bg-blue-700 active:scale-95 transition-all z-40 cursor-pointer border border-blue-500/20 bottom-fab-mobile"
-        style={{
-          bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 16px)',
-        }}
-        title="Add Event"
-      >
-        <Plus className="w-6 h-6 stroke-[2.5]" />
-      </button>
-    </div>
-  );
-}
 
 function MainDashboard() {
   const { user, isLoading, checkAuth } = useAuth();

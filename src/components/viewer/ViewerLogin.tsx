@@ -7,8 +7,7 @@ interface ViewerLoginProps {
 }
 
 export function ViewerLogin({ onSuccess }: ViewerLoginProps) {
-  const [familyName, setFamilyName] = useState<string>('Household Family');
-  const [hasViewerPassword, setHasViewerPassword] = useState<boolean>(true);
+  const [householdName, setHouseholdName] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -20,12 +19,11 @@ export function ViewerLogin({ onSuccess }: ViewerLoginProps) {
     async function loadViewerInfo() {
       try {
         const info = await api.getViewerInfo();
-        if (isMounted) {
-          setFamilyName(info.familyName);
-          setHasViewerPassword(info.hasViewerPassword);
+        if (isMounted && info.familyName) {
+          setHouseholdName(info.familyName);
         }
       } catch (err: any) {
-        console.error('Failed to fetch viewer info:', err);
+        console.error('Failed to fetch initial viewer info:', err);
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -40,14 +38,16 @@ export function ViewerLogin({ onSuccess }: ViewerLoginProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (hasViewerPassword && !password) {
-      setError('Please enter the Household Viewer Password.');
+    const cleanName = householdName.trim();
+    if (!cleanName) {
+      setError('Please enter the Household Name.');
       return;
     }
+
     setIsSubmitting(true);
     setError(null);
     try {
-      const res = await api.viewerLogin(password);
+      const res = await api.viewerLogin(cleanName, password);
       if (res.token) {
         localStorage.setItem('yimly_jwt_token', res.token);
         localStorage.setItem('familycal_viewer_mode', 'true');
@@ -56,7 +56,7 @@ export function ViewerLogin({ onSuccess }: ViewerLoginProps) {
         setError('Authentication failed.');
       }
     } catch (err: any) {
-      setError(err?.message || 'Incorrect Household Viewer password. Please try again.');
+      setError(err?.message || 'Incorrect Household Name or password. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -65,13 +65,13 @@ export function ViewerLogin({ onSuccess }: ViewerLoginProps) {
   return (
     <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-3xl border border-gray-200/80 shadow-xl p-8 space-y-6">
-        {/* Primary Household Identity Header (NOT FamilyCal) */}
+        {/* Header */}
         <div className="text-center space-y-3">
           <div className="w-14 h-14 rounded-2xl bg-[#F8BBD0] border border-[#F472B6]/40 flex items-center justify-center shadow-xs mx-auto">
             <Users className="w-7 h-7 text-[#831843]" />
           </div>
           <h1 id="viewer-household-name" className="text-2xl font-bold text-gray-900 tracking-tight font-serif">
-            {isLoading ? 'Loading...' : familyName}
+            Household Viewer Login
           </h1>
           <p className="text-xs text-gray-500 font-medium">
             Tablet & Wall Display Viewer Mode
@@ -86,36 +86,54 @@ export function ViewerLogin({ onSuccess }: ViewerLoginProps) {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {hasViewerPassword ? (
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-gray-400" />
-                <span>Household Viewer Password</span>
-              </label>
-              <div className="relative">
-                <input
-                  id="viewer-password-input"
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter viewer password"
-                  className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-900 focus:outline-none focus:border-gray-900 focus:bg-white transition-all font-medium"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-3.5 text-gray-400 hover:text-gray-700 cursor-pointer"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
+          {/* Username / Household Name */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-gray-400" />
+              <span>Username (Household Name)</span>
+            </label>
+            <input
+              id="viewer-username-input"
+              type="text"
+              required
+              value={householdName}
+              onChange={(e) => {
+                setHouseholdName(e.target.value);
+                setError(null);
+              }}
+              placeholder="e.g. Yim Family"
+              className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-900 focus:outline-none focus:border-gray-900 focus:bg-white transition-all font-medium"
+            />
+          </div>
+
+          {/* Household Viewer Password */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-gray-400" />
+              <span>Household Viewer Password</span>
+            </label>
+            <div className="relative">
+              <input
+                id="viewer-password-input"
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError(null);
+                }}
+                placeholder="Enter viewer password"
+                className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-900 focus:outline-none focus:border-gray-900 focus:bg-white transition-all font-medium"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3.5 top-3.5 text-gray-400 hover:text-gray-700 cursor-pointer"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
-          ) : (
-            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium text-center">
-              No Household Viewer Password has been configured yet by the administrator. Click below to view the calendar.
-            </div>
-          )}
+          </div>
 
           <button
             id="viewer-sign-in-btn"
