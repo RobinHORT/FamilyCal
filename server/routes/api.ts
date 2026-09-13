@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
-import { db, seedDefaultEventTypesForFamily } from '../db.js';
+import { db, seedDefaultEventTypesForFamily, seedDefaultCalendarLayersForFamily, syncMemberBirthdaysToCalendarLayer } from '../db.js';
 import {
   authenticateToken,
   requireAdmin,
@@ -124,6 +124,9 @@ router.post('/auth/register', (req: Request, res: Response) => {
       INSERT INTO calendars (id, family_id, name, color, description, is_default, source, is_read_only, sync_enabled, created_at, updated_at)
       VALUES (?, ?, 'Family Hub', ?, 'Main shared household calendar', 1, 'yimly', 0, 1, ?, ?)
     `).run(defaultCalId, familyId, userColor, now, now);
+
+    seedDefaultEventTypesForFamily(familyId);
+    seedDefaultCalendarLayersForFamily(familyId);
 
     const authUser = {
       id: userId,
@@ -428,6 +431,10 @@ router.post('/family/members', authenticateToken, (req: AuthRequest, res: Respon
     const rawPerms = newMember.permissions || newMember.user_permissions || null;
     const parsedPerms = rawPerms ? JSON.parse(rawPerms) : null;
 
+    if (birthday) {
+      syncMemberBirthdaysToCalendarLayer(req.user!.family_id);
+    }
+
     res.status(201).json({
       ...newMember,
       permissions: parsedPerms,
@@ -499,6 +506,10 @@ router.put('/family/members/:id', authenticateToken, (req: AuthRequest, res: Res
 
     const rawPerms = updated.permissions || updated.user_permissions || null;
     const parsedPerms = rawPerms ? JSON.parse(rawPerms) : null;
+
+    if (birthday !== undefined) {
+      syncMemberBirthdaysToCalendarLayer(req.user!.family_id);
+    }
 
     res.json({
       ...updated,

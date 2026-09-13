@@ -155,12 +155,7 @@ export const EventModal: React.FC = () => {
   const toggleMemberAssignment = (memberId: string) => {
     setAssignedMemberIds((prev) => {
       if (prev.includes(memberId)) {
-        const updated = prev.filter((id) => id !== memberId);
-        // If unchecking everything, fallback to admin or first member
-        if (updated.length === 0 && members.length > 0) {
-          return [members[0].id];
-        }
-        return updated;
+        return prev.filter((id) => id !== memberId);
       } else {
         return [...prev, memberId];
       }
@@ -193,10 +188,11 @@ export const EventModal: React.FC = () => {
         endIso = new Date(`${endDate || startDate}T${endTime}:00`).toISOString();
       }
 
-      // Member colour is used as the full background colour of the event card
+      const selectedCal = calendars.find((c) => c.id === calendarId);
+      // Member colour or dedicated calendar layer colour
       const finalColor = previewAssignment.isFamilyEvent
-        ? previewAssignment.adminMember?.color || 'blue'
-        : previewAssignment.singleMember?.color || 'blue';
+        ? previewAssignment.adminMember?.color || '#FF4FA3'
+        : previewAssignment.singleMember?.color || selectedCal?.color || '#FF4FA3';
 
       const eventPayload: Partial<CalendarEvent> = {
         title: title.trim(),

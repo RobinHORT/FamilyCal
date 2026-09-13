@@ -6,13 +6,13 @@ import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { Calendar } from '../../types';
 import {
-  Calendar as CalIcon,
+  Layers,
   Plus,
-  Check,
   Globe,
   Users,
   ChevronDown,
   Pencil,
+  Sparkles,
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -20,10 +20,16 @@ export const Sidebar: React.FC = () => {
     calendars,
     selectedCalendarIds,
     toggleCalendarSelection,
+    selectedMemberIds,
+    toggleMemberFilter,
+    selectAllMembers,
+    deselectAllMembers,
+    selectAllCalendars,
+    deselectAllCalendars,
     createCalendar,
   } = useCalendar();
 
-  const { members, selectedMemberFilter, setSelectedMemberFilter } = useFamily();
+  const { members } = useFamily();
   const { hasPermission, isAdmin } = useAuth();
 
   const canCreateCalendar = isAdmin || hasPermission('calendar_create');
@@ -39,14 +45,6 @@ export const Sidebar: React.FC = () => {
     }
   });
 
-  const [isMembersCollapsed, setIsMembersCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('familyMembersCollapsed') === 'true';
-    } catch {
-      return false;
-    }
-  });
-
   const [editingCal, setEditingCal] = useState<Calendar | null>(null);
   const [isAddingCal, setIsAddingCal] = useState(false);
   const [newCalName, setNewCalName] = useState('');
@@ -54,22 +52,13 @@ export const Sidebar: React.FC = () => {
   const [newCalMemberId, setNewCalMemberId] = useState('');
 
   const activeMembers = members.filter((m) => m.is_active !== 0);
+  const familyCalendarLayers = calendars.filter((c) => !c.member_id);
 
   const toggleHouseholdCalendars = () => {
     setIsCalendarsCollapsed((prev) => {
       const next = !prev;
       try {
         localStorage.setItem('householdCalendarsCollapsed', String(next));
-      } catch {}
-      return next;
-    });
-  };
-
-  const toggleFamilyMembers = () => {
-    setIsMembersCollapsed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('familyMembersCollapsed', String(next));
       } catch {}
       return next;
     });
@@ -96,7 +85,7 @@ export const Sidebar: React.FC = () => {
       {/* 1. Mini Month Date Picker */}
       <MiniCalendar />
 
-      {/* 2. Calendars Multi-Select */}
+      {/* 2. CALENDARS & LAYERS Multi-Select */}
       <div className="p-3.5 bg-[#121620] rounded-2xl border border-[#242C3D]/60 space-y-3">
         {/* Clickable Collapsible Section Header */}
         <div
@@ -105,7 +94,7 @@ export const Sidebar: React.FC = () => {
           className="flex items-center justify-between cursor-pointer select-none group"
         >
           <span className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-white transition-colors">
-            <CalIcon className="w-3.5 h-3.5 text-[#FF4FA3]" /> Household Calendars
+            <Layers className="w-3.5 h-3.5 text-[#FF4FA3]" /> Calendars
           </span>
           <div className="flex items-center gap-1">
             {canCreateCalendar && (
@@ -123,7 +112,7 @@ export const Sidebar: React.FC = () => {
                   setIsAddingCal(!isAddingCal);
                 }}
                 className="p-1 rounded-lg hover:bg-[#1A202C] text-gray-400 hover:text-white transition-colors cursor-pointer"
-                title="Create Calendar"
+                title="Create Calendar Layer"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
@@ -133,7 +122,7 @@ export const Sidebar: React.FC = () => {
               style={{
                 transform: isCalendarsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
               }}
-              title={isCalendarsCollapsed ? 'Expand Household Calendars' : 'Collapse Household Calendars'}
+              title={isCalendarsCollapsed ? 'Expand Calendars' : 'Collapse Calendars'}
             >
               <ChevronDown className="w-3.5 h-3.5" />
             </span>
@@ -142,13 +131,13 @@ export const Sidebar: React.FC = () => {
 
         {/* Collapsible Content */}
         {!isCalendarsCollapsed && (
-          <div className="space-y-3">
+          <div className="space-y-3 pt-1">
             {/* Add Calendar inline form with Name, Color, and Assigned Member */}
             {canCreateCalendar && isAddingCal && (
               <form onSubmit={handleCreateCalendar} className="space-y-2.5 pt-1 pb-2 border-b border-[#242C3D]/60">
                 <div>
                   <label htmlFor="create-cal-name" className="text-[10px] text-gray-400 font-semibold block mb-1">
-                    Calendar Name
+                    Layer Name
                   </label>
                   <input
                     id="create-cal-name"
@@ -156,7 +145,7 @@ export const Sidebar: React.FC = () => {
                     required
                     value={newCalName}
                     onChange={(e) => setNewCalName(e.target.value)}
-                    placeholder="e.g. School, Work..."
+                    placeholder="e.g. 🏫 School, ⚽ Sports..."
                     className="w-full bg-[#1A202C] border border-[#242C3D] rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#FF4FA3]"
                   />
                 </div>
@@ -164,7 +153,7 @@ export const Sidebar: React.FC = () => {
                 {canAssignCalendar && (
                   <div>
                     <label htmlFor="create-cal-member" className="text-[10px] text-gray-400 font-semibold block mb-1">
-                      Assigned Member
+                      Layer Type
                     </label>
                     <select
                       id="create-cal-member"
@@ -172,10 +161,10 @@ export const Sidebar: React.FC = () => {
                       onChange={(e) => setNewCalMemberId(e.target.value)}
                       className="w-full bg-[#1A202C] border border-[#242C3D] rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#FF4FA3] cursor-pointer"
                     >
-                      <option value="">Shared Household</option>
+                      <option value="">Non-login Family Calendar</option>
                       {activeMembers.map((m) => (
                         <option key={m.id} value={m.id}>
-                          {m.name} ({m.role.charAt(0).toUpperCase() + m.role.slice(1)})
+                          {m.name} (Member Calendar)
                         </option>
                       ))}
                     </select>
@@ -188,7 +177,7 @@ export const Sidebar: React.FC = () => {
                   </label>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      {['#FF4FA3', '#06B6D4', '#10B981', '#F59E0B', '#8B5CF6'].map((c) => (
+                      {['#FF4FA3', '#06B6D4', '#10B981', '#F59E0B', '#8B5CF6', '#F8BBD0'].map((c) => (
                         <button
                           key={c}
                           type="button"
@@ -220,18 +209,103 @@ export const Sidebar: React.FC = () => {
               </form>
             )}
 
-            {/* Calendars Checkbox List */}
+            {/* SECTION: MEMBERS */}
             <div className="space-y-1.5">
-              {calendars.map((cal) => {
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  Members
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={selectAllMembers}
+                    className="text-[9px] text-gray-500 hover:text-gray-300 font-semibold cursor-pointer"
+                  >
+                    All
+                  </button>
+                  <span className="text-gray-700 text-[9px]">/</span>
+                  <button
+                    onClick={deselectAllMembers}
+                    className="text-[9px] text-gray-500 hover:text-gray-300 font-semibold cursor-pointer"
+                  >
+                    None
+                  </button>
+                </div>
+              </div>
+
+              {activeMembers.map((m) => {
+                const isChecked = selectedMemberIds.includes(m.id);
+
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between gap-2 p-1.5 rounded-xl hover:bg-[#1A202C] transition-colors group cursor-pointer"
+                    onClick={() => toggleMemberFilter(m.id)}
+                  >
+                    <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleMemberFilter(m.id)}
+                        className="rounded bg-[#1A202C] border-[#242C3D] text-[#FF4FA3] focus:ring-[#FF4FA3] cursor-pointer"
+                      />
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: m.color || '#FF4FA3' }}
+                      />
+                      <span className="text-xs text-gray-200 font-medium truncate group-hover:text-white">
+                        {m.name}
+                      </span>
+                    </label>
+
+                    <span
+                      className="px-1.5 py-0.5 rounded-md text-[9px] font-bold truncate max-w-[65px]"
+                      style={{
+                        backgroundColor: `${m.color || '#FF4FA3'}25`,
+                        color: m.color || '#FF4FA3',
+                        border: `1px solid ${m.color || '#FF4FA3'}40`,
+                      }}
+                    >
+                      {m.role === 'administrator' ? 'Admin' : m.role}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* SECTION: FAMILY CALENDARS */}
+            <div className="space-y-1.5 pt-2 border-t border-[#242C3D]/60">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  Family Calendars
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={selectAllCalendars}
+                    className="text-[9px] text-gray-500 hover:text-gray-300 font-semibold cursor-pointer"
+                  >
+                    All
+                  </button>
+                  <span className="text-gray-700 text-[9px]">/</span>
+                  <button
+                    onClick={deselectAllCalendars}
+                    className="text-[9px] text-gray-500 hover:text-gray-300 font-semibold cursor-pointer"
+                  >
+                    None
+                  </button>
+                </div>
+              </div>
+
+              {familyCalendarLayers.map((cal) => {
                 const isChecked = selectedCalendarIds.includes(cal.id);
                 const isGoogle = cal.source === 'google';
 
                 return (
                   <div
                     key={cal.id}
-                    className="flex items-center justify-between gap-2 p-1.5 rounded-xl hover:bg-[#1A202C] transition-colors group"
+                    className="flex items-center justify-between gap-2 p-1.5 rounded-xl hover:bg-[#1A202C] transition-colors group cursor-pointer"
+                    onClick={() => toggleCalendarSelection(cal.id)}
                   >
-                    <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer">
+                    <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={isChecked}
@@ -240,7 +314,7 @@ export const Sidebar: React.FC = () => {
                       />
                       <span
                         className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: cal.color || '#FF4FA3' }}
+                        style={{ backgroundColor: cal.color || '#8B5CF6' }}
                       />
                       <span className="text-xs text-gray-200 font-medium truncate group-hover:text-white">
                         {cal.name}
@@ -248,19 +322,6 @@ export const Sidebar: React.FC = () => {
                     </label>
 
                     <div className="flex items-center gap-1 shrink-0">
-                      {cal.member_name && (
-                        <span
-                          className="px-1.5 py-0.5 rounded-md text-[9px] font-bold truncate max-w-[65px]"
-                          style={{
-                            backgroundColor: `${cal.member_color || '#FF4FA3'}25`,
-                            color: cal.member_color || '#FF4FA3',
-                            border: `1px solid ${cal.member_color || '#FF4FA3'}40`,
-                          }}
-                          title={`Assigned to ${cal.member_name}`}
-                        >
-                          {cal.member_name}
-                        </span>
-                      )}
                       {isGoogle && (
                         <Globe className="w-3 h-3 text-blue-400 shrink-0" title="Google Synced" />
                       )}
@@ -287,71 +348,7 @@ export const Sidebar: React.FC = () => {
         )}
       </div>
 
-      {/* 3. Family Members Quick Status */}
-      <div className="p-3.5 bg-[#121620] rounded-2xl border border-[#242C3D]/60 space-y-2.5">
-        {/* Clickable Collapsible Section Header */}
-        <div
-          id="toggle-family-members"
-          onClick={toggleFamilyMembers}
-          className="flex items-center justify-between cursor-pointer select-none group"
-        >
-          <span className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-white transition-colors">
-            <Users className="w-3.5 h-3.5 text-[#FF4FA3]" /> Family Members
-          </span>
-          <span
-            className="p-1 text-gray-400 group-hover:text-white transition-transform duration-200 flex items-center justify-center"
-            style={{
-              transform: isMembersCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
-            }}
-            title={isMembersCollapsed ? 'Expand Family Members' : 'Collapse Family Members'}
-          >
-            <ChevronDown className="w-3.5 h-3.5" />
-          </span>
-        </div>
-
-        {/* Collapsible Content */}
-        {!isMembersCollapsed && (
-          <div className="space-y-1.5">
-            <button
-              onClick={() => setSelectedMemberFilter(null)}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
-                selectedMemberFilter === null
-                  ? 'bg-[#1A202C] text-[#FF4FA3] font-bold'
-                  : 'text-gray-400 hover:text-white hover:bg-[#1A202C]'
-              }`}
-            >
-              <span>All Members</span>
-              {selectedMemberFilter === null && <Check className="w-3.5 h-3.5" />}
-            </button>
-
-            {members.map((m) => {
-              const isSelected = selectedMemberFilter === m.id;
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => setSelectedMemberFilter(isSelected ? null : m.id)}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
-                    isSelected
-                      ? 'bg-[#1A202C] text-white font-bold'
-                      : 'text-gray-300 hover:text-white hover:bg-[#1A202C]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: m.color || '#FF4FA3' }}
-                    />
-                    <span className="truncate">{m.name}</span>
-                  </div>
-                  {isSelected && <Check className="w-3.5 h-3.5 text-[#FF4FA3]" />}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* 4. App Info Badge */}
+      {/* 3. App Info Badge */}
       <div className="mt-auto pt-2 text-center text-[10px] text-gray-500 flex flex-col items-center gap-1">
         <span>Yimly FamilyCal • Self-Hosted Edition</span>
         <span className="text-gray-600 font-mono">SQLite Local Database</span>

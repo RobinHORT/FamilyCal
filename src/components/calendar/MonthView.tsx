@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   format,
   startOfMonth,
@@ -10,8 +10,10 @@ import {
   isSameDay,
   isToday,
 } from 'date-fns';
+import { motion, AnimatePresence } from 'motion/react';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
+import { useCalendarSwipe } from '../../hooks/useCalendarSwipe';
 import { CalendarEvent } from '../../types';
 import { getPastelColorInfo, getEventTypeInfo, getEventAssignmentInfo } from '../../utils/colors';
 import { Plus, ChevronRight } from 'lucide-react';
@@ -25,10 +27,33 @@ export const MonthView: React.FC = () => {
     openCreateEventModal,
     openEditEventModal,
     eventTypes,
+    goToPreviousPeriod,
+    goToNextPeriod,
+    navigationDirection,
   } = useCalendar();
   const { members } = useFamily();
 
   const [selectedDay, setSelectedDay] = useState<Date>(currentDate);
+
+  // Synchronize selected day when navigating to a different month
+  useEffect(() => {
+    if (!isSameMonth(selectedDay, currentDate)) {
+      if (isSameMonth(new Date(), currentDate)) {
+        setSelectedDay(new Date());
+      } else {
+        setSelectedDay(startOfMonth(currentDate));
+      }
+    }
+  }, [currentDate]);
+
+  // Mobile horizontal swipe navigation handlers
+  const swipeHandlers = useCalendarSwipe({
+    onSwipeLeft: goToNextPeriod, // Swipe LEFT -> next month
+    onSwipeRight: goToPreviousPeriod, // Swipe RIGHT -> previous month
+    minDistance: 45,
+    maxTime: 700,
+    preventScrollToleranceRatio: 1.3,
+  });
 
   // Month Grid Calculation (Monday to Sunday weekStartsOn: 1)
   const monthStart = startOfMonth(currentDate);
@@ -74,6 +99,8 @@ export const MonthView: React.FC = () => {
   };
 
   const selectedDayEvents = getEventsForDay(selectedDay);
+
+  const monthKey = format(currentDate, 'yyyy-MM');
 
   return (
     <div id="calendar-month-view" className="flex flex-col flex-1 gap-4">
@@ -152,18 +179,19 @@ export const MonthView: React.FC = () => {
         </div>
       </div>
 
-      {/* --- MOBILE MONTH VIEW (Matching Reference Far-Right Layout) --- */}
+      {/* --- MOBILE MONTH VIEW WITH TOUCH SWIPE NAVIGATION --- */}
       <div
         id="mobile-month-calendar-container"
-        className="flex md:hidden flex-col gap-4 pb-calendar-mobile"
+        {...swipeHandlers}
+        className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y"
         style={{
           paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
         }}
       >
-        {/* Mobile 7-Column Calendar Grid */}
-        <div className="bg-white rounded-2xl border border-gray-200 p-3 shadow-2xs">
+        {/* Mobile 7-Column Calendar Grid with Smooth Slide Transition */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-3 shadow-2xs overflow-hidden">
           {/* Day Names Header */}
-          <div className="grid grid-cols-7 text-center text-[11px] font-bold text-gray-400 py-1">
+          <div className="grid grid-cols-7 text-center text-[11px] font-bold text-gray-400 py-1 select-none">
             <span>Mon</span>
             <span>Tue</span>
             <span>Wed</span>
@@ -173,58 +201,75 @@ export const MonthView: React.FC = () => {
             <span>Sun</span>
           </div>
 
-          {/* Days Grid */}
-          <div className="grid grid-cols-7 gap-y-2 text-center pt-2">
-            {days.map((dayDate) => {
-              const isCurrentMonth = isSameMonth(dayDate, monthStart);
-              const isSelected = isSameDay(dayDate, selectedDay);
-              const dayEvents = getEventsForDay(dayDate);
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={monthKey}
+              initial={{
+                opacity: 0,
+                x: navigationDirection > 0 ? 20 : navigationDirection < 0 ? -20 : 0,
+              }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{
+                opacity: 0,
+                x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
+              }}
+              transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
+            >
+              {/* Days Grid */}
+              <div className="grid grid-cols-7 gap-y-2 text-center pt-2">
+                {days.map((dayDate) => {
+                  const isCurrentMonth = isSameMonth(dayDate, monthStart);
+                  const isSelected = isSameDay(dayDate, selectedDay);
+                  const dayEvents = getEventsForDay(dayDate);
 
-              return (
-                <button
-                  key={dayDate.toISOString()}
-                  onClick={() => setSelectedDay(dayDate)}
-                  className="flex flex-col items-center justify-center p-1 cursor-pointer focus:outline-none"
-                >
-                  <span
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                      isSelected
-                        ? 'bg-blue-600 text-white font-extrabold shadow-xs'
-                        : isCurrentMonth
-                        ? 'text-slate-800'
-                        : 'text-gray-300'
-                    }`}
-                  >
-                    {format(dayDate, 'd')}
-                  </span>
+                  return (
+                    <button
+                      key={dayDate.toISOString()}
+                      type="button"
+                      onClick={() => setSelectedDay(dayDate)}
+                      className="flex flex-col items-center justify-center p-1 cursor-pointer focus:outline-none"
+                    >
+                      <span
+                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                          isSelected
+                            ? 'bg-blue-600 text-white font-extrabold shadow-xs'
+                            : isCurrentMonth
+                            ? 'text-slate-800'
+                            : 'text-gray-300'
+                        }`}
+                      >
+                        {format(dayDate, 'd')}
+                      </span>
 
-                  {/* Member Color Dots under date */}
-                  <div className="flex items-center justify-center gap-0.5 h-2 mt-0.5 flex-wrap max-w-[28px]">
-                    {dayEvents.slice(0, 3).map((evt) => {
-                      const assignment = getEventAssignmentInfo(evt, members);
-                      if (assignment.isFamilyEvent) {
-                        return (
-                          <span
-                            key={evt.id}
-                            className="w-1.5 h-1.5 rounded-full ring-[0.5px] ring-black/20"
-                            style={{ backgroundColor: assignment.adminColorInfo.dotHex }}
-                            title="Family Event"
-                          />
-                        );
-                      }
-                      return (
-                        <span
-                          key={evt.id}
-                          className="w-1.5 h-1.5 rounded-full"
-                          style={{ backgroundColor: assignment.primaryColorInfo.dotHex }}
-                        />
-                      );
-                    })}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+                      {/* Member Color Dots under date */}
+                      <div className="flex items-center justify-center gap-0.5 h-2 mt-0.5 flex-wrap max-w-[28px]">
+                        {dayEvents.slice(0, 3).map((evt) => {
+                          const assignment = getEventAssignmentInfo(evt, members);
+                          if (assignment.isFamilyEvent) {
+                            return (
+                              <span
+                                key={evt.id}
+                                className="w-1.5 h-1.5 rounded-full ring-[0.5px] ring-black/20"
+                                style={{ backgroundColor: assignment.adminColorInfo.dotHex }}
+                                title="Family Event"
+                              />
+                            );
+                          }
+                          return (
+                            <span
+                              key={evt.id}
+                              className="w-1.5 h-1.5 rounded-full"
+                              style={{ backgroundColor: assignment.primaryColorInfo.dotHex }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </AnimatePresence>
         </div>
 
         {/* Selected Day Agenda Section */}
@@ -256,3 +301,4 @@ export const MonthView: React.FC = () => {
     </div>
   );
 };
+

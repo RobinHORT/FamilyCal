@@ -22,6 +22,7 @@ import {
   X,
   Layers,
   ChevronDown,
+  Sparkles,
 } from 'lucide-react';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
@@ -36,17 +37,26 @@ export const CalendarHeader: React.FC = () => {
     setCurrentDate,
     viewMode,
     setViewMode,
+    goToPreviousPeriod,
+    goToNextPeriod,
+    goToToday,
     openCreateEventModal,
     calendars,
     selectedCalendarIds,
     toggleCalendarSelection,
+    selectedMemberIds,
+    toggleMemberFilter,
+    selectAllMembers,
+    deselectAllMembers,
+    selectAllCalendars,
+    deselectAllCalendars,
     createCalendar,
     isSyncing,
     triggerGoogleSync,
     googleAccounts,
   } = useCalendar();
 
-  const { members, selectedMemberFilter, setSelectedMemberFilter } = useFamily();
+  const { members } = useFamily();
   const { hasPermission, isAdmin } = useAuth();
 
   const [isCalendarsDropdownOpen, setIsCalendarsDropdownOpen] = useState(false);
@@ -62,22 +72,20 @@ export const CalendarHeader: React.FC = () => {
   const canAssignCalendar = isAdmin || hasPermission('calendar_assign');
   const activeMembers = members.filter((m) => m.is_active !== 0);
 
+  // Group calendars into Member Calendars and Family-wide / Non-login Calendar Layers
+  const familyCalendarLayers = calendars.filter((c) => !c.member_id);
+  const memberCalendars = calendars.filter((c) => !!c.member_id);
+
   const handlePrev = () => {
-    if (viewMode === 'month') setCurrentDate(subMonths(currentDate, 1));
-    else if (viewMode === 'week') setCurrentDate(subWeeks(currentDate, 1));
-    else if (viewMode === 'day') setCurrentDate(subDays(currentDate, 1));
-    else setCurrentDate(subMonths(currentDate, 1));
+    goToPreviousPeriod();
   };
 
   const handleNext = () => {
-    if (viewMode === 'month') setCurrentDate(addMonths(currentDate, 1));
-    else if (viewMode === 'week') setCurrentDate(addWeeks(currentDate, 1));
-    else if (viewMode === 'day') setCurrentDate(addDays(currentDate, 1));
-    else setCurrentDate(addMonths(currentDate, 1));
+    goToNextPeriod();
   };
 
   const handleToday = () => {
-    setCurrentDate(new Date());
+    goToToday();
   };
 
   const handleCreateNewCalendar = async (e: React.FormEvent) => {
@@ -109,7 +117,10 @@ export const CalendarHeader: React.FC = () => {
     return `${format(currentDate, 'MMMM yyyy')} Agenda`;
   };
 
-  const isGoogleConnected = googleAccounts.length > 0 && googleAccounts.some(a => a.sync_status === 'connected');
+  const totalLayersCount = activeMembers.length + familyCalendarLayers.length;
+  const activeLayersCount =
+    selectedMemberIds.filter((id) => activeMembers.some((m) => m.id === id)).length +
+    selectedCalendarIds.filter((id) => familyCalendarLayers.some((c) => c.id === id)).length;
 
   return (
     <div id="calendar-header-section" className="flex flex-col gap-3 pb-3 border-b border-gray-200">
@@ -157,18 +168,20 @@ export const CalendarHeader: React.FC = () => {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer shadow-xs"
             >
               <Layers className="w-3.5 h-3.5 text-gray-500" />
-              <span className="hidden sm:inline">Calendars ({selectedCalendarIds.length}/{calendars.length})</span>
-              <span className="sm:hidden">Calendars</span>
+              <span className="hidden sm:inline">
+                Layers ({activeLayersCount}/{totalLayersCount})
+              </span>
+              <span className="sm:hidden">Layers</span>
               <ChevronDown className="w-3 h-3 text-gray-400" />
             </button>
 
             {isCalendarsDropdownOpen && (
               <div
-                className="absolute right-0 mt-2 w-72 sm:w-80 bg-white rounded-2xl border border-gray-200 shadow-xl p-3.5 z-40 space-y-3 animate-in fade-in zoom-in-95"
+                className="absolute right-0 mt-2 w-80 bg-white rounded-2xl border border-gray-200 shadow-xl p-3.5 z-40 space-y-3 animate-in fade-in zoom-in-95"
               >
                 <div className="flex items-center justify-between pb-2 border-b border-gray-100">
-                  <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">
-                    Household Calendars
+                  <span className="text-xs font-bold text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-blue-600" /> Calendar Layers
                   </span>
                   <div className="flex items-center gap-1">
                     {canCreateCalendar && (
@@ -195,7 +208,7 @@ export const CalendarHeader: React.FC = () => {
                     <input
                       type="text"
                       required
-                      placeholder="Calendar name (e.g. School, Work...)"
+                      placeholder="Layer name (e.g. 🏫 School, ⚽ Sports...)"
                       value={newCalName}
                       onChange={(e) => setNewCalName(e.target.value)}
                       className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-900 focus:outline-none focus:border-gray-900"
@@ -206,9 +219,9 @@ export const CalendarHeader: React.FC = () => {
                         onChange={(e) => setNewCalMemberId(e.target.value)}
                         className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:border-gray-900"
                       >
-                        <option value="">Shared Household</option>
+                        <option value="">Non-login Family Layer (Shared)</option>
                         {activeMembers.map((m) => (
-                          <option key={m.id} value={m.id}>{m.name}</option>
+                          <option key={m.id} value={m.id}>{m.name} (Member)</option>
                         ))}
                       </select>
                     )}
@@ -225,73 +238,116 @@ export const CalendarHeader: React.FC = () => {
                         type="submit"
                         className="px-3 py-1 bg-gray-900 text-white rounded-lg text-xs font-bold hover:bg-gray-800 cursor-pointer"
                       >
-                        Add
+                        Add Layer
                       </button>
                     </div>
                   </form>
                 )}
 
-                {/* Calendars multi-toggle list */}
-                <div className="space-y-1 max-h-60 overflow-y-auto">
-                  {calendars.map((cal) => {
-                    const isChecked = selectedCalendarIds.includes(cal.id);
-                    const colorInfo = getPastelColorInfo(cal.color);
-                    const assignedMember = members.find((m) => m.id === cal.member_id);
+                {/* Multi-toggle list grouped by MEMBERS and FAMILY CALENDARS */}
+                <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                  {/* Section 1: MEMBERS */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                        Members
+                      </span>
+                    </div>
+                    {activeMembers.map((m) => {
+                      const isChecked = selectedMemberIds.includes(m.id);
+                      const colorInfo = getPastelColorInfo(m.color);
 
-                    return (
-                      <div
-                        key={cal.id}
-                        className="flex items-center justify-between gap-2 p-1.5 rounded-xl hover:bg-gray-50 transition-colors group"
-                      >
-                        <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => toggleCalendarSelection(cal.id)}
-                            className="rounded border-gray-300 text-gray-900 focus:ring-gray-900 cursor-pointer"
-                          />
-                          <span
-                            className="w-3 h-3 rounded-full border shrink-0"
-                            style={{ backgroundColor: colorInfo.hex, borderColor: colorInfo.borderHex }}
-                          />
-                          <span className="text-xs text-gray-800 font-medium truncate">
-                            {cal.name}
-                          </span>
-                        </label>
-
-                        <div className="flex items-center gap-1 shrink-0">
-                          {assignedMember && (
+                      return (
+                        <div
+                          key={m.id}
+                          className="flex items-center justify-between gap-2 p-1.5 rounded-xl hover:bg-gray-50 transition-colors group cursor-pointer"
+                          onClick={() => toggleMemberFilter(m.id)}
+                        >
+                          <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleMemberFilter(m.id)}
+                              className="rounded border-gray-300 text-gray-900 focus:ring-gray-900 cursor-pointer"
+                            />
                             <span
-                              className="px-1.5 py-0.5 rounded-md text-[9px] font-bold border truncate max-w-[65px]"
-                              style={{
-                                backgroundColor: getPastelColorInfo(assignedMember.color).bgSoft,
-                                color: getPastelColorInfo(assignedMember.color).textHex,
-                                borderColor: getPastelColorInfo(assignedMember.color).borderHex,
-                              }}
-                            >
-                              {assignedMember.name}
+                              className="w-3 h-3 rounded-full border shrink-0"
+                              style={{ backgroundColor: colorInfo.dotHex, borderColor: colorInfo.borderHex }}
+                            />
+                            <span className="text-xs text-gray-800 font-semibold truncate">
+                              {m.name}
                             </span>
-                          )}
-                          {cal.source === 'google' && (
-                            <Globe className="w-3 h-3 text-blue-500 shrink-0" />
-                          )}
-                          {canEditCalendar && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setIsCalendarsDropdownOpen(false);
-                                setEditingCalendar(cal);
-                              }}
-                              className="p-1 rounded-md text-gray-400 hover:text-gray-700 transition-colors cursor-pointer"
-                              title="Edit Calendar"
-                            >
-                              <Pencil className="w-3 h-3" />
-                            </button>
-                          )}
+                          </label>
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[9px] font-bold border truncate"
+                            style={{
+                              backgroundColor: colorInfo.bgSoft,
+                              color: colorInfo.textHex,
+                              borderColor: colorInfo.borderHex,
+                            }}
+                          >
+                            Member
+                          </span>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+
+                  {/* Section 2: FAMILY CALENDARS */}
+                  <div className="space-y-1 pt-1 border-t border-gray-100">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                        Family Calendars
+                      </span>
+                    </div>
+                    {familyCalendarLayers.map((cal) => {
+                      const isChecked = selectedCalendarIds.includes(cal.id);
+                      const colorInfo = getPastelColorInfo(cal.color);
+
+                      return (
+                        <div
+                          key={cal.id}
+                          className="flex items-center justify-between gap-2 p-1.5 rounded-xl hover:bg-gray-50 transition-colors group cursor-pointer"
+                          onClick={() => toggleCalendarSelection(cal.id)}
+                        >
+                          <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleCalendarSelection(cal.id)}
+                              className="rounded border-gray-300 text-gray-900 focus:ring-gray-900 cursor-pointer"
+                            />
+                            <span
+                              className="w-3 h-3 rounded-full border shrink-0"
+                              style={{ backgroundColor: colorInfo.dotHex, borderColor: colorInfo.borderHex }}
+                            />
+                            <span className="text-xs text-gray-800 font-medium truncate">
+                              {cal.name}
+                            </span>
+                          </label>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            {cal.source === 'google' && (
+                              <Globe className="w-3 h-3 text-blue-500 shrink-0" />
+                            )}
+                            {canEditCalendar && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setIsCalendarsDropdownOpen(false);
+                                  setEditingCalendar(cal);
+                                }}
+                                className="p-1 rounded-md text-gray-400 hover:text-gray-700 transition-colors cursor-pointer"
+                                title="Edit Calendar"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}
@@ -337,7 +393,7 @@ export const CalendarHeader: React.FC = () => {
         </div>
       </div>
 
-      {/* Mobile Controls (Matching Phone Reference) */}
+      {/* Mobile Controls */}
       <div className="flex md:hidden flex-col gap-2.5 pt-1">
         <div className="flex items-center justify-between bg-white p-2 rounded-2xl border border-gray-200 shadow-2xs">
           <div className="flex items-center gap-1.5">
@@ -384,46 +440,80 @@ export const CalendarHeader: React.FC = () => {
           ))}
         </div>
       </div>
-      <div id="family-member-filter-bar" className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs">
-        <span className="text-gray-400 font-medium whitespace-nowrap flex items-center gap-1">
-          <Users className="w-3.5 h-3.5 text-gray-400" /> Filter:
+
+      {/* Horizontal Multi-Layer Filter Bar (Members + Family Calendars) */}
+      <div id="calendar-layer-filter-bar" className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 scrollbar-none text-xs">
+        <span className="text-gray-400 font-semibold text-[11px] uppercase tracking-wider whitespace-nowrap flex items-center gap-1 shrink-0 mr-0.5">
+          <Layers className="w-3.5 h-3.5 text-blue-500" /> Layers:
         </span>
 
-        <button
-          id="filter-member-all"
-          onClick={() => setSelectedMemberFilter(null)}
-          className={`px-3 py-1 rounded-full font-semibold transition-all whitespace-nowrap cursor-pointer border ${
-            selectedMemberFilter === null
-              ? 'bg-gray-900 text-white border-gray-900 shadow-xs'
-              : 'bg-white text-gray-600 hover:text-gray-900 border-gray-200'
-          }`}
-        >
-          All Household
-        </button>
-
-        {members.map((member) => {
-          const isSelected = selectedMemberFilter === member.id;
+        {/* 1. Real Family Member Layers */}
+        {activeMembers.map((member) => {
+          const isSelected = selectedMemberIds.includes(member.id);
           const colorInfo = getPastelColorInfo(member.color);
 
           return (
             <button
               key={member.id}
               id={`filter-member-${member.id}`}
-              onClick={() => setSelectedMemberFilter(isSelected ? null : member.id)}
+              onClick={() => toggleMemberFilter(member.id)}
               style={{
-                backgroundColor: isSelected ? colorInfo.hex : '#FFFFFF',
+                backgroundColor: isSelected ? colorInfo.hex : '#F8FAFC',
                 borderColor: isSelected ? colorInfo.borderHex : '#E2E8F0',
-                color: isSelected ? colorInfo.textHex : '#475569',
+                color: isSelected ? colorInfo.textHex : '#94A3B8',
               }}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold transition-all whitespace-nowrap cursor-pointer border shadow-xs ${
-                isSelected ? 'ring-1 ring-black/10' : 'hover:border-gray-300'
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold transition-all whitespace-nowrap cursor-pointer border shadow-2xs ${
+                isSelected ? 'ring-1 ring-black/5 opacity-100' : 'opacity-65 hover:opacity-90 hover:border-gray-300'
               }`}
+              title={`Toggle ${member.name}'s Layer`}
             >
               <span
                 className="w-2.5 h-2.5 rounded-full border shrink-0"
-                style={{ backgroundColor: colorInfo.dotHex, borderColor: colorInfo.borderHex }}
+                style={{
+                  backgroundColor: isSelected ? colorInfo.dotHex : '#CBD5E1',
+                  borderColor: isSelected ? colorInfo.borderHex : '#94A3B8',
+                }}
               />
               <span>{member.name}</span>
+              {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+            </button>
+          );
+        })}
+
+        {/* Category Divider */}
+        {familyCalendarLayers.length > 0 && (
+          <div className="h-4 w-px bg-gray-200 mx-1 shrink-0" />
+        )}
+
+        {/* 2. Non-login Family Calendar Layers (Birthdays, Bin Calendar, Public Holidays, etc.) */}
+        {familyCalendarLayers.map((cal) => {
+          const isSelected = selectedCalendarIds.includes(cal.id);
+          const colorInfo = getPastelColorInfo(cal.color);
+
+          return (
+            <button
+              key={cal.id}
+              id={`filter-cal-layer-${cal.id}`}
+              onClick={() => toggleCalendarSelection(cal.id)}
+              style={{
+                backgroundColor: isSelected ? colorInfo.hex : '#F8FAFC',
+                borderColor: isSelected ? colorInfo.borderHex : '#E2E8F0',
+                color: isSelected ? colorInfo.textHex : '#94A3B8',
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold transition-all whitespace-nowrap cursor-pointer border shadow-2xs ${
+                isSelected ? 'ring-1 ring-black/5 opacity-100' : 'opacity-65 hover:opacity-90 hover:border-gray-300'
+              }`}
+              title={`Toggle ${cal.name} Layer`}
+            >
+              <span
+                className="w-2.5 h-2.5 rounded-full border shrink-0"
+                style={{
+                  backgroundColor: isSelected ? colorInfo.dotHex : '#CBD5E1',
+                  borderColor: isSelected ? colorInfo.borderHex : '#94A3B8',
+                }}
+              />
+              <span>{cal.name}</span>
+              {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
             </button>
           );
         })}

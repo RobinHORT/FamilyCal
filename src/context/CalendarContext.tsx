@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { subMonths, addMonths, subWeeks, addWeeks, subDays, addDays } from 'date-fns';
 import { Calendar, CalendarEvent, CalendarViewMode, GoogleAccount, EventType } from '../types';
 import { api } from '../api/client';
 import { useAuth } from './AuthContext';
@@ -14,17 +15,27 @@ interface CalendarContextType {
   selectedEvent: CalendarEvent | null;
   isEventModalOpen: boolean;
   eventModalInitialDate: Date | null;
-  selectedCalendarIds: string[]; // for multi-calendar toggle
+  selectedCalendarIds: string[]; // for multi-calendar layer toggle
+  selectedMemberIds: string[]; // for multi-member layer toggle
   isSyncing: boolean;
   lastSyncedAt: string | null;
   googleAccounts: GoogleAccount[];
   isLoading: boolean;
+  navigationDirection: number;
   setCurrentDate: (d: Date) => void;
   setViewMode: (v: CalendarViewMode) => void;
+  goToPreviousPeriod: () => void;
+  goToNextPeriod: () => void;
+  goToToday: () => void;
   openCreateEventModal: (initialDate?: Date) => void;
   openEditEventModal: (event: CalendarEvent) => void;
   closeEventModal: () => void;
   toggleCalendarSelection: (id: string) => void;
+  toggleMemberFilter: (id: string) => void;
+  selectAllMembers: () => void;
+  deselectAllMembers: () => void;
+  selectAllCalendars: () => void;
+  deselectAllCalendars: () => void;
   fetchCalendarData: () => Promise<void>;
   createEvent: (data: Partial<CalendarEvent>) => Promise<CalendarEvent>;
   updateEvent: (id: string, data: Partial<CalendarEvent>) => Promise<CalendarEvent>;
@@ -42,7 +53,7 @@ const CalendarContext = createContext<CalendarContextType | undefined>(undefined
 
 export function CalendarProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const { selectedMemberFilter } = useFamily();
+  const { members } = useFamily();
 
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -58,10 +69,49 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [eventModalInitialDate, setEventModalInitialDate] = useState<Date | null>(null);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [googleAccounts, setGoogleAccounts] = useState<GoogleAccount[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [navigationDirection, setNavigationDirection] = useState<number>(0);
+
+  const goToPreviousPeriod = useCallback(() => {
+    setNavigationDirection(-1);
+    setCurrentDate((prev) => {
+      if (viewMode === 'month') return subMonths(prev, 1);
+      if (viewMode === 'week') return subWeeks(prev, 1);
+      if (viewMode === 'day') return subDays(prev, 1);
+      return subMonths(prev, 1);
+    });
+  }, [viewMode]);
+
+  const goToNextPeriod = useCallback(() => {
+    setNavigationDirection(1);
+    setCurrentDate((prev) => {
+      if (viewMode === 'month') return addMonths(prev, 1);
+      if (viewMode === 'week') return addWeeks(prev, 1);
+      if (viewMode === 'day') return addDays(prev, 1);
+      return addMonths(prev, 1);
+    });
+  }, [viewMode]);
+
+  const goToToday = useCallback(() => {
+    setNavigationDirection(0);
+    setCurrentDate(new Date());
+  }, []);
+
+  // Synchronize member layer filter when members load
+  useEffect(() => {
+    if (members.length > 0) {
+      setSelectedMemberIds((prev) => {
+        if (prev.length === 0) {
+          return members.filter((m) => m.is_active === 1).map((m) => m.id);
+        }
+        return prev;
+      });
+    }
+  }, [members]);
 
   const fetchCalendarData = useCallback(async () => {
     if (!user) {
@@ -107,18 +157,38 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     fetchCalendarData();
   }, [fetchCalendarData]);
 
-  // Compute filtered events based on member filter and calendar checkbox selection
+  // Compute filtered events based on member layer selection and calendar checkbox selection
   const filteredEvents = events.filter((evt) => {
-    // 1. Calendar selection filter
+    // 1. Calendar selection filter: Event's calendar must be enabled
     if (selectedCalendarIds.length > 0 && !selectedCalendarIds.includes(evt.calendar_id)) {
       return false;
     }
-    // 2. Member filter
-    if (selectedMemberFilter) {
-      if (!evt.assigned_member_ids || !evt.assigned_member_ids.includes(selectedMemberFilter)) {
-        return false;
+
+    // 2. Member filter:
+    let rawIds = evt.assigned_member_ids;
+    let assignedIds: string[] = [];
+    if (Array.isArray(rawIds)) {
+      assignedIds = rawIds;
+    } else if (typeof rawIds === 'string') {
+      try {
+        assignedIds = JSON.parse(rawIds);
+      } catch {
+        assignedIds = [];
       }
     }
+
+    // If event has assigned members, it is visible if ANY of those members are selected
+    if (assignedIds.length > 0) {
+      return assignedIds.some((id) => selectedMemberIds.includes(id));
+    }
+
+    // If event has a single member_id
+    if ((evt as any).member_id) {
+      return selectedMemberIds.includes((evt as any).member_id);
+    }
+
+    // If event has NO assigned members (e.g. non-login calendar layers like Birthdays, Bin Calendar, Public Holidays):
+    // It is shown whenever its calendar layer is enabled!
     return true;
   });
 
@@ -144,6 +214,28 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     setSelectedCalendarIds((prev) =>
       prev.includes(id) ? prev.filter((calId) => calId !== id) : [...prev, id]
     );
+  };
+
+  const toggleMemberFilter = (id: string) => {
+    setSelectedMemberIds((prev) =>
+      prev.includes(id) ? prev.filter((mId) => mId !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllMembers = () => {
+    setSelectedMemberIds(members.filter((m) => m.is_active === 1).map((m) => m.id));
+  };
+
+  const deselectAllMembers = () => {
+    setSelectedMemberIds([]);
+  };
+
+  const selectAllCalendars = () => {
+    setSelectedCalendarIds(calendars.map((c) => c.id));
+  };
+
+  const deselectAllCalendars = () => {
+    setSelectedCalendarIds([]);
   };
 
   const createEvent = async (data: Partial<CalendarEvent>) => {
@@ -223,16 +315,26 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         isEventModalOpen,
         eventModalInitialDate,
         selectedCalendarIds,
+        selectedMemberIds,
         isSyncing,
         lastSyncedAt,
         googleAccounts,
         isLoading,
+        navigationDirection,
         setCurrentDate,
         setViewMode,
+        goToPreviousPeriod,
+        goToNextPeriod,
+        goToToday,
         openCreateEventModal,
         openEditEventModal,
         closeEventModal,
         toggleCalendarSelection,
+        toggleMemberFilter,
+        selectAllMembers,
+        deselectAllMembers,
+        selectAllCalendars,
+        deselectAllCalendars,
         fetchCalendarData,
         createEvent,
         updateEvent,

@@ -346,7 +346,7 @@ export function getEventAssignmentInfo(
     assignedIds.includes(m.id)
   );
 
-  // If no assigned member IDs provided (or empty array / whole family event):
+  // If no assigned member IDs provided:
   if (participatingMembers.length === 0) {
     if ((evt as any).member_id) {
       const singleM = allMembers.find((m) => m.id === (evt as any).member_id);
@@ -354,24 +354,40 @@ export function getEventAssignmentInfo(
         participatingMembers = [singleM];
       }
     }
-    // If still empty, it represents the whole family!
-    if (participatingMembers.length === 0) {
-      participatingMembers = [...allMembers];
-    }
   }
 
   const isFamilyEvent = participatingMembers.length > 1;
 
-  if (!isFamilyEvent) {
-    const singleMember = participatingMembers[0] || adminMember;
-    const memberColor = singleMember?.color || evt.member_color || evt.color;
+  if (isFamilyEvent) {
+    // Multi-member event:
+    // Multi-colour background divided into equal sections based on participating members
+    const memberHexList = participatingMembers.map((m) => getPastelColorInfo(m.color).hex);
+    const segmentedGradient = getFamilyGradient(memberHexList);
+
+    return {
+      isFamilyEvent: true,
+      label: 'Family',
+      singleMember: null,
+      participatingMembers,
+      adminMember,
+      adminColorInfo,
+      primaryColorInfo: adminColorInfo,
+      borderHex: adminColorInfo.borderHex,
+      segmentedGradient,
+    };
+  }
+
+  // Single member event
+  if (participatingMembers.length === 1) {
+    const singleMember = participatingMembers[0];
+    const memberColor = singleMember.color || evt.member_color || evt.color;
     const colorInfo = getPastelColorInfo(memberColor);
 
     return {
       isFamilyEvent: false,
-      label: singleMember?.name || 'Family',
+      label: singleMember.name,
       singleMember,
-      participatingMembers: singleMember ? [singleMember] : [],
+      participatingMembers: [singleMember],
       adminMember,
       adminColorInfo,
       primaryColorInfo: colorInfo,
@@ -380,21 +396,22 @@ export function getEventAssignmentInfo(
     };
   }
 
-  // Family event:
-  // Multi-colour background divided into equal sections based on number of participating members
-  const memberHexList = participatingMembers.map((m) => getPastelColorInfo(m.color).hex);
-  const segmentedGradient = getFamilyGradient(memberHexList);
+  // Non-login Family Calendar Layer event (e.g., 🎂 Birthdays, 🗑️ Bin Calendar, 🇦🇺 Public Holidays, or custom layers):
+  // Dedicated layer colour without combining members' colours!
+  const layerColor = evt.color || (evt as any).calendar_color || '#8B5CF6';
+  const colorInfo = getPastelColorInfo(layerColor);
+  const layerLabel = (evt as any).calendar_name || (evt.event_type && evt.event_type !== 'Other' ? evt.event_type : 'Family');
 
   return {
-    isFamilyEvent: true,
-    label: 'Family',
+    isFamilyEvent: false,
+    label: layerLabel,
     singleMember: null,
-    participatingMembers,
+    participatingMembers: [],
     adminMember,
     adminColorInfo,
-    primaryColorInfo: adminColorInfo, // Admin's colour is main family reference
-    borderHex: adminColorInfo.borderHex,
-    segmentedGradient,
+    primaryColorInfo: colorInfo,
+    borderHex: colorInfo.borderHex,
+    segmentedGradient: colorInfo.hex,
   };
 }
 

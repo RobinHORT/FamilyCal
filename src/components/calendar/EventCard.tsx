@@ -92,7 +92,15 @@ export const EventCard: React.FC<EventCardProps> = ({
                 className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-2xs shrink-0"
                 style={{ backgroundColor: assignmentInfo.primaryColorInfo.dotHex }}
               >
-                {assignmentInfo.label.slice(0, 1).toUpperCase()}
+                {assignmentInfo.singleMember
+                  ? assignmentInfo.singleMember.name.slice(0, 1).toUpperCase()
+                  : assignmentInfo.label.includes('🎂') || assignmentInfo.label.toLowerCase().includes('birthday')
+                  ? '🎂'
+                  : assignmentInfo.label.includes('🗑️') || assignmentInfo.label.toLowerCase().includes('bin')
+                  ? '🗑️'
+                  : assignmentInfo.label.includes('🇦🇺') || assignmentInfo.label.toLowerCase().includes('holiday')
+                  ? '🏖️'
+                  : assignmentInfo.label.slice(0, 1).toUpperCase()}
               </div>
               <span className="text-xs font-bold text-slate-800 tracking-tight truncate">
                 {assignmentInfo.label}

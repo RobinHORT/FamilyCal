@@ -257,6 +257,7 @@ export function initDatabase() {
     const existingFamilies = db.prepare('SELECT id FROM families').all() as Array<{ id: string }>;
     for (const fam of existingFamilies) {
       seedDefaultEventTypesForFamily(fam.id);
+      seedDefaultCalendarLayersForFamily(fam.id);
     }
   } catch (eventMigErr) {
     console.warn('Event table migration check warning:', eventMigErr);
@@ -306,6 +307,199 @@ export function seedDefaultEventTypesForFamily(familyId: string) {
     }
   } catch (err) {
     console.warn('seedDefaultEventTypesForFamily error:', err);
+  }
+}
+
+export function seedDefaultCalendarLayersForFamily(familyId: string) {
+  try {
+    const now = new Date().toISOString();
+    const insertCal = db.prepare(`
+      INSERT INTO calendars (id, family_id, member_id, name, color, description, is_default, source, is_read_only, sync_enabled, created_at, updated_at)
+      VALUES (?, ?, NULL, ?, ?, ?, 0, 'yimly', 0, 1, ?, ?)
+    `);
+
+    // 1. Birthdays Layer
+    let birthdayCal = db.prepare(`
+      SELECT id FROM calendars WHERE family_id = ? AND (name LIKE '%Birthday%' OR name LIKE '%🎂%')
+    `).get(familyId) as { id: string } | undefined;
+
+    if (!birthdayCal) {
+      const bCalId = 'cal_birthdays_' + uuidv4().slice(0, 6);
+      insertCal.run(bCalId, familyId, '🎂 Birthdays', '#EC4899', 'Family birthdays and milestone celebrations', now, now);
+      birthdayCal = { id: bCalId };
+    }
+
+    // 2. Bin Calendar Layer
+    let binCal = db.prepare(`
+      SELECT id FROM calendars WHERE family_id = ? AND (name LIKE '%Bin%' OR name LIKE '%🗑️%')
+    `).get(familyId) as { id: string } | undefined;
+
+    if (!binCal) {
+      const binCalId = 'cal_bins_' + uuidv4().slice(0, 6);
+      insertCal.run(binCalId, familyId, '🗑️ Bin Calendar', '#10B981', 'Household waste, recycling, and organics collection days', now, now);
+      binCal = { id: binCalId };
+    }
+
+    // 3. Public Holidays Layer
+    let holidayCal = db.prepare(`
+      SELECT id FROM calendars WHERE family_id = ? AND (name LIKE '%Holiday%' OR name LIKE '%🇦🇺%')
+    `).get(familyId) as { id: string } | undefined;
+
+    if (!holidayCal) {
+      const hCalId = 'cal_holidays_' + uuidv4().slice(0, 6);
+      insertCal.run(hCalId, familyId, '🇦🇺 Public Holidays', '#8B5CF6', 'National and regional public holidays', now, now);
+      holidayCal = { id: hCalId };
+    }
+
+    // Seed events for Public Holidays if none exist on this calendar
+    const existingHolidayEvents = (db.prepare('SELECT COUNT(*) as count FROM events WHERE calendar_id = ?').get(holidayCal.id) as { count: number }).count;
+    if (existingHolidayEvents === 0) {
+      const currentYear = new Date().getFullYear();
+      const insertEvent = db.prepare(`
+        INSERT INTO events (id, family_id, calendar_id, title, description, location, color, event_type, start_time, end_time, all_day, recurring_rule, assigned_member_ids, sync_status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'Holiday', ?, ?, 1, 'yearly', '[]', 'local_only', ?, ?)
+      `);
+
+      const holidays = [
+        { title: "New Year's Day 🎆", month: 0, day: 1 },
+        { title: 'Australia Day 🇦🇺', month: 0, day: 26 },
+        { title: 'Good Friday ✝️', month: 3, day: 3 },
+        { title: 'Easter Monday 🐰', month: 3, day: 6 },
+        { title: 'ANZAC Day 🌺', month: 3, day: 25 },
+        { title: "King's Birthday 👑", month: 5, day: 8 },
+        { title: 'Labor Day 🛠️', month: 9, day: 5 },
+        { title: 'Christmas Day 🎄', month: 11, day: 25 },
+        { title: 'Boxing Day 🎁', month: 11, day: 26 },
+      ];
+
+      for (const h of holidays) {
+        const start = new Date(currentYear, h.month, h.day, 0, 0, 0);
+        const end = new Date(currentYear, h.month, h.day, 23, 59, 59);
+        insertEvent.run(
+          'evt_hol_' + uuidv4().slice(0, 8),
+          familyId,
+          holidayCal.id,
+          h.title,
+          'Official Public Holiday',
+          'National',
+          '#8B5CF6',
+          start.toISOString(),
+          end.toISOString(),
+          now,
+          now
+        );
+      }
+    }
+
+    // Seed events for Bin Calendar if none exist
+    const existingBinEvents = (db.prepare('SELECT COUNT(*) as count FROM events WHERE calendar_id = ?').get(binCal.id) as { count: number }).count;
+    if (existingBinEvents === 0) {
+      const insertEvent = db.prepare(`
+        INSERT INTO events (id, family_id, calendar_id, title, description, location, color, event_type, start_time, end_time, all_day, recurring_rule, assigned_member_ids, sync_status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'Other', ?, ?, 0, 'weekly', '[]', 'local_only', ?, ?)
+      `);
+
+      const nowD = new Date();
+      // Next Tuesday
+      const daysUntilTuesday = (2 + 7 - nowD.getDay()) % 7 || 7;
+      const nextTuesday = new Date(nowD);
+      nextTuesday.setDate(nowD.getDate() + daysUntilTuesday);
+      nextTuesday.setHours(7, 0, 0, 0);
+      const nextTuesdayEnd = new Date(nextTuesday);
+      nextTuesdayEnd.setHours(7, 30, 0, 0);
+
+      insertEvent.run(
+        'evt_bin_' + uuidv4().slice(0, 8),
+        familyId,
+        binCal.id,
+        'General Waste & Recycling Bin 🗑️♻️',
+        'Put out red-lid landfill bin and yellow-lid recycling bin by 7:00 AM.',
+        'Kerbside',
+        '#10B981',
+        nextTuesday.toISOString(),
+        nextTuesdayEnd.toISOString(),
+        now,
+        now
+      );
+
+      const nextNextTuesday = new Date(nextTuesday);
+      nextNextTuesday.setDate(nextTuesday.getDate() + 7);
+      const nextNextTuesdayEnd = new Date(nextNextTuesday);
+      nextNextTuesdayEnd.setHours(7, 30, 0, 0);
+
+      insertEvent.run(
+        'evt_bin_' + uuidv4().slice(0, 8),
+        familyId,
+        binCal.id,
+        'Green Organics Bin 🌿',
+        'Put out green-lid garden & organic food waste bin by 7:00 AM.',
+        'Kerbside',
+        '#059669',
+        nextNextTuesday.toISOString(),
+        nextNextTuesdayEnd.toISOString(),
+        now,
+        now
+      );
+    }
+
+    // Sync member birthdays into 🎂 Birthdays calendar
+    syncMemberBirthdaysToCalendarLayer(familyId, birthdayCal.id);
+  } catch (err) {
+    console.warn('seedDefaultCalendarLayersForFamily error:', err);
+  }
+}
+
+export function syncMemberBirthdaysToCalendarLayer(familyId: string, birthdayCalId?: string) {
+  try {
+    let calId = birthdayCalId;
+    if (!calId) {
+      const bCal = db.prepare(`
+        SELECT id FROM calendars WHERE family_id = ? AND (name LIKE '%Birthday%' OR name LIKE '%🎂%')
+      `).get(familyId) as { id: string } | undefined;
+      if (!bCal) return;
+      calId = bCal.id;
+    }
+
+    const membersWithBirthdays = db.prepare(`
+      SELECT id, name, birthday, color FROM family_members
+      WHERE family_id = ? AND is_active = 1 AND birthday IS NOT NULL AND birthday != ''
+    `).all(familyId) as Array<{ id: string; name: string; birthday: string; color: string }>;
+
+    const now = new Date().toISOString();
+    const currentYear = new Date().getFullYear();
+
+    for (const m of membersWithBirthdays) {
+      const bDate = new Date(m.birthday);
+      if (isNaN(bDate.getTime())) continue;
+
+      const title = `${m.name}'s Birthday 🎂🎉`;
+      const existing = db.prepare(`
+        SELECT id FROM events WHERE calendar_id = ? AND title LIKE ?
+      `).get(calId, `${m.name}'s Birthday%`) as { id: string } | undefined;
+
+      const start = new Date(currentYear, bDate.getMonth(), bDate.getDate(), 0, 0, 0);
+      const end = new Date(currentYear, bDate.getMonth(), bDate.getDate(), 23, 59, 59);
+
+      if (!existing) {
+        db.prepare(`
+          INSERT INTO events (id, family_id, calendar_id, title, description, location, color, event_type, start_time, end_time, all_day, recurring_rule, assigned_member_ids, sync_status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, '#EC4899', 'Birthday', ?, ?, 1, 'yearly', '[]', 'local_only', ?, ?)
+        `).run(
+          'evt_bday_' + uuidv4().slice(0, 8),
+          familyId,
+          calId,
+          title,
+          `Celebration of ${m.name}'s birthday!`,
+          'Home',
+          start.toISOString(),
+          end.toISOString(),
+          now,
+          now
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('syncMemberBirthdaysToCalendarLayer error:', err);
   }
 }
 
