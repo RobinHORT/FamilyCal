@@ -32,10 +32,10 @@ export function CalendarContainer({ isViewer: isViewerProp }: CalendarContainerP
     <div className="flex flex-col flex-1 min-h-0 h-full gap-3 sm:gap-4 max-w-7xl mx-auto w-full relative">
       <CalendarHeader />
       <div className="flex-1 flex flex-col min-h-0">
-        {viewMode === 'month' && <MonthView />}
+        {viewMode === 'month' && <MonthView isViewer={isViewer} />}
         {viewMode === 'week' && <WeekView isViewer={isViewer} />}
-        {viewMode === 'day' && <DayView />}
-        {viewMode === 'agenda' && <AgendaView />}
+        {viewMode === 'day' && <DayView isViewer={isViewer} />}
+        {viewMode === 'agenda' && <AgendaView isViewer={isViewer} />}
       </div>
 
       {/* Floating Action Add Button on Mobile (Hidden in Viewer mode) */}
