@@ -16,6 +16,8 @@ import { IntegrationsView } from './components/settings/IntegrationsView';
 import { ProfileView } from './components/profile/ProfileView';
 import { TasksView } from './components/tasks/TasksView';
 import { BirthdaysView } from './components/birthdays/BirthdaysView';
+import { TabletViewer } from './components/viewer/TabletViewer';
+import { ViewerLogin } from './components/viewer/ViewerLogin';
 import { AuthModal } from './components/auth/AuthModal';
 import { PrivacyPolicy } from './components/privacy/PrivacyPolicy';
 import { Plus, Loader2 } from 'lucide-react';
@@ -50,13 +52,28 @@ function CalendarContainer() {
 }
 
 function MainDashboard() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, checkAuth } = useAuth();
   const [activeTab, setActiveTab] = useState<MainTabType>('calendar');
   const [currentPath, setCurrentPath] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
+  const [isViewerMode, setIsViewerMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return (
+        window.location.pathname === '/viewer' ||
+        window.location.search.includes('mode=viewer') ||
+        window.location.search.includes('viewer=1') ||
+        localStorage.getItem('familycal_viewer_mode') === 'true'
+      );
+    }
+    return false;
+  });
 
   React.useEffect(() => {
     const handleLocationChange = () => {
-      setCurrentPath(window.location.pathname);
+      const path = window.location.pathname;
+      setCurrentPath(path);
+      if (path === '/viewer' || window.location.search.includes('mode=viewer')) {
+        setIsViewerMode(true);
+      }
     };
     window.addEventListener('popstate', handleLocationChange);
     return () => window.removeEventListener('popstate', handleLocationChange);
@@ -85,14 +102,55 @@ function MainDashboard() {
     );
   }
 
+  // Dedicated Tablet / iPad Viewer Mode Route
+  if (currentPath === '/viewer') {
+    if (!user) {
+      return (
+        <ViewerLogin
+          onSuccess={async () => {
+            await checkAuth();
+            setIsViewerMode(true);
+          }}
+        />
+      );
+    }
+
+    return (
+      <TabletViewer
+        onExit={() => {
+          setIsViewerMode(false);
+          localStorage.removeItem('familycal_viewer_mode');
+          window.history.pushState(null, '', '/');
+          setCurrentPath('/');
+        }}
+      />
+    );
+  }
+
   if (!user) {
     return <AuthModal />;
+  }
+
+  if (isViewerMode) {
+    return (
+      <TabletViewer
+        onExit={() => {
+          setIsViewerMode(false);
+          localStorage.removeItem('familycal_viewer_mode');
+          window.history.pushState(null, '', '/');
+          setCurrentPath('/');
+        }}
+      />
+    );
   }
 
   return (
     <div id="yimly-app-root" className="flex flex-col h-screen bg-[#FAFAFA] text-gray-900 font-sans overflow-hidden">
       {/* Top Navigation Bar */}
-      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+      />
 
       {/* Main Workspace Body */}
       <div className="flex flex-1 overflow-hidden relative">

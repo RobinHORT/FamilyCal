@@ -84,8 +84,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
         })}
       </nav>
 
-      {/* Right side controls: Profile initials avatar on PC, filter icon on Mobile */}
-      <div className="flex items-center gap-3">
+      {/* Right side controls: Profile avatar, filter on Mobile */}
+      <div className="flex items-center gap-2 sm:gap-3">
         {/* Mobile Filter Button */}
         <button
           onClick={() => setActiveTab('settings')}

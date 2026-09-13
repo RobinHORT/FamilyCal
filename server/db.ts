@@ -253,6 +253,18 @@ export function initDatabase() {
     // Assign default 'Other' to any existing event that has no event type
     db.prepare(`UPDATE events SET event_type = 'Other' WHERE event_type IS NULL OR TRIM(event_type) = '';`).run();
 
+    // Check families table columns for viewer_password_hash
+    try {
+      const famCols = db.prepare(`PRAGMA table_info(families);`).all() as Array<{ name: string }>;
+      const hasViewerPassword = famCols.some((col) => col.name === 'viewer_password_hash');
+      if (!hasViewerPassword) {
+        db.prepare(`ALTER TABLE families ADD COLUMN viewer_password_hash TEXT;`).run();
+        console.log('Migration applied: added viewer_password_hash column to families table.');
+      }
+    } catch (famMigErr) {
+      console.warn('Family table migration check warning:', famMigErr);
+    }
+
     // Make sure all existing families have default event types seeded
     const existingFamilies = db.prepare('SELECT id FROM families').all() as Array<{ id: string }>;
     for (const fam of existingFamilies) {

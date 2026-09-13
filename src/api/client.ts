@@ -88,13 +88,23 @@ export const api = {
   getMe: () =>
     fetchJson<{ user: User; family: Family; memberProfile?: FamilyMember }>('/api/auth/me'),
 
+  // Viewer & Auth
+  getViewerInfo: () =>
+    fetchJson<{ familyId: string; familyName: string; hasViewerPassword: boolean }>('/api/viewer/info'),
+
+  viewerLogin: (password: string) =>
+    fetchJson<{ user: User; token: string; family: Family }>('/api/auth/viewer-login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+
   // Family & Members
   getFamily: () => fetchJson<{ family: Family; members: FamilyMember[] }>('/api/family'),
   
   suggestUsername: (name: string, excludeUserId?: string) =>
     fetchJson<{ username: string }>(`/api/family/suggest-username?name=${encodeURIComponent(name)}${excludeUserId ? `&excludeUserId=${encodeURIComponent(excludeUserId)}` : ''}`),
 
-  updateFamily: (data: { name?: string; timezone?: string }) =>
+  updateFamily: (data: { name?: string; timezone?: string; viewerPassword?: string }) =>
     fetchJson<Family>('/api/family', {
       method: 'PUT',
       body: JSON.stringify(data),

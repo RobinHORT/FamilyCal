@@ -15,6 +15,7 @@ interface AuthContextType {
   register: (data: { familyName: string; name: string; email: string; password: string; color?: string; birthday?: string }) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  checkAuth: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -156,6 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         register,
         logout,
         refreshProfile,
+        checkAuth,
       }}
     >
       {children}

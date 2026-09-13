@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { db, seedDefaultEventTypesForFamily, seedDefaultCalendarLayersForFamily, syncMemberBirthdaysToCalendarLayer } from '../db.js';
 import {
@@ -223,10 +224,96 @@ router.post('/auth/logout', (req: Request, res: Response) => {
   res.json({ success: true, message: 'Logged out successfully.' });
 });
 
+router.get('/viewer/info', (req: Request, res: Response) => {
+  try {
+    const family = db.prepare('SELECT id, name, viewer_password_hash FROM families LIMIT 1').get() as any;
+    if (!family) {
+      return res.status(404).json({ error: 'No household found.' });
+    }
+    res.json({
+      familyId: family.id,
+      familyName: family.name,
+      hasViewerPassword: Boolean(family.viewer_password_hash),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/auth/viewer-login', (req: Request, res: Response) => {
+  try {
+    const { password } = req.body;
+    const family = db.prepare('SELECT id, name, timezone, viewer_password_hash FROM families LIMIT 1').get() as any;
+    if (!family) {
+      return res.status(404).json({ error: 'No household found.' });
+    }
+
+    if (family.viewer_password_hash) {
+      if (!password || !verifyPassword(password, family.viewer_password_hash)) {
+        return res.status(401).json({ error: 'Incorrect Household Viewer password.' });
+      }
+    }
+
+    const JWT_SECRET = process.env.SESSION_SECRET || 'yimly-familycal-super-secret-key-2026';
+    const viewerToken = jwt.sign(
+      {
+        isViewer: true,
+        family_id: family.id,
+        passwordHash: family.viewer_password_hash || '',
+        name: family.name + ' Viewer',
+        role: 'viewer',
+      },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.cookie(TOKEN_COOKIE_NAME, viewerToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
+    res.json({
+      token: viewerToken,
+      user: {
+        id: 'viewer_' + family.id,
+        family_id: family.id,
+        name: family.name + ' Viewer',
+        role: 'child',
+        isViewer: true,
+      },
+      family: {
+        id: family.id,
+        name: family.name,
+        timezone: family.timezone || 'UTC',
+        has_viewer_password: Boolean(family.viewer_password_hash),
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/auth/me', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     const user = req.user!;
-    const family = db.prepare('SELECT * FROM families WHERE id = ?').get(user.family_id);
+    const rawFamily = db.prepare('SELECT * FROM families WHERE id = ?').get(user.family_id) as any;
+    const family = rawFamily
+      ? {
+          ...rawFamily,
+          has_viewer_password: Boolean(rawFamily.viewer_password_hash),
+        }
+      : null;
+
+    if (user.isViewer) {
+      return res.json({
+        user,
+        family,
+        memberProfile: null,
+      });
+    }
+
     const memberProfile = db.prepare('SELECT * FROM family_members WHERE family_id = ? AND user_id = ?').get(
       user.family_id,
       user.id
@@ -253,7 +340,14 @@ router.get('/auth/me', authenticateToken, (req: AuthRequest, res: Response) => {
 
 router.get('/family', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
-    const family = db.prepare('SELECT * FROM families WHERE id = ?').get(req.user!.family_id);
+    const rawFamily = db.prepare('SELECT * FROM families WHERE id = ?').get(req.user!.family_id) as any;
+    const family = rawFamily
+      ? {
+          ...rawFamily,
+          has_viewer_password: Boolean(rawFamily.viewer_password_hash),
+        }
+      : null;
+
     const rawMembers = db.prepare(`
       SELECT 
         m.*, 
@@ -309,16 +403,38 @@ router.get('/family/suggest-username', authenticateToken, requireAdmin, (req: Au
 
 router.put('/family', authenticateToken, requireAdmin, (req: AuthRequest, res: Response) => {
   try {
-    const { name, timezone } = req.body;
+    const { name, timezone, viewerPassword } = req.body;
     const now = new Date().toISOString();
-    db.prepare(`
-      UPDATE families
-      SET name = COALESCE(?, name), timezone = COALESCE(?, timezone), updated_at = ?
-      WHERE id = ?
-    `).run(name || null, timezone || null, now, req.user!.family_id);
 
-    const updated = db.prepare('SELECT * FROM families WHERE id = ?').get(req.user!.family_id);
-    res.json(updated);
+    if (viewerPassword !== undefined) {
+      if (typeof viewerPassword === 'string' && viewerPassword.trim().length > 0) {
+        const passHash = hashPassword(viewerPassword.trim());
+        db.prepare(`
+          UPDATE families
+          SET name = COALESCE(?, name), timezone = COALESCE(?, timezone), viewer_password_hash = ?, updated_at = ?
+          WHERE id = ?
+        `).run(name || null, timezone || null, passHash, now, req.user!.family_id);
+      } else if (viewerPassword === '') {
+        // Clear password
+        db.prepare(`
+          UPDATE families
+          SET name = COALESCE(?, name), timezone = COALESCE(?, timezone), viewer_password_hash = NULL, updated_at = ?
+          WHERE id = ?
+        `).run(name || null, timezone || null, now, req.user!.family_id);
+      }
+    } else {
+      db.prepare(`
+        UPDATE families
+        SET name = COALESCE(?, name), timezone = COALESCE(?, timezone), updated_at = ?
+        WHERE id = ?
+      `).run(name || null, timezone || null, now, req.user!.family_id);
+    }
+
+    const updated = db.prepare('SELECT * FROM families WHERE id = ?').get(req.user!.family_id) as any;
+    res.json({
+      ...updated,
+      has_viewer_password: Boolean(updated.viewer_password_hash),
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

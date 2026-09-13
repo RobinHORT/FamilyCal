@@ -49,12 +49,14 @@ export interface User {
   birthday?: string;
   is_active?: number;
   permissions?: UserPermissions;
+  isViewer?: boolean;
 }
 
 export interface Family {
   id: string;
   name: string;
   timezone: string;
+  has_viewer_password?: boolean;
   created_at?: string;
   updated_at?: string;
 }

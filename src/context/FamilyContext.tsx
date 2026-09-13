@@ -15,7 +15,7 @@ interface FamilyContextType {
   updateMember: (id: string, data: Partial<FamilyMember>) => Promise<FamilyMember>;
   removeMember: (id: string) => Promise<void>;
   manageMemberLogin: (id: string, data: { enabled: boolean; username?: string; password?: string }) => Promise<any>;
-  updateHousehold: (data: { name?: string; timezone?: string }) => Promise<void>;
+  updateHousehold: (data: { name?: string; timezone?: string; viewerPassword?: string }) => Promise<void>;
   updateMemberPermissions: (id: string, data: { permissions?: Partial<import('../types').UserPermissions>; resetToDefaults?: boolean }) => Promise<FamilyMember>;
 }
 
@@ -80,7 +80,7 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     return res;
   };
 
-  const updateHousehold = async (data: { name?: string; timezone?: string }) => {
+  const updateHousehold = async (data: { name?: string; timezone?: string; viewerPassword?: string }) => {
     const updated = await api.updateFamily(data);
     setFamily(updated);
   };

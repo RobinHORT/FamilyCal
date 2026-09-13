@@ -24,6 +24,7 @@ export interface AuthUser {
   is_active?: number;
   permissions?: string | UserPermissions | null;
   resolvedPermissions?: UserPermissions;
+  isViewer?: boolean;
 }
 
 export interface AuthRequest extends Request {
@@ -144,7 +145,41 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+
+    if (decoded.isViewer) {
+      const family = db.prepare('SELECT id, name, viewer_password_hash FROM families WHERE id = ?').get(decoded.family_id) as any;
+      if (!family || (family.viewer_password_hash && decoded.passwordHash !== family.viewer_password_hash)) {
+        return res.status(401).json({ error: 'Viewer session invalid or password changed', code: 401 });
+      }
+
+      req.user = {
+        id: 'viewer_' + family.id,
+        family_id: family.id,
+        name: family.name + ' Viewer',
+        role: 'child',
+        isViewer: true,
+        resolvedPermissions: {
+          calendar_view: true,
+          calendar_create: false,
+          calendar_edit: false,
+          calendar_delete: false,
+          calendar_assign: false,
+          event_view: true,
+          event_create: false,
+          event_edit_own: false,
+          event_edit_assigned: false,
+          event_edit_all: false,
+          event_delete_own: false,
+          event_delete_assigned: false,
+          event_delete_all: false,
+          members_view: true,
+          members_manage: false,
+          google_calendar_manage: false,
+        },
+      };
+      return next();
+    }
     
     // Verify user still exists in database and account is active
     const user = db.prepare('SELECT id, family_id, email, username, name, role, avatar_url, color, is_active, permissions FROM users WHERE id = ?').get(decoded.id) as unknown as (AuthUser & { is_active: number }) | undefined;
