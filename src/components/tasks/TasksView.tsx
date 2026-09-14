@@ -872,7 +872,7 @@ export const TasksView: React.FC = () => {
                   </div>
 
                   {/* Selected Date Tasks Stream */}
-                  <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-white scrollbar-thin min-h-0 w-full max-w-full min-w-0">
+                  <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-white scrollbar-thin min-h-0 w-full max-w-full min-w-0 pb-calendar-mobile md:pb-4">
                     {selectedDayTasks.length === 0 ? (
                       <div className="py-12 sm:py-16 text-center text-gray-400">
                         <p className="text-sm font-semibold text-gray-600">No scheduled tasks for this day.</p>

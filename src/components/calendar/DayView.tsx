@@ -126,9 +126,7 @@ export const DayView: React.FC<DayViewProps> = ({
 
       {/* Daily Schedule Stream */}
       <div
-        className={`flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-white scrollbar-thin min-h-0 w-full max-w-full min-w-0 ${
-          !isEmbedded ? 'pb-calendar-mobile md:pb-4' : ''
-        }`}
+        className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-white scrollbar-thin min-h-0 w-full max-w-full min-w-0 pb-calendar-mobile md:pb-4"
       >
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
