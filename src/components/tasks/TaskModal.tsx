@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CheckSquare, Calendar, Clock, AlertCircle, Trash2, Archive, Check, Bell, BellOff, BellRing, Repeat } from 'lucide-react';
+import { X, CheckSquare, Calendar, Clock, AlertCircle, Trash2, Archive, Check, Bell, BellOff, BellRing, Repeat, Users } from 'lucide-react';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
+import { useAuth } from '../../context/AuthContext';
 import { Priority, Task, TaskRecurrenceRule } from '../../types';
 import { getNotificationPermission, requestNotificationPermission, NotificationPermissionState } from '../../utils/taskNotifications';
+import { getPastelColorInfo } from '../../utils/colors';
+import { getTaskAssignedMemberIds, canMemberToggleTask } from '../../utils/taskPermissions';
 
 export const TaskModal: React.FC = () => {
   const {
@@ -21,6 +24,10 @@ export const TaskModal: React.FC = () => {
   } = useCalendar();
 
   const { members } = useFamily();
+  const { user, memberProfile, isViewer } = useAuth();
+
+  const activeMembers = members.filter((m) => m.is_active === 1);
+  const currentMemberId = memberProfile?.id || members.find((m) => m.user_id === user?.id || m.id === user?.id)?.id || user?.id;
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -30,7 +37,7 @@ export const TaskModal: React.FC = () => {
   const [recurringRule, setRecurringRule] = useState<TaskRecurrenceRule>('none');
   const [recurringInterval, setRecurringInterval] = useState<number>(1);
   const [recurringUnit, setRecurringUnit] = useState<'day' | 'week' | 'month'>('day');
-  const [assignedMemberId, setAssignedMemberId] = useState<string>('');
+  const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
   const [priority, setPriority] = useState<Priority>('medium');
   const [isArchived, setIsArchived] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
@@ -44,7 +51,7 @@ export const TaskModal: React.FC = () => {
       if (editingTask) {
         setTitle(editingTask.title);
         setDescription(editingTask.description || '');
-        setDueDate(editingTask.due_date || '');
+        setDueDate(editingTask.due_date ? editingTask.due_date.slice(0, 10) : format(new Date(), 'yyyy-MM-dd'));
         setDueTime(editingTask.due_time || '');
         setReminderMinutes(
           editingTask.reminder_minutes !== undefined && editingTask.reminder_minutes !== null
@@ -54,7 +61,16 @@ export const TaskModal: React.FC = () => {
         setRecurringRule(editingTask.recurring_rule || 'none');
         setRecurringInterval(editingTask.recurring_interval ? Number(editingTask.recurring_interval) : 1);
         setRecurringUnit(editingTask.recurring_unit || 'day');
-        setAssignedMemberId(editingTask.assigned_member_id || '');
+
+        const existingIds = getTaskAssignedMemberIds(editingTask);
+        if (existingIds.length > 0) {
+          setAssignedMemberIds(existingIds);
+        } else if (currentMemberId) {
+          setAssignedMemberIds([currentMemberId]);
+        } else {
+          setAssignedMemberIds(activeMembers.map((m) => m.id));
+        }
+
         setPriority(editingTask.priority || 'medium');
         setIsArchived(Boolean(editingTask.is_archived));
         setIsCompleted(Boolean(editingTask.completed));
@@ -68,7 +84,15 @@ export const TaskModal: React.FC = () => {
         setRecurringRule('none');
         setRecurringInterval(1);
         setRecurringUnit('day');
-        setAssignedMemberId('');
+
+        if (currentMemberId) {
+          setAssignedMemberIds([currentMemberId]);
+        } else if (activeMembers.length > 0) {
+          setAssignedMemberIds([activeMembers[0].id]);
+        } else {
+          setAssignedMemberIds([]);
+        }
+
         setPriority('medium');
         setIsArchived(false);
         setIsCompleted(false);
@@ -87,7 +111,6 @@ export const TaskModal: React.FC = () => {
     const num = Number(val);
     setReminderMinutes(num);
 
-    // Request notification permission if not yet decided
     if (permState === 'default') {
       const res = await requestNotificationPermission();
       setPermState(res);
@@ -106,6 +129,16 @@ export const TaskModal: React.FC = () => {
       return;
     }
 
+    if (!dueDate) {
+      setError('Task due date is required');
+      return;
+    }
+
+    if (assignedMemberIds.length === 0) {
+      setError('Please assign at least one family member to this task');
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
@@ -113,10 +146,11 @@ export const TaskModal: React.FC = () => {
       const taskData: Partial<Task> = {
         title: title.trim(),
         description: description.trim() || null,
-        due_date: dueDate || null,
+        due_date: dueDate,
         due_time: dueTime || null,
         reminder_minutes: reminderMinutes,
-        assigned_member_id: assignedMemberId || null,
+        assigned_member_ids: assignedMemberIds,
+        assigned_member_id: assignedMemberIds[0] || null,
         priority,
         is_archived: isArchived ? 1 : 0,
         completed: isCompleted,
@@ -175,6 +209,13 @@ export const TaskModal: React.FC = () => {
       setIsCompleted(!isCompleted);
       return;
     }
+
+    const check = canMemberToggleTask(editingTask, currentMemberId, isViewer);
+    if (!editingTask.completed && !check.canToggle) {
+      setError(check.reason || 'You do not have permission to complete this task');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await toggleTask(editingTask.id);
@@ -262,11 +303,12 @@ export const TaskModal: React.FC = () => {
               <div>
                 <label htmlFor="task-due-date" className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-gray-400" />
-                  Due Date
+                  Due Date *
                 </label>
                 <input
                   id="task-due-date"
                   type="date"
+                  required
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
                   className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
@@ -399,24 +441,77 @@ export const TaskModal: React.FC = () => {
 
             {/* Assign Member */}
             <div>
-              <label htmlFor="task-assignee" className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5">
-                Assign Family Member
-              </label>
-              <select
-                id="task-assignee"
-                value={assignedMemberId}
-                onChange={(e) => setAssignedMemberId(e.target.value)}
-                className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-              >
-                <option value="">Everyone / Unassigned</option>
-                {members
-                  .filter((m) => m.is_active === 1)
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.role})
-                    </option>
-                  ))}
-              </select>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                  Assign Family Members *
+                </label>
+                <span className="text-[11px] font-semibold text-gray-400">
+                  {assignedMemberIds.length} selected
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {/* All Members Toggle */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (assignedMemberIds.length === activeMembers.length) {
+                      // Keep at least first active member
+                      if (activeMembers.length > 0) {
+                        setAssignedMemberIds([activeMembers[0].id]);
+                      }
+                    } else {
+                      setAssignedMemberIds(activeMembers.map((m) => m.id));
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                    assignedMemberIds.length === activeMembers.length
+                      ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
+                      : 'bg-gray-50 text-slate-700 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>All Members</span>
+                  {assignedMemberIds.length === activeMembers.length && <Check className="w-3 h-3 stroke-[3]" />}
+                </button>
+
+                {/* Individual Family Members */}
+                {activeMembers.map((m) => {
+                  const isSelected = assignedMemberIds.includes(m.id);
+                  const mColor = getPastelColorInfo(m.color);
+
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          if (assignedMemberIds.length > 1) {
+                            setAssignedMemberIds(assignedMemberIds.filter((id) => id !== m.id));
+                          }
+                        } else {
+                          setAssignedMemberIds([...assignedMemberIds, m.id]);
+                        }
+                      }}
+                      style={{
+                        backgroundColor: isSelected ? mColor.hex : '#F8FAFC',
+                        borderColor: isSelected ? mColor.borderHex : '#E2E8F0',
+                        color: isSelected ? mColor.textHex : '#64748B',
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                        isSelected ? 'ring-2 ring-emerald-500/30 font-extrabold' : 'hover:border-gray-300 font-medium'
+                      }`}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: mColor.dotHex }}
+                      />
+                      <span>{m.name}</span>
+                      {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Priority Selector */}

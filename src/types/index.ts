@@ -143,13 +143,14 @@ export interface Task {
   family_id: string;
   title: string;
   description?: string | null;
-  due_date?: string | null;
+  due_date: string;
   due_time?: string | null;
   reminder_minutes?: number | null;
   completed: boolean;
   completed_at?: string | null;
   is_archived?: boolean | number;
   assigned_member_id?: string | null;
+  assigned_member_ids?: string[];
   member_name?: string | null;
   member_color?: string | null;
   member_avatar?: string | null;

@@ -7,6 +7,7 @@ import {
   Bell,
   Settings,
   SlidersHorizontal,
+  LogOut,
 } from 'lucide-react';
 import { getPastelColorInfo } from '../../utils/colors';
 
@@ -18,8 +19,17 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const userColorInfo = user ? getPastelColorInfo(user.color) : null;
+
+  const isViewer =
+    user?.role === 'viewer' ||
+    (typeof window !== 'undefined' && (
+      localStorage.getItem('familycal_viewer_mode') === 'true' ||
+      window.location.pathname === '/viewer' ||
+      window.location.search.includes('mode=viewer') ||
+      window.location.search.includes('viewer=1')
+    ));
 
   const initials = user?.name
     ? user.name
@@ -29,6 +39,18 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
         .toUpperCase()
         .slice(0, 2)
     : 'JD';
+
+  const allTabs = [
+    { id: 'calendar', label: 'Calendar', icon: CalIcon },
+    { id: 'family', label: 'Family', icon: Users },
+    { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ] as const;
+
+  const navTabs = isViewer
+    ? allTabs.filter((t) => t.id === 'calendar' || t.id === 'tasks')
+    : allTabs;
 
   return (
     <header
@@ -55,17 +77,9 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
         </button>
       </div>
 
-      {/* PC Center Navigation Tabs: Calendar | Family | Tasks | Notifications | Settings */}
+      {/* PC Center Navigation Tabs: Calendar | Tasks (for Viewer) OR Calendar | Family | Tasks | Notifications | Settings */}
       <nav className="hidden md:flex items-center gap-2">
-        {(
-          [
-            { id: 'calendar', label: 'Calendar', icon: CalIcon },
-            { id: 'family', label: 'Family', icon: Users },
-            { id: 'tasks', label: 'Tasks', icon: CheckSquare },
-            { id: 'notifications', label: 'Notifications', icon: Bell },
-            { id: 'settings', label: 'Settings', icon: Settings },
-          ] as const
-        ).map((tab) => {
+        {navTabs.map((tab) => {
           const isActive = activeTab === tab.id;
           const Icon = tab.icon;
           return (
@@ -86,25 +100,42 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
         })}
       </nav>
 
-      {/* Right side controls: Profile avatar, filter on Mobile */}
+      {/* Right side controls: Profile avatar or Log Out for Viewer */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Mobile Filter Button */}
-        <button
-          onClick={() => setActiveTab('settings')}
-          className="flex md:hidden p-2 rounded-xl text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
-          title="Settings & Filters"
-        >
-          <SlidersHorizontal className="w-5 h-5" />
-        </button>
+        {isViewer ? (
+          <button
+            id="viewer-nav-logout-btn"
+            onClick={() => {
+              localStorage.removeItem('familycal_viewer_mode');
+              logout();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] rounded-xl bg-gray-50 hover:bg-red-50 hover:text-red-600 border border-gray-200 text-gray-700 text-xs font-bold transition-colors cursor-pointer"
+            title="Log Out"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Log Out</span>
+          </button>
+        ) : (
+          <>
+            {/* Mobile Filter Button */}
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="flex md:hidden p-2 rounded-xl text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
+              title="Settings & Filters"
+            >
+              <SlidersHorizontal className="w-5 h-5" />
+            </button>
 
-        {/* User Initials Avatar Circle (e.g. JD) */}
-        <button
-          onClick={() => setActiveTab('profile')}
-          className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shadow-xs cursor-pointer hover:bg-blue-700 transition-all border border-blue-700/20"
-          title="View Profile"
-        >
-          {initials}
-        </button>
+            {/* User Initials Avatar Circle (e.g. JD) */}
+            <button
+              onClick={() => setActiveTab('profile')}
+              className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shadow-xs cursor-pointer hover:bg-blue-700 transition-all border border-blue-700/20"
+              title="View Profile"
+            >
+              {initials}
+            </button>
+          </>
+        )}
       </div>
     </header>
   );

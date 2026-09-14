@@ -279,6 +279,48 @@ export function initDatabase() {
       db.prepare(`ALTER TABLE tasks ADD COLUMN recurring_unit TEXT DEFAULT 'day';`).run();
       console.log('Migration applied: added recurring_unit column to tasks table.');
     }
+
+    const hasAssignedMemberIds = taskCols.some((col) => col.name === 'assigned_member_ids');
+    if (!hasAssignedMemberIds) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN assigned_member_ids TEXT DEFAULT '[]';`).run();
+      console.log('Migration applied: added assigned_member_ids column to tasks table.');
+    }
+
+    // Populate assigned_member_ids for tasks if empty or assigned_member_id is set
+    const tasksToUpdate = db.prepare(`SELECT id, family_id, assigned_member_id, assigned_member_ids, due_date, created_at FROM tasks`).all() as any[];
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    for (const t of tasksToUpdate) {
+      let ids: string[] = [];
+      try {
+        if (t.assigned_member_ids) {
+          ids = JSON.parse(t.assigned_member_ids);
+        }
+      } catch {
+        ids = [];
+      }
+
+      if (ids.length === 0 && t.assigned_member_id) {
+        ids = [t.assigned_member_id];
+      }
+
+      if (ids.length === 0) {
+        // Find active family members for this family
+        const activeMembers = db.prepare(`SELECT id FROM family_members WHERE family_id = ? AND is_active = 1`).all(t.family_id) as any[];
+        if (activeMembers.length > 0) {
+          ids = activeMembers.map((m: any) => m.id);
+        }
+      }
+
+      const cleanDueDate = t.due_date ? t.due_date.split('T')[0] : (t.created_at ? t.created_at.split('T')[0] : todayStr);
+      const primaryMemberId = ids.length > 0 ? ids[0] : null;
+
+      db.prepare(`
+        UPDATE tasks
+        SET assigned_member_ids = ?, assigned_member_id = ?, due_date = ?
+        WHERE id = ?
+      `).run(JSON.stringify(ids), primaryMemberId, cleanDueDate, t.id);
+    }
   } catch (taskMigErr) {
     console.warn('Tasks table migration check warning:', taskMigErr);
   }

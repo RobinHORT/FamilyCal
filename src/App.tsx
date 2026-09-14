@@ -38,25 +38,20 @@ function MainDashboard() {
     return 'calendar';
   });
   const [currentPath, setCurrentPath] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
-  const [isViewerMode, setIsViewerMode] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return (
-        window.location.pathname === '/viewer' ||
-        window.location.search.includes('mode=viewer') ||
-        window.location.search.includes('viewer=1') ||
-        localStorage.getItem('familycal_viewer_mode') === 'true'
-      );
-    }
-    return false;
-  });
+
+  const isViewer =
+    user?.role === 'viewer' ||
+    (typeof window !== 'undefined' && (
+      localStorage.getItem('familycal_viewer_mode') === 'true' ||
+      window.location.pathname === '/viewer' ||
+      window.location.search.includes('mode=viewer') ||
+      window.location.search.includes('viewer=1')
+    ));
 
   React.useEffect(() => {
     const handleLocationChange = () => {
       const path = window.location.pathname;
       setCurrentPath(path);
-      if (path === '/viewer' || window.location.search.includes('mode=viewer')) {
-        setIsViewerMode(true);
-      }
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab');
       if (tabParam && ['calendar', 'family', 'tasks', 'notifications', 'settings', 'profile'].includes(tabParam)) {
@@ -66,6 +61,13 @@ function MainDashboard() {
     window.addEventListener('popstate', handleLocationChange);
     return () => window.removeEventListener('popstate', handleLocationChange);
   }, []);
+
+  // Enforce restricted navigation for Viewer accounts
+  React.useEffect(() => {
+    if (isViewer && activeTab !== 'calendar' && activeTab !== 'tasks') {
+      setActiveTab('calendar');
+    }
+  }, [isViewer, activeTab]);
 
   // Publicly accessible without authentication
   if (currentPath === '/privacy' || currentPath.startsWith('/privacy')) {
@@ -90,26 +92,12 @@ function MainDashboard() {
     );
   }
 
-  // Dedicated Tablet / iPad Viewer Mode Route
-  if (currentPath === '/viewer') {
-    if (!user) {
-      return (
-        <ViewerLogin
-          onSuccess={async () => {
-            await checkAuth();
-            setIsViewerMode(true);
-          }}
-        />
-      );
-    }
-
+  // If on /viewer and not authenticated yet, show ViewerLogin modal/screen
+  if (currentPath === '/viewer' && !user) {
     return (
-      <TabletViewer
-        onExit={() => {
-          setIsViewerMode(false);
-          localStorage.removeItem('familycal_viewer_mode');
-          window.history.pushState(null, '', '/');
-          setCurrentPath('/');
+      <ViewerLogin
+        onSuccess={async () => {
+          await checkAuth();
         }}
       />
     );
@@ -119,21 +107,11 @@ function MainDashboard() {
     return <AuthModal />;
   }
 
-  if (isViewerMode) {
-    return (
-      <TabletViewer
-        onExit={() => {
-          setIsViewerMode(false);
-          localStorage.removeItem('familycal_viewer_mode');
-          window.history.pushState(null, '', '/');
-          setCurrentPath('/');
-        }}
-      />
-    );
-  }
-
   return (
-    <div id="yimly-app-root" className="flex flex-col h-screen bg-[#FAFAFA] text-gray-900 font-sans overflow-hidden">
+    <div
+      id="yimly-app-root"
+      className="flex flex-col h-screen supports-[height:100dvh]:h-[100dvh] w-full max-w-full bg-[#FAFAFA] text-gray-900 font-sans overflow-hidden select-none pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]"
+    >
       {/* Top Navigation Bar */}
       <Navbar
         activeTab={activeTab}
@@ -142,19 +120,22 @@ function MainDashboard() {
 
       {/* Main Workspace Body */}
       <div className="flex flex-1 overflow-hidden relative w-full max-w-full min-w-0">
-        {/* Dynamic Center Stage (NO SIDEBAR) */}
+        {/* Dynamic Center Stage */}
         <main
           id="main-stage-content"
-          className="flex-1 flex flex-col overflow-y-auto p-3 sm:p-6 main-stage-scroll bg-[#FAFAFA] w-full max-w-full min-w-0"
+          className={`flex-1 flex flex-col min-h-0 bg-[#FAFAFA] w-full max-w-full min-w-0 ${
+            activeTab === 'calendar' || activeTab === 'tasks'
+              ? 'overflow-hidden p-2 sm:p-3 md:p-3.5'
+              : 'overflow-y-auto p-3 sm:p-6 main-stage-scroll'
+          }`}
         >
           {activeTab === 'calendar' && <CalendarContainer />}
-          {activeTab === 'family' && <FamilyView />}
+          {!isViewer && activeTab === 'family' && <FamilyView />}
           {activeTab === 'tasks' && <TasksView />}
-          {activeTab === 'notifications' && <NotificationsView />}
-          {activeTab === 'settings' && <IntegrationsView />}
-          {activeTab === 'profile' && <ProfileView />}
-          {/* Fallbacks if accessed via state */}
-          {activeTab === ('birthdays' as any) && <BirthdaysView />}
+          {!isViewer && activeTab === 'notifications' && <NotificationsView />}
+          {!isViewer && activeTab === 'settings' && <IntegrationsView />}
+          {!isViewer && activeTab === 'profile' && <ProfileView />}
+          {!isViewer && activeTab === ('birthdays' as any) && <BirthdaysView />}
         </main>
       </div>
 

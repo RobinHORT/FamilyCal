@@ -1792,6 +1792,34 @@ function advanceRecurringTaskIfApplicable(
   `).get(nextTaskId) as any;
 }
 
+function formatTaskRow(t: any) {
+  let assignedIds: string[] = [];
+  try {
+    if (t.assigned_member_ids) {
+      assignedIds = JSON.parse(t.assigned_member_ids);
+    }
+  } catch {
+    assignedIds = [];
+  }
+  if (assignedIds.length === 0 && t.assigned_member_id) {
+    assignedIds = [t.assigned_member_id];
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  return {
+    ...t,
+    completed: Boolean(t.completed),
+    is_archived: Boolean(t.is_archived),
+    assigned_member_ids: assignedIds,
+    assigned_member_id: assignedIds[0] || t.assigned_member_id || null,
+    due_date: t.due_date ? t.due_date.split('T')[0] : todayStr,
+    recurring_rule: t.recurring_rule || 'none',
+    recurring_interval: t.recurring_interval ? Number(t.recurring_interval) : 1,
+    recurring_unit: t.recurring_unit || 'day',
+  };
+}
+
 router.get('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     const tasks = db.prepare(`
@@ -1802,14 +1830,7 @@ router.get('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       ORDER BY t.completed ASC, t.due_date ASC, t.created_at DESC
     `).all(req.user!.family_id);
 
-    res.json(tasks.map((t: any) => ({
-      ...t,
-      completed: Boolean(t.completed),
-      is_archived: Boolean(t.is_archived),
-      recurring_rule: t.recurring_rule || 'none',
-      recurring_interval: t.recurring_interval ? Number(t.recurring_interval) : 1,
-      recurring_unit: t.recurring_unit || 'day',
-    })));
+    res.json(tasks.map(formatTaskRow));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1824,6 +1845,7 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       due_time,
       reminder_minutes,
       assigned_member_id,
+      assigned_member_ids,
       priority,
       is_archived,
       recurring_rule,
@@ -1831,10 +1853,29 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       recurring_unit,
     } = req.body;
 
-    if (!title) {
+    if (!title || !title.trim()) {
       return res.status(400).json({ error: 'Task title is required.' });
     }
 
+    const todayStr = new Date().toISOString().split('T')[0];
+    const cleanDueDate = due_date ? due_date.split('T')[0] : todayStr;
+
+    let finalMemberIds: string[] = [];
+    if (Array.isArray(assigned_member_ids) && assigned_member_ids.length > 0) {
+      finalMemberIds = assigned_member_ids;
+    } else if (assigned_member_id) {
+      finalMemberIds = [assigned_member_id];
+    } else {
+      // Find active family members as fallback
+      const activeMembers = db.prepare(`SELECT id FROM family_members WHERE family_id = ? AND is_active = 1`).all(req.user!.family_id) as any[];
+      finalMemberIds = activeMembers.map((m: any) => m.id);
+    }
+
+    if (finalMemberIds.length === 0) {
+      return res.status(400).json({ error: 'Every task must be assigned to at least one family member.' });
+    }
+
+    const primaryMemberId = finalMemberIds[0];
     const taskId = 'tsk_' + uuidv4().slice(0, 8);
     const now = new Date().toISOString();
     const cleanReminder = reminder_minutes !== undefined && reminder_minutes !== null && reminder_minutes !== '' 
@@ -1847,20 +1888,21 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
     db.prepare(`
       INSERT INTO tasks (
         id, family_id, title, description, due_date, due_time, reminder_minutes,
-        completed, is_archived, assigned_member_id, priority,
+        completed, is_archived, assigned_member_id, assigned_member_ids, priority,
         recurring_rule, recurring_interval, recurring_unit, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       taskId,
       req.user!.family_id,
       title.trim(),
       description || null,
-      due_date || null,
+      cleanDueDate,
       due_time || null,
       cleanReminder,
       is_archived ? 1 : 0,
-      assigned_member_id || null,
+      primaryMemberId,
+      JSON.stringify(finalMemberIds),
       priority || 'medium',
       rule,
       interval,
@@ -1876,14 +1918,7 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       WHERE t.id = ?
     `).get(taskId) as any;
 
-    res.status(201).json({
-      ...created,
-      completed: false,
-      is_archived: Boolean(created.is_archived),
-      recurring_rule: created.recurring_rule || 'none',
-      recurring_interval: created.recurring_interval ? Number(created.recurring_interval) : 1,
-      recurring_unit: created.recurring_unit || 'day',
-    });
+    res.status(201).json(formatTaskRow(created));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1906,6 +1941,7 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
       due_time,
       reminder_minutes,
       assigned_member_id,
+      assigned_member_ids,
       priority,
       completed,
       is_archived,
@@ -1914,6 +1950,7 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
       recurring_unit,
     } = req.body;
     const now = new Date().toISOString();
+    const todayStr = new Date().toISOString().split('T')[0];
 
     const wasCompleted = Boolean(task.completed);
     const newCompleted = completed !== undefined ? (completed ? 1 : 0) : task.completed;
@@ -1927,19 +1964,43 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
     const newInterval = recurring_interval !== undefined ? Math.max(1, Number(recurring_interval) || 1) : (task.recurring_interval || 1);
     const newUnit = recurring_unit !== undefined ? (recurring_unit || 'day') : (task.recurring_unit || 'day');
 
+    let finalMemberIds: string[] = [];
+    if (assigned_member_ids !== undefined) {
+      finalMemberIds = Array.isArray(assigned_member_ids) ? assigned_member_ids : [];
+    } else if (assigned_member_id !== undefined) {
+      finalMemberIds = assigned_member_id ? [assigned_member_id] : [];
+    } else {
+      try {
+        finalMemberIds = JSON.parse(task.assigned_member_ids || '[]');
+      } catch {
+        finalMemberIds = [];
+      }
+      if (finalMemberIds.length === 0 && task.assigned_member_id) {
+        finalMemberIds = [task.assigned_member_id];
+      }
+    }
+
+    if (finalMemberIds.length === 0) {
+      return res.status(400).json({ error: 'Every task must be assigned to at least one family member.' });
+    }
+
+    const primaryMemberId = finalMemberIds[0];
+    const cleanDueDate = due_date !== undefined ? (due_date ? due_date.split('T')[0] : todayStr) : task.due_date;
+
     db.prepare(`
       UPDATE tasks
       SET title = ?, description = ?, due_date = ?, due_time = ?, reminder_minutes = ?,
-          assigned_member_id = ?, priority = ?, completed = ?, completed_at = ?,
+          assigned_member_id = ?, assigned_member_ids = ?, priority = ?, completed = ?, completed_at = ?,
           is_archived = ?, recurring_rule = ?, recurring_interval = ?, recurring_unit = ?, updated_at = ?
       WHERE id = ? AND family_id = ?
     `).run(
       title !== undefined ? title.trim() : task.title,
       description !== undefined ? (description || null) : task.description,
-      due_date !== undefined ? (due_date || null) : task.due_date,
+      cleanDueDate,
       due_time !== undefined ? (due_time || null) : task.due_time,
       newReminder,
-      assigned_member_id !== undefined ? (assigned_member_id || null) : task.assigned_member_id,
+      primaryMemberId,
+      JSON.stringify(finalMemberIds),
       priority !== undefined ? priority : task.priority,
       newCompleted,
       newCompletedAt,
@@ -1958,10 +2019,10 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
         ...task,
         title: title !== undefined ? title.trim() : task.title,
         description: description !== undefined ? description : task.description,
-        due_date: due_date !== undefined ? due_date : task.due_date,
+        due_date: cleanDueDate,
         due_time: due_time !== undefined ? due_time : task.due_time,
         reminder_minutes: newReminder,
-        assigned_member_id: assigned_member_id !== undefined ? assigned_member_id : task.assigned_member_id,
+        assigned_member_id: primaryMemberId,
         priority: priority !== undefined ? priority : task.priority,
       };
       advanceRecurringTaskIfApplicable(
@@ -1981,14 +2042,7 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
       WHERE t.id = ?
     `).get(id) as any;
 
-    res.json({
-      ...updated,
-      completed: Boolean(updated.completed),
-      is_archived: Boolean(updated.is_archived),
-      recurring_rule: updated.recurring_rule || 'none',
-      recurring_interval: updated.recurring_interval ? Number(updated.recurring_interval) : 1,
-      recurring_unit: updated.recurring_unit || 'day',
-    });
+    res.json(formatTaskRow(updated));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -2008,6 +2062,38 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
     const willComplete = !wasCompleted;
     const newCompleted = willComplete ? 1 : 0;
     const now = new Date().toISOString();
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Find current requesting family member ID
+    const currentMember = db.prepare(
+      'SELECT id FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+    const currentMemberId = currentMember?.id;
+
+    // Verify member assignment rule
+    let assignedIds: string[] = [];
+    try {
+      if (task.assigned_member_ids) {
+        assignedIds = JSON.parse(task.assigned_member_ids);
+      }
+    } catch {
+      assignedIds = [];
+    }
+    if (assignedIds.length === 0 && task.assigned_member_id) {
+      assignedIds = [task.assigned_member_id];
+    }
+
+    if (currentMemberId && !assignedIds.includes(currentMemberId)) {
+      return res.status(403).json({ error: 'Only assigned family members can complete this task.' });
+    }
+
+    // Verify date rule when ticking off
+    const taskDueDateStr = task.due_date ? task.due_date.split('T')[0] : todayStr;
+    if (willComplete && todayStr < taskDueDateStr) {
+      return res.status(400).json({
+        error: `Tasks cannot be completed before their due date (${taskDueDateStr}).`,
+      });
+    }
 
     db.prepare(`
       UPDATE tasks
@@ -2034,14 +2120,7 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
       WHERE t.id = ?
     `).get(id) as any;
 
-    res.json({
-      ...updated,
-      completed: Boolean(updated.completed),
-      is_archived: Boolean(updated.is_archived),
-      recurring_rule: updated.recurring_rule || 'none',
-      recurring_interval: updated.recurring_interval ? Number(updated.recurring_interval) : 1,
-      recurring_unit: updated.recurring_unit || 'day',
-    });
+    res.json(formatTaskRow(updated));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

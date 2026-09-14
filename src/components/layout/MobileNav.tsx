@@ -7,6 +7,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { MainTabType } from './Navbar';
+import { useAuth } from '../../context/AuthContext';
 
 interface MobileNavProps {
   activeTab: MainTabType;
@@ -14,13 +15,27 @@ interface MobileNavProps {
 }
 
 export const MobileNav: React.FC<MobileNavProps> = ({ activeTab, setActiveTab }) => {
-  const tabs = [
+  const { user } = useAuth();
+  const isViewer =
+    user?.role === 'viewer' ||
+    (typeof window !== 'undefined' && (
+      localStorage.getItem('familycal_viewer_mode') === 'true' ||
+      window.location.pathname === '/viewer' ||
+      window.location.search.includes('mode=viewer') ||
+      window.location.search.includes('viewer=1')
+    ));
+
+  const allTabs = [
     { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'family', label: 'Family', icon: Users },
     { id: 'tasks', label: 'Tasks', icon: CheckSquare },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'settings', label: 'Settings', icon: Settings },
   ] as const;
+
+  const tabs = isViewer
+    ? allTabs.filter((t) => t.id === 'calendar' || t.id === 'tasks')
+    : allTabs;
 
   return (
     <nav

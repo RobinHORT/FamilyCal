@@ -109,97 +109,11 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
   const selectedDayEvents = getEventsForDay(selectedDay);
   const monthKey = format(currentDate, 'yyyy-MM');
 
-  // --- NORMAL FAMILYCAL CALENDAR (OUTSIDE THE VIEWER: 100% UNCHANGED) ---
-  if (!isViewer) {
-    return (
-      <div id="calendar-month-view" className="flex flex-col flex-1 gap-4">
-        {/* --- DESKTOP MONTH VIEW --- */}
-        <div className="hidden md:flex flex-col flex-1">
-          <MonthGrid
-            currentDate={currentDate}
-            selectedDay={selectedDay}
-            onSelectDay={handleSelectDay}
-            filteredEvents={filteredEvents}
-            members={members}
-            eventTypes={eventTypes}
-            onEditEvent={openEditEventModal}
-            maxVisibleSlots={2}
-          />
-        </div>
-
-        {/* --- MOBILE MONTH VIEW WITH TOUCH SWIPE NAVIGATION --- */}
-        <div
-          id="mobile-month-calendar-container"
-          {...swipeHandlers}
-          className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
-          style={{
-            paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
-          }}
-        >
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={monthKey}
-              initial={{
-                opacity: 0,
-                x: navigationDirection > 0 ? 20 : navigationDirection < 0 ? -20 : 0,
-              }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{
-                opacity: 0,
-                x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
-              }}
-              transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
-              className="w-full max-w-full min-w-0"
-            >
-              <MonthGrid
-                currentDate={currentDate}
-                selectedDay={selectedDay}
-                onSelectDay={handleSelectDay}
-                filteredEvents={filteredEvents}
-                members={members}
-                eventTypes={eventTypes}
-                onEditEvent={openEditEventModal}
-                maxVisibleSlots={2}
-              />
-            </motion.div>
-          </AnimatePresence>
-
-          {/* Selected Day Agenda Section */}
-          <div className="flex flex-col gap-3 pt-1 w-full max-w-full min-w-0">
-            <h3 className="text-base font-bold text-slate-900 px-1 font-serif tracking-tight truncate">
-              {format(selectedDay, 'EEEE, d MMMM')}
-            </h3>
-
-            <div className="flex flex-col gap-2.5 w-full max-w-full min-w-0">
-              {selectedDayEvents.length === 0 ? (
-                <div className="py-6 px-4 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium text-center shadow-2xs w-full">
-                  No events scheduled for this date
-                </div>
-              ) : (
-                selectedDayEvents.map((evt) => (
-                  <EventCard
-                    key={evt.id}
-                    event={evt}
-                    members={members}
-                    eventTypes={eventTypes}
-                    onClick={() => openEditEventModal(evt)}
-                    showDetails={true}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --- HOUSEHOLD VIEWER MONTH VIEW ---
   return (
-    <div id="calendar-month-view-viewer" className="flex flex-col flex-1 min-h-0 h-full gap-2.5 sm:gap-3 overflow-hidden">
+    <div id="calendar-month-view" className="flex flex-col flex-1 min-h-0 h-full gap-2.5 sm:gap-3 overflow-hidden">
       {/* 1. TABLET / IPAD / PC: SIDE-BY-SIDE (MONTH CALENDAR on Left, SELECTED DAY DAY VIEW on Right) */}
       <div
-        id="household-desktop-month-split"
+        id="desktop-month-split"
         {...swipeHandlers}
         className="hidden md:grid md:grid-cols-12 gap-3.5 lg:gap-4 flex-1 items-stretch min-h-0 h-full touch-pan-y overflow-hidden"
       >
@@ -223,7 +137,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
               <MonthGrid
                 currentDate={currentDate}
                 selectedDay={selectedDay}
-                onSelectDay={(d) => setSelectedDay(d)}
+                onSelectDay={handleSelectDay}
                 filteredEvents={filteredEvents}
                 members={members}
                 eventTypes={eventTypes}
@@ -237,13 +151,13 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
 
         {/* Right: SELECTED DAY DAY VIEW (Only internal event list is scrollable) */}
         <div className="md:col-span-5 lg:col-span-5 xl:col-span-4 flex flex-col min-w-0 h-full min-h-0 overflow-hidden">
-          <DayView currentDate={selectedDay} isViewer={true} className="h-full min-h-0" />
+          <DayView currentDate={selectedDay} isViewer={isViewer} className="h-full min-h-0" />
         </div>
       </div>
 
       {/* 2. PHONE: MONTH CALENDAR WITH EVENTS BELOW (EXACT SAME PHONE BEHAVIOUR) */}
       <div
-        id="household-mobile-month-container"
+        id="mobile-month-container"
         {...swipeHandlers}
         className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
         style={{
@@ -268,7 +182,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
             <MonthGrid
               currentDate={currentDate}
               selectedDay={selectedDay}
-              onSelectDay={(d) => setSelectedDay(d)}
+              onSelectDay={handleSelectDay}
               filteredEvents={filteredEvents}
               members={members}
               eventTypes={eventTypes}
