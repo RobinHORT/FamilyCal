@@ -106,7 +106,7 @@ export const api = {
   suggestUsername: (name: string, excludeUserId?: string) =>
     fetchJson<{ username: string }>(`/api/family/suggest-username?name=${encodeURIComponent(name)}${excludeUserId ? `&excludeUserId=${encodeURIComponent(excludeUserId)}` : ''}`),
 
-  updateFamily: (data: { name?: string; timezone?: string; viewerPassword?: string }) =>
+  updateFamily: (data: { name?: string; timezone?: string; viewerPassword?: string; colorSoftness?: number; color_softness?: number }) =>
     fetchJson<Family>('/api/family', {
       method: 'PUT',
       body: JSON.stringify(data),

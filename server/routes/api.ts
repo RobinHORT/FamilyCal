@@ -435,8 +435,17 @@ router.get('/family/suggest-username', authenticateToken, requireAdmin, (req: Au
 
 router.put('/family', authenticateToken, requireAdmin, (req: AuthRequest, res: Response) => {
   try {
-    const { name, timezone, viewerPassword } = req.body;
+    const { name, timezone, viewerPassword, colorSoftness, color_softness } = req.body;
     const now = new Date().toISOString();
+    const softnessVal = colorSoftness !== undefined ? colorSoftness : color_softness;
+
+    if (softnessVal !== undefined) {
+      db.prepare(`
+        UPDATE families
+        SET color_softness = ?, updated_at = ?
+        WHERE id = ?
+      `).run(Math.max(0, Math.min(100, Number(softnessVal))), now, req.user!.family_id);
+    }
 
     if (viewerPassword !== undefined) {
       if (typeof viewerPassword === 'string' && viewerPassword.trim().length > 0) {
@@ -454,7 +463,7 @@ router.put('/family', authenticateToken, requireAdmin, (req: AuthRequest, res: R
           WHERE id = ?
         `).run(name || null, timezone || null, now, req.user!.family_id);
       }
-    } else {
+    } else if (name !== undefined || timezone !== undefined) {
       db.prepare(`
         UPDATE families
         SET name = COALESCE(?, name), timezone = COALESCE(?, timezone), updated_at = ?

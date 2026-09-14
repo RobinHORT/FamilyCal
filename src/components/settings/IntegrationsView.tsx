@@ -19,6 +19,7 @@ import {
   UserCheck,
   Users,
   Pencil,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { EditCalendarModal } from '../calendar/EditCalendarModal';
@@ -27,7 +28,7 @@ import { getPastelColorInfo } from '../../utils/colors';
 
 export const IntegrationsView: React.FC = () => {
   const { calendars, updateCalendar, fetchCalendarData } = useCalendar();
-  const { members } = useFamily();
+  const { members, colorSoftness, updateColorSoftness } = useFamily();
   const [googleConfig, setGoogleConfig] = useState<GoogleConfigResponse | null>(null);
   const [syncLogs, setSyncLogs] = useState<GoogleSyncLog[]>([]);
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
@@ -151,6 +152,84 @@ export const IntegrationsView: React.FC = () => {
           <span>{syncMessage}</span>
         </div>
       )}
+
+      {/* Member Colour Softness Card */}
+      <div id="member-colour-softness-card" className="p-6 rounded-3xl bg-white border border-gray-200 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-pink-50 border border-pink-200 flex items-center justify-center text-pink-600 shadow-2xs shrink-0">
+              <SlidersHorizontal className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-gray-900 font-serif">
+                Member Colour Softness
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Adjust the global softness and fade level of member colours throughout the entire app.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-start sm:self-center">
+            <span className="px-3.5 py-1.5 rounded-xl bg-pink-50 border border-pink-200 text-xs font-extrabold text-pink-700 shadow-2xs">
+              {colorSoftness}%
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-3 pt-1">
+          <div className="flex items-center justify-between text-xs font-bold text-gray-600 px-0.5">
+            <span className="flex items-center gap-1.5 text-gray-700 font-semibold">
+              <span className="w-2.5 h-2.5 rounded-full bg-pink-500 border border-pink-600/30" />
+              Solid (0%)
+            </span>
+            <span className="flex items-center gap-1.5 text-gray-700 font-semibold">
+              <span className="w-2.5 h-2.5 rounded-full bg-pink-200 border border-pink-300" />
+              Soft Pastel (100%)
+            </span>
+          </div>
+          <input
+            id="member-colour-softness-slider"
+            type="range"
+            min="0"
+            max="100"
+            step="5"
+            value={colorSoftness}
+            onChange={(e) => updateColorSoftness(parseInt(e.target.value, 10))}
+            className="w-full accent-pink-600 cursor-pointer h-2.5 bg-gray-200 rounded-lg appearance-none"
+          />
+        </div>
+
+        {/* Live Preview */}
+        {members.length > 0 && (
+          <div className="pt-3 border-t border-gray-100 space-y-2">
+            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+              Live Colour Surfaces Preview
+            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {members.slice(0, 4).map((m) => {
+                const colorInfo = getPastelColorInfo(m.color);
+                return (
+                  <div
+                    key={m.id}
+                    style={{ backgroundColor: colorInfo.hex, borderColor: colorInfo.borderHex }}
+                    className="p-3 rounded-2xl border flex items-center gap-2.5 transition-all shadow-2xs"
+                  >
+                    <span
+                      className="w-3.5 h-3.5 rounded-full shrink-0 border"
+                      style={{ backgroundColor: colorInfo.dotHex, borderColor: colorInfo.borderHex }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <span style={{ color: colorInfo.textHex }} className="text-xs font-extrabold truncate block">
+                        {m.name}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Google Calendar Card */}
       <div className="p-6 rounded-3xl bg-white border border-gray-200 shadow-xs space-y-5">

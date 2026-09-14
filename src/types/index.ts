@@ -56,6 +56,8 @@ export interface Family {
   id: string;
   name: string;
   timezone: string;
+  color_softness?: number;
+  colorSoftness?: number;
   has_viewer_password?: boolean;
   created_at?: string;
   updated_at?: string;

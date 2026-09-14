@@ -133,7 +133,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
       </div>
 
       {/* Events Stream */}
-      <div className="flex-1 overflow-y-auto max-h-[640px] p-4 pb-calendar-mobile md:pb-4 space-y-6 bg-white scrollbar-thin w-full max-w-full min-w-0">
+      <div className="flex-1 overflow-y-auto md:max-h-[640px] p-4 pb-calendar-mobile md:pb-4 space-y-6 bg-white scrollbar-thin w-full max-w-full min-w-0">
         {isViewer ? (
           <AnimatePresence mode="wait" initial={false}>
             <motion.div

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { Family, FamilyMember, BirthdayItem } from '../types';
 import { api } from '../api/client';
 import { useAuth } from './AuthContext';
+import { setGlobalColorSoftness } from '../utils/colors';
 
 interface FamilyContextType {
   family: Family | null;
@@ -10,12 +11,14 @@ interface FamilyContextType {
   selectedMemberFilter: string | null; // null = all members
   setSelectedMemberFilter: (id: string | null) => void;
   isLoading: boolean;
+  colorSoftness: number;
+  updateColorSoftness: (level: number) => Promise<void>;
   fetchFamilyData: () => Promise<void>;
   addMember: (data: Partial<FamilyMember> & { login?: { enabled: boolean; username?: string; password?: string } }) => Promise<FamilyMember>;
   updateMember: (id: string, data: Partial<FamilyMember>) => Promise<FamilyMember>;
   removeMember: (id: string) => Promise<void>;
   manageMemberLogin: (id: string, data: { enabled: boolean; username?: string; password?: string }) => Promise<any>;
-  updateHousehold: (data: { name?: string; timezone?: string; viewerPassword?: string }) => Promise<void>;
+  updateHousehold: (data: { name?: string; timezone?: string; viewerPassword?: string; colorSoftness?: number; color_softness?: number }) => Promise<void>;
   updateMemberPermissions: (id: string, data: { permissions?: Partial<import('../types').UserPermissions>; resetToDefaults?: boolean }) => Promise<FamilyMember>;
 }
 
@@ -28,6 +31,12 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
   const [birthdays, setBirthdays] = useState<BirthdayItem[]>([]);
   const [selectedMemberFilter, setSelectedMemberFilter] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [colorSoftness, setColorSoftnessState] = useState<number>(() => {
+    const saved = localStorage.getItem('familycal_color_softness');
+    const val = saved !== null ? parseInt(saved, 10) : 0;
+    setGlobalColorSoftness(isNaN(val) ? 0 : val);
+    return isNaN(val) ? 0 : val;
+  });
 
   const fetchFamilyData = useCallback(async () => {
     if (!user) {
@@ -57,6 +66,35 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     fetchFamilyData();
   }, [fetchFamilyData]);
 
+  // Keep global color softness synced whenever family data changes
+  useEffect(() => {
+    const dbSoftness = family?.color_softness ?? family?.colorSoftness;
+    if (dbSoftness !== undefined && dbSoftness !== null) {
+      const level = Math.max(0, Math.min(100, Math.round(dbSoftness)));
+      setColorSoftnessState(level);
+      setGlobalColorSoftness(level);
+      localStorage.setItem('familycal_color_softness', String(level));
+    } else {
+      const saved = localStorage.getItem('familycal_color_softness');
+      const val = saved !== null ? parseInt(saved, 10) : 0;
+      setGlobalColorSoftness(isNaN(val) ? 0 : val);
+    }
+  }, [family?.color_softness, family?.colorSoftness]);
+
+  const updateColorSoftness = async (level: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(level)));
+    setColorSoftnessState(clamped);
+    setGlobalColorSoftness(clamped);
+    localStorage.setItem('familycal_color_softness', String(clamped));
+
+    try {
+      const updated = await api.updateFamily({ colorSoftness: clamped });
+      setFamily(updated);
+    } catch (err) {
+      console.error('Failed to persist color softness setting:', err);
+    }
+  };
+
   const addMember = async (data: Partial<FamilyMember> & { login?: { enabled: boolean; username?: string; password?: string } }) => {
     const newMember = await api.createMember(data);
     await fetchFamilyData();
@@ -80,7 +118,7 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     return res;
   };
 
-  const updateHousehold = async (data: { name?: string; timezone?: string; viewerPassword?: string }) => {
+  const updateHousehold = async (data: { name?: string; timezone?: string; viewerPassword?: string; colorSoftness?: number; color_softness?: number }) => {
     const updated = await api.updateFamily(data);
     setFamily(updated);
   };
@@ -100,6 +138,8 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
         selectedMemberFilter,
         setSelectedMemberFilter,
         isLoading,
+        colorSoftness,
+        updateColorSoftness,
         fetchFamilyData,
         addMember,
         updateMember,

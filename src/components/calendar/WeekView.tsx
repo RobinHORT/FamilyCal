@@ -393,7 +393,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
         {...swipeHandlers}
         className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
         style={{
-          paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
+          paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 64px)',
         }}
       >
         <AnimatePresence mode="wait" initial={false}>

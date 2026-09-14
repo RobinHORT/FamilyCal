@@ -726,7 +726,7 @@ export const TasksView: React.FC = () => {
       <div className="flex-1 flex flex-col min-h-0 w-full max-w-full min-w-0">
         {/* --- MONTH VIEW (SPLIT LAYOUT: Month Grid Left, Day Tasks Right) --- */}
         {viewMode === 'month' && (
-          <div id="tasks-month-view" className="flex flex-col flex-1 min-h-0 h-full gap-2.5 sm:gap-3 overflow-hidden">
+          <div id="tasks-month-view" className="flex flex-col flex-1 min-h-0 md:h-full gap-2.5 sm:gap-3 overflow-y-auto md:overflow-hidden">
             {/* Desktop / Tablet Split Layout */}
             <div id="desktop-month-split" className="hidden md:grid md:grid-cols-12 gap-3.5 lg:gap-4 flex-1 items-stretch min-h-0 h-full touch-pan-y overflow-hidden">
               {/* Left: MONTH CALENDAR (Locked, fully visible, non-scrollable) */}
@@ -893,7 +893,7 @@ export const TasksView: React.FC = () => {
               id="mobile-month-container"
               className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
               style={{
-                paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
+                paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 64px)',
               }}
             >
               {/* Month Grid Card */}
@@ -1071,7 +1071,7 @@ export const TasksView: React.FC = () => {
               id="mobile-week-tasks-container"
               className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
               style={{
-                paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
+                paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 64px)',
               }}
             >
               {weekDays.map((day) => {
@@ -1179,7 +1179,7 @@ export const TasksView: React.FC = () => {
             </div>
 
             {/* Tasks Agenda Stream */}
-            <div className="flex-1 overflow-y-auto max-h-[640px] p-4 pb-calendar-mobile md:pb-4 space-y-6 bg-white scrollbar-thin w-full max-w-full min-w-0">
+            <div className="flex-1 overflow-y-auto md:max-h-[640px] p-4 pb-calendar-mobile md:pb-4 space-y-6 bg-white scrollbar-thin w-full max-w-full min-w-0">
               {agendaDateKeys.length === 0 ? (
                 <div className="py-16 text-center text-gray-400">
                   <CheckCircle2 className="w-10 h-10 mx-auto text-gray-300 mb-2" />

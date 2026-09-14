@@ -110,7 +110,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
   const monthKey = format(currentDate, 'yyyy-MM');
 
   return (
-    <div id="calendar-month-view" className="flex flex-col flex-1 min-h-0 h-full gap-2.5 sm:gap-3 overflow-hidden">
+    <div id="calendar-month-view" className="flex flex-col flex-1 min-h-0 md:h-full gap-2.5 sm:gap-3 overflow-y-auto md:overflow-hidden">
       {/* 1. TABLET / IPAD / PC: SIDE-BY-SIDE (MONTH CALENDAR on Left, SELECTED DAY DAY VIEW on Right) */}
       <div
         id="desktop-month-split"
@@ -160,7 +160,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
         {...swipeHandlers}
         className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
         style={{
-          paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 32px)',
+          paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 64px)',
         }}
       >
         <AnimatePresence mode="wait" initial={false}>

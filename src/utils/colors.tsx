@@ -233,11 +233,54 @@ export const PASTEL_COLORS: PastelColor[] = [
 
 export const DEFAULT_PASTEL_COLOR = PASTEL_COLORS[0]; // Pastel Pink
 
+let currentGlobalColorSoftness = 0;
+
+export function setGlobalColorSoftness(softness: number) {
+  if (typeof softness === 'number' && !isNaN(softness)) {
+    currentGlobalColorSoftness = Math.max(0, Math.min(100, Math.round(softness)));
+  }
+}
+
+export function getGlobalColorSoftness(): number {
+  return currentGlobalColorSoftness;
+}
+
+export function parseHex(hexStr: string): { r: number; g: number; b: number } | null {
+  if (!hexStr) return null;
+  let hex = hexStr.replace('#', '').trim();
+  if (hex.length === 3) {
+    hex = hex.split('').map((c) => c + c).join('');
+  }
+  if (hex.length !== 6) return null;
+  const num = parseInt(hex, 16);
+  if (isNaN(num)) return null;
+  return {
+    r: (num >> 16) & 255,
+    g: (num >> 8) & 255,
+    b: num & 255,
+  };
+}
+
+export function interpolateColor(color1: string, color2: string, factor: number = 0): string {
+  if (factor <= 0) return color1;
+  if (factor >= 1) return color2;
+
+  const c1 = parseHex(color1);
+  const c2 = parseHex(color2);
+
+  if (!c1 || !c2) return color1;
+
+  const r = Math.round(c1.r + (c2.r - c1.r) * factor);
+  const g = Math.round(c1.g + (c2.g - c1.g) * factor);
+  const b = Math.round(c1.b + (c2.b - c1.b) * factor);
+
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase()}`;
+}
+
 /**
- * Returns color info for any color string. If it matches a pastel hex, returns that.
- * Otherwise returns a fallback pastel styling with dark readable text.
+ * Returns raw unsoftened base color info for a color string.
  */
-export function getPastelColorInfo(colorStr?: string | null): PastelColor {
+export function getBasePastelColorInfo(colorStr?: string | null): PastelColor {
   if (!colorStr) return DEFAULT_PASTEL_COLOR;
   
   const normalized = colorStr.toUpperCase();
@@ -273,6 +316,31 @@ export function getPastelColorInfo(colorStr?: string | null): PastelColor {
     borderHex: '#CBD5E1',
     dotHex: colorStr,
     bgSoft: colorStr,
+  };
+}
+
+/**
+ * Returns color info for any color string, dynamically interpolated according to the global Member Colour Softness level.
+ * At 0% softness, returns solid hex. At 100% softness, returns soft pastel bgSoft.
+ */
+export function getPastelColorInfo(colorStr?: string | null, softnessOverride?: number): PastelColor {
+  const base = getBasePastelColorInfo(colorStr);
+  const softness = softnessOverride !== undefined ? softnessOverride : getGlobalColorSoftness();
+
+  if (softness <= 0) {
+    return base;
+  }
+
+  const factor = Math.max(0, Math.min(1, softness / 100));
+  const interpolatedHex = interpolateColor(base.hex, base.bgSoft, factor);
+  const interpolatedBgSoft = interpolateColor(base.bgSoft, base.bgSoft, factor);
+  const interpolatedBorder = interpolateColor(base.borderHex, base.bgSoft, factor * 0.4);
+
+  return {
+    ...base,
+    hex: interpolatedHex,
+    bgSoft: interpolatedBgSoft,
+    borderHex: interpolatedBorder,
   };
 }
 

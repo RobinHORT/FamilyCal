@@ -237,6 +237,14 @@ export function initDatabase() {
       console.log('Migration applied: added permissions column to family_members table.');
     }
 
+    // Safe startup migration: Ensure color_softness column exists on families
+    const familyCols = db.prepare(`PRAGMA table_info(families);`).all() as Array<{ name: string }>;
+    const hasColorSoftness = familyCols.some((col) => col.name === 'color_softness');
+    if (!hasColorSoftness) {
+      db.prepare(`ALTER TABLE families ADD COLUMN color_softness INTEGER DEFAULT 0;`).run();
+      console.log('Migration applied: added color_softness column to families table.');
+    }
+
     // Backfill username for existing administrator if null
     db.prepare(`
       UPDATE users 
