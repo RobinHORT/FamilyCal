@@ -212,7 +212,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
           });
 
           return (
-            <div key={weekIdx} className="flex-1 flex flex-col min-h-0 border-b border-gray-100 last:border-b-0 relative">
+            <div key={weekIdx} className="flex-1 flex flex-col min-h-[56px] md:min-h-0 border-b border-gray-100 last:border-b-0 relative">
               {/* Day Cells Grid */}
               <div className="grid grid-cols-7 flex-1 divide-x divide-gray-100 relative h-full">
                 {weekDays.map((dayDate, colIdx) => {
@@ -227,14 +227,14 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                     <div
                       key={dayDate.toISOString()}
                       onClick={() => onSelectDay(dayDate)}
-                      className={`p-1 sm:p-1.5 flex flex-col justify-between transition-colors cursor-pointer select-none relative ${
+                      className={`p-1 sm:p-1.5 flex flex-col justify-between transition-colors cursor-pointer select-none relative min-h-[56px] md:min-h-0 ${
                         !isCurrentMonth ? 'bg-gray-50/40 text-gray-300' : 'bg-white text-gray-800'
                       } ${isSelected ? 'ring-2 ring-blue-500/80 ring-inset bg-blue-50/20' : ''}`}
                     >
                       {/* Day Number Header */}
-                      <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center justify-between mb-0.5 sm:mb-1">
                         <span
-                          className={`text-xs font-extrabold flex items-center justify-center rounded-lg w-5 h-5 sm:w-6 sm:h-6 ${
+                          className={`text-[11px] sm:text-xs font-extrabold flex items-center justify-center rounded-lg w-5 h-5 sm:w-6 sm:h-6 ${
                             isDayToday
                               ? 'bg-blue-600 text-white shadow-xs'
                               : isCurrentMonth
@@ -263,7 +263,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
               </div>
 
               {/* Events Overlay Layer */}
-              <div className="absolute inset-x-0 top-7 sm:top-8 px-1 sm:px-1.5 flex flex-col gap-1 pointer-events-none z-10">
+              <div className="absolute inset-x-0 top-[26px] sm:top-8 px-1 sm:px-1.5 flex flex-col gap-1 pointer-events-none z-10">
                 {Array.from({ length: maxVisibleSlots }).map((_, slotIdx) => {
                   const eventsInRow = scheduledSlots.filter((s) => s.slotIdx === slotIdx);
 
