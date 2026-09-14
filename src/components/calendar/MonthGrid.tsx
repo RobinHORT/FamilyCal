@@ -212,7 +212,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
           });
 
           return (
-            <div key={weekIdx} className="flex-1 flex flex-col min-h-[56px] md:min-h-0 border-b border-gray-100 last:border-b-0 relative">
+            <div key={weekIdx} className="flex-1 flex flex-col min-h-[96px] md:min-h-0 border-b border-gray-100 last:border-b-0 relative">
               {/* Day Cells Grid */}
               <div className="grid grid-cols-7 flex-1 divide-x divide-gray-100 relative h-full">
                 {weekDays.map((dayDate, colIdx) => {
@@ -227,7 +227,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                     <div
                       key={dayDate.toISOString()}
                       onClick={() => onSelectDay(dayDate)}
-                      className={`p-1 sm:p-1.5 flex flex-col justify-between transition-colors cursor-pointer select-none relative min-h-[56px] md:min-h-0 ${
+                      className={`p-1 sm:p-1.5 flex flex-col justify-between transition-colors cursor-pointer select-none relative min-h-[96px] md:min-h-0 ${
                         !isCurrentMonth ? 'bg-gray-50/40 text-gray-300' : 'bg-white text-gray-800'
                       } ${isSelected ? 'ring-2 ring-blue-500/80 ring-inset bg-blue-50/20' : ''}`}
                     >

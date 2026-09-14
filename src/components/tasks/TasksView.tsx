@@ -914,13 +914,13 @@ export const TasksView: React.FC = () => {
                     const isDayToday = isToday(dayDate);
                     const isSelected = isSameDay(dayDate, selectedDate);
                     const dayTasks = getTasksForDay(dayDate);
-                    const overflow = Math.max(0, dayTasks.length - 2);
+                    const overflow = Math.max(0, dayTasks.length - 3);
 
                     return (
                       <div
                         key={dayDate.toISOString()}
                         onClick={() => setSelectedDate(dayDate)}
-                        className={`p-1 flex flex-col justify-between transition-colors cursor-pointer select-none relative min-h-[56px] ${
+                        className={`p-1 flex flex-col justify-between transition-colors cursor-pointer select-none relative min-h-[96px] ${
                           !isCurrentMonth ? 'bg-gray-50/40 text-gray-300' : 'bg-white text-gray-800'
                         } ${isSelected ? 'ring-2 ring-blue-500/80 ring-inset bg-blue-50/20' : ''}`}
                       >
@@ -940,7 +940,7 @@ export const TasksView: React.FC = () => {
 
                         {/* Task Pills Stack */}
                         <div className="flex-1 my-0.5 space-y-0.5 overflow-hidden pointer-events-none">
-                          {dayTasks.slice(0, 2).map((t) => {
+                          {dayTasks.slice(0, 3).map((t) => {
                             const assignmentInfo = getEventAssignmentInfo(t as any, members);
 
                             return (

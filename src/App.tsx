@@ -125,7 +125,7 @@ function MainDashboard() {
           id="main-stage-content"
           className={`flex-1 flex flex-col min-h-0 bg-[#FAFAFA] w-full max-w-full min-w-0 ${
             activeTab === 'calendar' || activeTab === 'tasks'
-              ? 'overflow-y-auto md:overflow-hidden p-2 sm:p-3 md:p-3.5 pb-calendar-mobile md:pb-0'
+              ? 'overflow-y-auto md:overflow-hidden p-2 sm:p-3 md:p-3.5'
               : 'overflow-y-auto p-3 sm:p-6 main-stage-scroll'
           }`}
         >

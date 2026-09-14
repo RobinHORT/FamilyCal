@@ -158,10 +158,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
       <div
         id="mobile-month-container"
         {...swipeHandlers}
-        className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
-        style={{
-          paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 64px)',
-        }}
+        className="flex md:hidden flex-col gap-4 touch-pan-y w-full max-w-full min-w-0"
       >
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
@@ -185,7 +182,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
               filteredEvents={filteredEvents}
               members={members}
               eventTypes={eventTypes}
-              maxVisibleSlots={2}
+              maxVisibleSlots={3}
             />
           </motion.div>
         </AnimatePresence>
@@ -196,7 +193,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
             {format(selectedDay, 'EEEE, d MMMM')}
           </h3>
 
-          <div className="flex flex-col gap-2.5 w-full max-w-full min-w-0">
+          <div className="flex flex-col gap-2.5 w-full max-w-full min-w-0 pb-[calc(4rem+env(safe-area-inset-bottom,0px)+12px)] md:pb-0">
             {selectedDayEvents.length === 0 ? (
               <div className="py-6 px-4 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium text-center shadow-2xs w-full">
                 No events scheduled for this date
