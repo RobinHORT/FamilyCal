@@ -28,6 +28,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
     goToPreviousPeriod,
     goToNextPeriod,
     navigationDirection,
+    selectedCalendarDate,
     setSelectedCalendarDate,
   } = useCalendar();
   const { members } = useFamily();
@@ -43,10 +44,9 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
       window.location.search.includes('viewer=1')
     )));
 
-  const [selectedDay, setSelectedDay] = useState<Date>(currentDate);
+  const selectedDay = selectedCalendarDate || currentDate;
 
   const handleSelectDay = (d: Date) => {
-    setSelectedDay(d);
     setSelectedCalendarDate(d);
   };
 
