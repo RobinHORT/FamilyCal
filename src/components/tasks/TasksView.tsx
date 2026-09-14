@@ -40,6 +40,7 @@ import {
   differenceInCalendarDays,
 } from 'date-fns';
 import { useCalendar } from '../../context/CalendarContext';
+import { useCalendarSwipe } from '../../hooks/useCalendarSwipe';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { Priority, Task } from '../../types';
@@ -88,6 +89,7 @@ export const TasksView: React.FC = () => {
     archiveTask,
     openCreateTaskModal,
     openEditTaskModal,
+    openAddChoiceModal,
   } = useCalendar();
 
   const { members } = useFamily();
@@ -98,6 +100,16 @@ export const TasksView: React.FC = () => {
     (typeof window !== 'undefined' && localStorage.getItem('familycal_viewer_mode') === 'true');
 
   const canCreateTask = !isViewer && (isAdmin || hasPermission('task_create'));
+  const canAddItem = !isViewer && (isAdmin || hasPermission('task_create') || hasPermission('event_create'));
+
+  // Mobile horizontal swipe navigation handlers
+  const swipeHandlers = useCalendarSwipe({
+    onSwipeLeft: goToNextPeriod, // Swipe LEFT -> next month/week/day
+    onSwipeRight: goToPreviousPeriod, // Swipe RIGHT -> previous month/week/day
+    minDistance: 45,
+    maxTime: 700,
+    preventScrollToleranceRatio: 1.3,
+  });
 
   const currentMemberId = memberProfile?.id || members.find((m) => m.user_id === user?.id || m.id === user?.id)?.id || user?.id;
 
@@ -891,6 +903,7 @@ export const TasksView: React.FC = () => {
             {/* Mobile Month View */}
             <div
               id="mobile-month-container"
+              {...swipeHandlers}
               className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
               style={{
                 paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 64px)',
@@ -1069,6 +1082,7 @@ export const TasksView: React.FC = () => {
             {/* Mobile Week View */}
             <div
               id="mobile-week-tasks-container"
+              {...swipeHandlers}
               className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
               style={{
                 paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 64px)',
@@ -1111,7 +1125,11 @@ export const TasksView: React.FC = () => {
 
         {/* --- DAY VIEW --- */}
         {viewMode === 'day' && (
-          <div id="tasks-day-view" className="flex flex-col flex-1 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-xs touch-pan-y">
+          <div
+            id="tasks-day-view"
+            {...swipeHandlers}
+            className="flex flex-col flex-1 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-xs touch-pan-y"
+          >
             {/* Day Title Bar */}
             <div className="py-2.5 sm:py-3.5 px-3.5 sm:px-5 border-b border-gray-200 bg-gray-50/75 flex items-center justify-between shrink-0">
               <div className="min-w-0">
@@ -1152,7 +1170,11 @@ export const TasksView: React.FC = () => {
 
         {/* --- AGENDA VIEW --- */}
         {viewMode === 'agenda' && (
-          <div id="tasks-agenda-view" className="flex flex-col flex-1 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-xs">
+          <div
+            id="tasks-agenda-view"
+            {...swipeHandlers}
+            className="flex flex-col flex-1 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-xs touch-pan-y"
+          >
             {/* Search Header */}
             <div className="p-4 border-b border-gray-200 bg-gray-50/75 flex flex-wrap items-center justify-between gap-3">
               <div className="relative flex-1 max-w-md">
@@ -1223,6 +1245,21 @@ export const TasksView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Floating Action Add Button on Mobile (Hidden in Viewer mode) */}
+      {canAddItem && (
+        <button
+          id="mobile-create-task-fab"
+          onClick={() => openAddChoiceModal(selectedDate || currentDate)}
+          className="md:hidden fixed right-5 w-12 h-12 rounded-full bg-blue-600 text-white shadow-lg flex items-center justify-center hover:bg-blue-700 active:scale-95 transition-all z-40 cursor-pointer border border-blue-500/20 bottom-fab-mobile"
+          style={{
+            bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 16px)',
+          }}
+          title="Add"
+        >
+          <Plus className="w-6 h-6 stroke-[2.5]" />
+        </button>
+      )}
     </div>
   );
 };
