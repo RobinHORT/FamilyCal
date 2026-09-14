@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useFamily } from '../../context/FamilyContext';
 import {
   Calendar as CalIcon,
   Users,
@@ -20,7 +21,14 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
   const { user, logout } = useAuth();
+  const { family } = useFamily();
   const userColorInfo = user ? getPastelColorInfo(user.color) : null;
+
+  useEffect(() => {
+    if (family?.name) {
+      document.title = family.name;
+    }
+  }, [family?.name]);
 
   const isViewer =
     user?.role === 'viewer' ||
@@ -72,7 +80,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
           </div>
 
           <span className="text-lg font-bold text-slate-800 tracking-tight">
-            FamilyCal
+            {family?.name || 'FamilyCal'}
           </span>
         </button>
       </div>

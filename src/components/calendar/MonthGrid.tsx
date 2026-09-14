@@ -251,13 +251,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
 
                       {/* Overflow +X more link */}
                       {overflowCount > 0 ? (
-                        <div
-                          className="text-[10px] sm:text-[11px] font-extrabold text-blue-600 hover:underline pl-0.5 pt-0.5 relative z-20"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectDay(dayDate);
-                          }}
-                        >
+                        <div className="text-[10px] sm:text-[11px] font-extrabold text-blue-600 pl-0.5 pt-0.5 relative z-20 pointer-events-none">
                           +{overflowCount} more
                         </div>
                       ) : (
@@ -290,10 +284,6 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                             isEndOfWeek={isEndOfWeek}
                             members={members}
                             eventTypes={eventTypes}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (onEditEvent) onEditEvent(event);
-                            }}
                           />
                         );
                       })}

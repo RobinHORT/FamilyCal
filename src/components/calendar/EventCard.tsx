@@ -233,7 +233,9 @@ export const EventPill: React.FC<EventPillProps> = ({
           : assignmentInfo.primaryColorInfo.hex,
         borderColor: assignmentInfo.borderHex,
       }}
-      className={`relative px-1 sm:px-1.5 py-0.5 text-[10px] sm:text-[11px] font-bold text-slate-900 truncate flex items-center gap-1 shadow-2xs hover:shadow-xs transition-shadow cursor-pointer overflow-hidden h-5 sm:h-5.5 ${roundedClasses} ${borderClasses} ${marginClasses} ${className}`}
+      className={`relative px-1 sm:px-1.5 py-0.5 text-[10px] sm:text-[11px] font-bold text-slate-900 truncate flex items-center gap-1 shadow-2xs hover:shadow-xs transition-shadow overflow-hidden h-5 sm:h-5.5 ${
+        onClick ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none'
+      } ${roundedClasses} ${borderClasses} ${marginClasses} ${className}`}
       title={`${event.title} (${assignmentInfo.label} • ${eventType.name})`}
     >
       {/* Divided boundary lines for family events on small pills */}
@@ -292,7 +294,9 @@ export const MultiDayEventBar: React.FC<MultiDayEventBarProps> = ({
         gridColumnStart: startCol + 1,
         gridColumnEnd: endCol + 2,
       }}
-      className={`relative h-5 sm:h-5.5 flex items-center cursor-pointer select-none pointer-events-auto group z-10 ${className}`}
+      className={`relative h-5 sm:h-5.5 flex items-center select-none group z-10 ${
+        onClick ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none'
+      } ${className}`}
       title={`${event.title} (${assignmentInfo.label} • ${eventType.name})`}
     >
       {/* Background Layer: Visually split at each calendar-day boundary */}

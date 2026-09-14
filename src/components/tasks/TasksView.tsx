@@ -784,26 +784,20 @@ export const TasksView: React.FC = () => {
                                 </div>
 
                                 {/* Task Pills Stack */}
-                                <div className="flex-1 my-0.5 space-y-1 overflow-hidden">
+                                <div className="flex-1 my-0.5 space-y-1 overflow-hidden pointer-events-none">
                                   {dayTasks.slice(0, 2).map((t) => {
                                     const assignmentInfo = getEventAssignmentInfo(t as any, members);
-                                    const toggleCheck = canMemberToggleTask(t, currentMemberId, isViewer);
-                                    const isActionable = t.completed || toggleCheck.canToggle;
 
                                     return (
                                       <div
                                         key={t.id}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          openEditTaskModal(t);
-                                        }}
                                         style={{
                                           background: assignmentInfo.isFamilyEvent
                                             ? assignmentInfo.segmentedGradient
                                             : assignmentInfo.primaryColorInfo.hex,
                                           borderColor: assignmentInfo.borderHex,
                                         }}
-                                        className={`relative px-1.5 py-0.5 rounded-md text-[10px] font-bold flex items-center justify-between gap-1 border shadow-2xs hover:shadow-xs transition-shadow cursor-pointer overflow-hidden ${
+                                        className={`relative px-1.5 py-0.5 rounded-md text-[10px] font-bold flex items-center justify-between gap-1 border shadow-2xs overflow-hidden select-none pointer-events-none ${
                                           t.completed ? 'opacity-70' : ''
                                         }`}
                                         title={`${t.title} (${assignmentInfo.label})`}
@@ -817,22 +811,14 @@ export const TasksView: React.FC = () => {
                                           </div>
                                         )}
 
-                                        <div className="relative z-10 flex items-center gap-1 truncate min-w-0 w-full">
-                                          <button
-                                            type="button"
-                                            disabled={!isActionable}
-                                            onClick={(e) => handleToggle(e, t)}
-                                            className={`shrink-0 p-0 text-slate-800 ${
-                                              !isActionable ? 'opacity-35 cursor-not-allowed' : 'hover:scale-110 cursor-pointer'
-                                            }`}
-                                            title={!isActionable ? toggleCheck.reason : t.completed ? 'Mark incomplete' : 'Mark complete'}
-                                          >
+                                        <div className="relative z-10 flex items-center gap-1 truncate min-w-0 w-full pointer-events-none">
+                                          <span className="shrink-0 p-0 text-slate-800">
                                             {t.completed ? (
                                               <CheckCircle2 className="w-2.5 h-2.5 fill-blue-600 text-white" />
                                             ) : (
                                               <Circle className="w-2.5 h-2.5 stroke-[2.2]" />
                                             )}
-                                          </button>
+                                          </span>
                                           <span className={`truncate ${t.completed ? 'line-through text-slate-700' : 'text-slate-900'}`}>
                                             {t.title}
                                           </span>
@@ -844,7 +830,7 @@ export const TasksView: React.FC = () => {
 
                                 {/* Overflow count */}
                                 {overflow > 0 ? (
-                                  <div className="text-[10px] sm:text-[11px] font-extrabold text-blue-600 hover:underline pl-0.5 pt-0.5 relative z-20">
+                                  <div className="text-[10px] sm:text-[11px] font-extrabold text-blue-600 pl-0.5 pt-0.5 relative z-20 pointer-events-none">
                                     +{overflow} more
                                   </div>
                                 ) : (
@@ -928,6 +914,7 @@ export const TasksView: React.FC = () => {
                     const isDayToday = isToday(dayDate);
                     const isSelected = isSameDay(dayDate, selectedDate);
                     const dayTasks = getTasksForDay(dayDate);
+                    const overflow = Math.max(0, dayTasks.length - 2);
 
                     return (
                       <div
@@ -937,7 +924,7 @@ export const TasksView: React.FC = () => {
                           !isCurrentMonth ? 'bg-gray-50/40 text-gray-300' : 'bg-white text-gray-800'
                         } ${isSelected ? 'ring-2 ring-blue-500/80 ring-inset bg-blue-50/20' : ''}`}
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between mb-0.5">
                           <span
                             className={`text-[11px] font-extrabold flex items-center justify-center rounded-lg w-5 h-5 ${
                               isDayToday
@@ -949,10 +936,57 @@ export const TasksView: React.FC = () => {
                           >
                             {format(dayDate, 'd')}
                           </span>
-                          {dayTasks.length > 0 && (
-                            <span className="w-2 h-2 rounded-full bg-blue-600" />
-                          )}
                         </div>
+
+                        {/* Task Pills Stack */}
+                        <div className="flex-1 my-0.5 space-y-0.5 overflow-hidden pointer-events-none">
+                          {dayTasks.slice(0, 2).map((t) => {
+                            const assignmentInfo = getEventAssignmentInfo(t as any, members);
+
+                            return (
+                              <div
+                                key={t.id}
+                                style={{
+                                  background: assignmentInfo.isFamilyEvent
+                                    ? assignmentInfo.segmentedGradient
+                                    : assignmentInfo.primaryColorInfo.hex,
+                                  borderColor: assignmentInfo.borderHex,
+                                }}
+                                className={`relative px-1 py-0.5 rounded text-[9px] font-bold flex items-center justify-between gap-0.5 border shadow-2xs overflow-hidden select-none pointer-events-none ${
+                                  t.completed ? 'opacity-70' : ''
+                                }`}
+                                title={`${t.title} (${assignmentInfo.label})`}
+                              >
+                                {assignmentInfo.isFamilyEvent && (
+                                  <div className="absolute inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0">
+                                    {assignmentInfo.participatingMembers.map((m, idx) => (
+                                      <div key={m.id || idx} className="flex-1 h-full border-r border-black/8 last:border-r-0" />
+                                    ))}
+                                  </div>
+                                )}
+
+                                <div className="relative z-10 flex items-center gap-0.5 truncate min-w-0 w-full pointer-events-none">
+                                  <span className="shrink-0 p-0 text-slate-800">
+                                    {t.completed ? (
+                                      <CheckCircle2 className="w-2 h-2 fill-blue-600 text-white" />
+                                    ) : (
+                                      <Circle className="w-2 h-2 stroke-[2.2]" />
+                                    )}
+                                  </span>
+                                  <span className={`truncate leading-none ${t.completed ? 'line-through text-slate-700' : 'text-slate-900'}`}>
+                                    {t.title}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {overflow > 0 && (
+                          <div className="text-[9px] font-extrabold text-blue-600 pl-0.5 pt-0.5 relative z-20 pointer-events-none leading-none">
+                            +{overflow} more
+                          </div>
+                        )}
                       </div>
                     );
                   })}

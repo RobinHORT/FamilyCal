@@ -13,6 +13,12 @@ export const TabletViewer: React.FC<TabletViewerProps> = () => {
   const { family } = useFamily();
   const { logout } = useAuth();
 
+  React.useEffect(() => {
+    if (family?.name) {
+      document.title = family.name;
+    }
+  }, [family?.name]);
+
   return (
     <div
       id="familycal-tablet-viewer"
