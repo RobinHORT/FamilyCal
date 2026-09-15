@@ -2336,6 +2336,38 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
   }
 });
 
+function getEffectiveTodayDate(familyTimezone?: string, clientDate?: string): string {
+  // If client provides a valid YYYY-MM-DD date string, use it
+  if (clientDate && typeof clientDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clientDate.trim())) {
+    return clientDate.trim();
+  }
+
+  // Use the household's configured local timezone if available
+  if (familyTimezone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: familyTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(new Date());
+
+      const year = parts.find((p) => p.type === 'year')?.value;
+      const month = parts.find((p) => p.type === 'month')?.value;
+      const day = parts.find((p) => p.type === 'day')?.value;
+
+      if (year && month && day) {
+        return `${year}-${month}-${day}`;
+      }
+    } catch {
+      // Fallback if invalid timezone string
+    }
+  }
+
+  // Fallback to UTC date string
+  return new Date().toISOString().split('T')[0];
+}
+
 router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     if (req.user?.isViewer) {
@@ -2350,6 +2382,26 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
 
     if (!task) {
       return res.status(404).json({ error: 'Task not found.' });
+    }
+
+    // Determine current local date for household avoiding UTC timezone date-shift bugs
+    const family = db.prepare('SELECT timezone FROM families WHERE id = ?').get(req.user!.family_id) as any;
+    const todayStr = getEffectiveTodayDate(family?.timezone, req.body?.client_date);
+
+    // Rule: Before the task's due date, the task CANNOT be claimed.
+    // On the due date: the task CAN be claimed.
+    // After the due date: the task CAN still be claimed.
+    // For recurring tasks, each occurrence must use its own due date.
+    // This applies to both assigned tasks and Open Tasks.
+    const occurrenceDate = req.body?.occurrence_date || req.body?.due_date;
+    const effectiveDueDateStr = occurrenceDate 
+      ? String(occurrenceDate).trim().slice(0, 10) 
+      : (task.due_date ? String(task.due_date).trim().slice(0, 10) : null);
+
+    if (effectiveDueDateStr && effectiveDueDateStr > todayStr) {
+      return res.status(400).json({
+        error: `Tasks cannot be claimed before their due date (${effectiveDueDateStr}).`,
+      });
     }
 
     if (task.assignment_mode !== 'open') {
@@ -2553,7 +2605,8 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
     const willComplete = !wasCompleted;
     const newCompleted = willComplete ? 1 : 0;
     const now = new Date().toISOString();
-    const todayStr = new Date().toISOString().split('T')[0];
+    const family = db.prepare('SELECT timezone FROM families WHERE id = ?').get(req.user!.family_id) as any;
+    const todayStr = getEffectiveTodayDate(family?.timezone, req.body?.client_date);
 
     let assignedIds: string[] = [];
     try {
@@ -2576,10 +2629,14 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
       }
 
       // Verify date rule when ticking off
-      const taskDueDateStr = task.due_date ? task.due_date.split('T')[0] : todayStr;
-      if (willComplete && todayStr < taskDueDateStr) {
+      const occurrenceDate = req.body?.occurrence_date || req.body?.due_date;
+      const effectiveDueDateStr = occurrenceDate
+        ? String(occurrenceDate).trim().slice(0, 10)
+        : (task.due_date ? String(task.due_date).trim().slice(0, 10) : todayStr);
+
+      if (willComplete && effectiveDueDateStr > todayStr) {
         return res.status(400).json({
-          error: `Tasks cannot be completed before their due date (${taskDueDateStr}).`,
+          error: `Tasks cannot be completed before their due date (${effectiveDueDateStr}).`,
         });
       }
     }

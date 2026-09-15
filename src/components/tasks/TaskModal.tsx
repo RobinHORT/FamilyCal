@@ -24,7 +24,7 @@ export const TaskModal: React.FC = () => {
     toggleTask,
   } = useCalendar();
 
-  const { members } = useFamily();
+  const { family, members } = useFamily();
   const { user, memberProfile, isViewer } = useAuth();
 
   const activeMembers = members.filter((m) => m.is_active === 1);
@@ -246,7 +246,7 @@ export const TaskModal: React.FC = () => {
       return;
     }
 
-    const check = canMemberToggleTask(editingTask, currentMemberId, isViewer, isAdultOrAdmin);
+    const check = canMemberToggleTask(editingTask, currentMemberId, isViewer, isAdultOrAdmin, family?.timezone);
     if (!editingTask.completed && !check.canToggle) {
       setError(check.reason || 'You do not have permission to complete this task');
       return;

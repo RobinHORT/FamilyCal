@@ -50,7 +50,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Priority, Task } from '../../types';
 import { getEventAssignmentInfo, getPastelColorInfo } from '../../utils/colors';
 import { formatReminderLabel } from '../../utils/taskNotifications';
-import { getTaskAssignedMemberIds, canMemberToggleTask, canMemberClaimTask, isAdultOrAdminRole } from '../../utils/taskPermissions';
+import { getTaskAssignedMemberIds, canMemberToggleTask, canMemberClaimTask, isAdultOrAdminRole, isTaskDateActionable, getHouseholdTodayDateString } from '../../utils/taskPermissions';
 import { MonthGrid } from '../calendar/MonthGrid';
 
 function formatTaskRepeatLabel(rule?: string | null, interval?: number | null, unit?: string | null): string | null {
@@ -99,7 +99,7 @@ export const TasksView: React.FC = () => {
     openAddChoiceModal,
   } = useCalendar();
 
-  const { members } = useFamily();
+  const { family, members } = useFamily();
   const { user, memberProfile, isAdmin, hasPermission } = useAuth();
   const isAdultOrAdmin = isAdultOrAdminRole(user, memberProfile);
 
@@ -188,50 +188,62 @@ export const TasksView: React.FC = () => {
   const getTasksForDay = (day: Date): Task[] => {
     const dayStr = format(day, 'yyyy-MM-dd');
 
-    return visibleTasks.filter((task) => {
-      if (!task.due_date) return false;
-      if (task.due_date === dayStr) return true;
+    return visibleTasks
+      .filter((task) => {
+        if (!task.due_date) return false;
+        const taskDueStr = task.due_date.slice(0, 10);
+        if (taskDueStr === dayStr) return true;
 
-      // Check recurring rule
-      try {
-        const dueDate = parseISO(task.due_date);
-        if (isNaN(dueDate.getTime()) || day < dueDate) return false;
+        // Check recurring rule
+        try {
+          const dueDate = parseISO(taskDueStr);
+          if (isNaN(dueDate.getTime()) || day < dueDate) return false;
 
-        const rule = task.recurring_rule;
-        if (!rule || rule === 'none') return false;
+          const rule = task.recurring_rule;
+          if (!rule || rule === 'none') return false;
 
-        if (rule === 'daily') return true;
-        if (rule === 'weekly') {
-          return day.getDay() === dueDate.getDay();
-        }
-        if (rule === 'fortnightly') {
-          const diffDays = differenceInCalendarDays(day, dueDate);
-          return diffDays >= 0 && diffDays % 14 === 0;
-        }
-        if (rule === 'monthly') {
-          return day.getDate() === dueDate.getDate();
-        }
-        if (rule === 'custom') {
-          const interval = task.recurring_interval && task.recurring_interval > 0 ? task.recurring_interval : 1;
-          const unit = task.recurring_unit || 'day';
-          if (unit === 'day') {
-            const diff = differenceInCalendarDays(day, dueDate);
-            return diff >= 0 && diff % interval === 0;
+          if (rule === 'daily') return true;
+          if (rule === 'weekly') {
+            return day.getDay() === dueDate.getDay();
           }
-          if (unit === 'week') {
-            const diffWeeks = Math.floor(differenceInCalendarDays(day, dueDate) / 7);
-            return day.getDay() === dueDate.getDay() && diffWeeks >= 0 && diffWeeks % 14 === 0;
+          if (rule === 'fortnightly') {
+            const diffDays = differenceInCalendarDays(day, dueDate);
+            return diffDays >= 0 && diffDays % 14 === 0;
           }
-          if (unit === 'month') {
+          if (rule === 'monthly') {
             return day.getDate() === dueDate.getDate();
           }
+          if (rule === 'custom') {
+            const interval = task.recurring_interval && task.recurring_interval > 0 ? task.recurring_interval : 1;
+            const unit = task.recurring_unit || 'day';
+            if (unit === 'day') {
+              const diff = differenceInCalendarDays(day, dueDate);
+              return diff >= 0 && diff % interval === 0;
+            }
+            if (unit === 'week') {
+              const diffWeeks = Math.floor(differenceInCalendarDays(day, dueDate) / 7);
+              return day.getDay() === dueDate.getDay() && diffWeeks >= 0 && diffWeeks % interval === 0;
+            }
+            if (unit === 'month') {
+              return day.getDate() === dueDate.getDate();
+            }
+          }
+        } catch {
+          return false;
         }
-      } catch {
-        return false;
-      }
 
-      return false;
-    });
+        return false;
+      })
+      .map((task) => {
+        // For recurring tasks, each occurrence has its own occurrence due date
+        if (task.recurring_rule && task.recurring_rule !== 'none' && task.due_date && task.due_date.slice(0, 10) !== dayStr) {
+          return {
+            ...task,
+            due_date: dayStr,
+          };
+        }
+        return task;
+      });
   };
 
   // Navigation handlers using CalendarContext methods
@@ -259,14 +271,17 @@ export const TasksView: React.FC = () => {
   // Action handlers
   const handleToggle = async (e: React.MouseEvent, task: Task) => {
     e.stopPropagation();
-    const check = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin);
+    const householdTimezone = family?.timezone;
+    const check = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin, householdTimezone);
     if (!task.completed && !check.canToggle) {
       alert(check.reason || 'You do not have permission to complete this task.');
       return;
     }
 
     try {
-      await toggleTask(task.id);
+      const occurrenceDueDate = task.due_date ? task.due_date.trim().slice(0, 10) : undefined;
+      const todayDateStr = getHouseholdTodayDateString(householdTimezone);
+      await toggleTask(task.id, occurrenceDueDate, todayDateStr);
     } catch (err: any) {
       console.error(err);
       alert(err.message || 'Failed to toggle task');
@@ -275,14 +290,17 @@ export const TasksView: React.FC = () => {
 
   const handleClaim = async (e: React.MouseEvent, task: Task) => {
     e.stopPropagation();
-    const check = canMemberClaimTask(task, currentMemberId, isViewer);
+    const householdTimezone = family?.timezone;
+    const check = canMemberClaimTask(task, currentMemberId, isViewer, tasks, householdTimezone);
     if (!check.canClaim) {
       alert(check.reason || 'You cannot claim this task.');
       return;
     }
 
     try {
-      await claimTask(task.id);
+      const occurrenceDueDate = task.due_date ? task.due_date.trim().slice(0, 10) : undefined;
+      const todayDateStr = getHouseholdTodayDateString(householdTimezone);
+      await claimTask(task.id, occurrenceDueDate, todayDateStr);
     } catch (err: any) {
       console.error(err);
       alert(err.message || 'Failed to claim task');
@@ -354,15 +372,20 @@ export const TasksView: React.FC = () => {
 
   // Render Task Card Component (EXACT MATCH to EventCard visual system)
   const renderTaskCard = (task: Task, compact: boolean = false) => {
+    const householdTimezone = family?.timezone;
     const isCompleted = task.completed;
-    const toggleCheck = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin);
+    const toggleCheck = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin, householdTimezone);
     const isActionable = isCompleted || toggleCheck.canToggle;
 
     const isOpenTask = task.assignment_mode === 'open';
     const assignedIds = getTaskAssignedMemberIds(task);
     const isClaimed = assignedIds.length > 0;
     const isClaimedByMe = Boolean(currentMemberId && assignedIds.includes(currentMemberId));
-    const claimCheck = canMemberClaimTask(task, currentMemberId, isViewer);
+    const claimCheck = canMemberClaimTask(task, currentMemberId, isViewer, tasks, householdTimezone);
+    const isBeforeDueDate = Boolean(task.due_date && !isTaskDateActionable(task.due_date, householdTimezone));
+    const canShowClaimButton = isOpenTask && !isCompleted && !isClaimedByMe && !isViewer && (
+      claimCheck.canClaim || (isBeforeDueDate && (!isClaimed || (task.claim_limit !== undefined && task.claim_limit !== 1)))
+    );
 
     const assignmentInfo = getEventAssignmentInfo(task as any, members);
 
@@ -502,12 +525,17 @@ export const TasksView: React.FC = () => {
             )}
 
             {/* Claim Task Button for Open Uncompleted Tasks */}
-            {isOpenTask && !isCompleted && claimCheck.canClaim && (
+            {canShowClaimButton && (
               <button
                 type="button"
+                disabled={!claimCheck.canClaim}
                 onClick={(e) => handleClaim(e, task)}
-                className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 active:scale-95 text-white text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center gap-1 shrink-0 cursor-pointer"
-                title="Claim this chore"
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center gap-1 shrink-0 ${
+                  claimCheck.canClaim
+                    ? 'bg-sky-600 hover:bg-sky-700 active:scale-95 text-white cursor-pointer'
+                    : 'bg-slate-200/80 text-slate-400 cursor-not-allowed border border-slate-300/50'
+                }`}
+                title={claimCheck.canClaim ? 'Claim this chore' : (claimCheck.reason || 'Cannot claim this task')}
               >
                 <Hand className="w-3 h-3" />
                 <span>Claim</span>

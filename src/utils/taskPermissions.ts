@@ -1,4 +1,3 @@
-import { format } from 'date-fns';
 import { Task } from '../types';
 
 export function getTaskAssignedMemberIds(task: Task): string[] {
@@ -11,11 +10,57 @@ export function getTaskAssignedMemberIds(task: Task): string[] {
   return [];
 }
 
-export function isTaskDateActionable(dueDateStr?: string | null): boolean {
+/**
+ * Returns today's date formatted as YYYY-MM-DD in the household's configured local timezone.
+ * Falls back to local system calendar date.
+ */
+export function getHouseholdTodayDateString(householdTimezone?: string | null): string {
+  if (householdTimezone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: householdTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(new Date());
+
+      const year = parts.find((p) => p.type === 'year')?.value;
+      const month = parts.find((p) => p.type === 'month')?.value;
+      const day = parts.find((p) => p.type === 'day')?.value;
+
+      if (year && month && day) {
+        return `${year}-${month}-${day}`;
+      }
+    } catch {
+      // Fallback if invalid timezone
+    }
+  }
+
+  // Fallback to local system calendar date
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Checks if a task is actionable (claimable / completable) on or after its due date.
+ * - Before the task's due date: FALSE
+ * - On the due date: TRUE
+ * - After the due date: TRUE
+ *
+ * Uses pure YYYY-MM-DD date string comparison in the household's timezone to avoid UTC timezone shifts.
+ */
+export function isTaskDateActionable(
+  dueDateStr?: string | null,
+  householdTimezone?: string | null
+): boolean {
   if (!dueDateStr) return false;
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
-  const taskDateStr = dueDateStr.slice(0, 10);
-  return todayStr >= taskDateStr;
+  const todayStr = getHouseholdTodayDateString(householdTimezone);
+  const taskDateStr = dueDateStr.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(taskDateStr)) return false;
+  return taskDateStr <= todayStr;
 }
 
 export function isAdultOrAdminRole(user?: any, memberProfile?: any): boolean {
@@ -28,7 +73,8 @@ export function canMemberToggleTask(
   task: Task,
   currentMemberId?: string | null,
   isViewer?: boolean,
-  isAdultOrAdmin?: boolean
+  isAdultOrAdmin?: boolean,
+  householdTimezone?: string | null
 ): { canToggle: boolean; reason?: string } {
   if (isViewer) {
     return { canToggle: false, reason: 'Viewer mode cannot modify tasks' };
@@ -60,8 +106,8 @@ export function canMemberToggleTask(
     return { canToggle: true };
   }
 
-  if (!isTaskDateActionable(task.due_date)) {
-    const formattedDueDate = task.due_date.slice(0, 10);
+  if (!isTaskDateActionable(task.due_date, householdTimezone)) {
+    const formattedDueDate = task.due_date.trim().slice(0, 10);
     return {
       canToggle: false,
       reason: `Task cannot be completed before its due date (${formattedDueDate})`,
@@ -75,7 +121,8 @@ export function canMemberClaimTask(
   task: Task,
   currentMemberId?: string | null,
   isViewer?: boolean,
-  allTasks: Task[] = []
+  allTasks: Task[] = [],
+  householdTimezone?: string | null
 ): { canClaim: boolean; reason?: string } {
   if (isViewer) {
     return { canClaim: false, reason: 'Viewers cannot claim tasks' };
@@ -83,6 +130,20 @@ export function canMemberClaimTask(
   if (!currentMemberId) {
     return { canClaim: false, reason: 'Please select or log in as a family member to claim' };
   }
+
+  // Before the task's due date: the task CANNOT be claimed.
+  // On the due date: the task CAN be claimed.
+  // After the due date: the task CAN still be claimed.
+  // This applies to both assigned tasks and Open Tasks.
+  // For recurring tasks, each occurrence must use its own due date.
+  if (task.due_date && !isTaskDateActionable(task.due_date, householdTimezone)) {
+    const formattedDueDate = task.due_date.trim().slice(0, 10);
+    return {
+      canClaim: false,
+      reason: `Task cannot be claimed before its due date (${formattedDueDate})`,
+    };
+  }
+
   if (task.assignment_mode !== 'open') {
     return { canClaim: false, reason: 'Task is not open for claiming' };
   }

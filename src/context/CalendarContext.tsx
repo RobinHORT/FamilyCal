@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { useAuth } from './AuthContext';
 import { useFamily } from './FamilyContext';
 import { useTaskReminderScheduler } from '../hooks/useTaskReminderScheduler';
+import { getHouseholdTodayDateString } from '../utils/taskPermissions';
 
 interface CalendarContextType {
   calendars: Calendar[];
@@ -63,8 +64,8 @@ interface CalendarContextType {
   deleteEventType: (id: string) => Promise<void>;
   createTask: (data: Partial<Task>) => Promise<Task>;
   updateTask: (id: string, data: Partial<Task>) => Promise<Task>;
-  toggleTask: (id: string) => Promise<Task>;
-  claimTask: (id: string) => Promise<Task>;
+  toggleTask: (id: string, occurrenceDate?: string, clientDate?: string) => Promise<Task>;
+  claimTask: (id: string, occurrenceDate?: string, clientDate?: string) => Promise<Task>;
   unclaimTask: (id: string) => Promise<any>;
   adjustTaskPoints: (id: string, data: { points_awarded: number; notes?: string }) => Promise<Task>;
   archiveTask: (id: string, options?: { allInGroup?: boolean }) => Promise<Task>;
@@ -76,7 +77,7 @@ const CalendarContext = createContext<CalendarContextType | undefined>(undefined
 
 export function CalendarProvider({ children }: { children: ReactNode }) {
   const { user, memberProfile, refreshProfile } = useAuth();
-  const { members, fetchFamilyData } = useFamily();
+  const { family, members, fetchFamilyData } = useFamily();
 
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -416,15 +417,17 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     return updated;
   };
 
-  const toggleTask = async (id: string) => {
-    const updated = await api.toggleTask(id);
+  const toggleTask = async (id: string, occurrenceDate?: string, clientDate?: string) => {
+    const householdTodayStr = getHouseholdTodayDateString(family?.timezone);
+    const updated = await api.toggleTask(id, occurrenceDate, clientDate || householdTodayStr);
     await fetchTasks();
     await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
     return updated;
   };
 
-  const claimTask = async (id: string) => {
-    const claimed = await api.claimTask(id);
+  const claimTask = async (id: string, occurrenceDate?: string, clientDate?: string) => {
+    const householdTodayStr = getHouseholdTodayDateString(family?.timezone);
+    const claimed = await api.claimTask(id, occurrenceDate, clientDate || householdTodayStr);
     await fetchTasks();
     await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
     return claimed;

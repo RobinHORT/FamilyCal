@@ -1,3 +1,4 @@
+import { format } from 'date-fns';
 import {
   User,
   Family,
@@ -235,14 +236,22 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  toggleTask: (id: string) =>
+  toggleTask: (id: string, occurrenceDate?: string, clientDate?: string) =>
     fetchJson<Task>(`/api/tasks/${id}/toggle`, {
       method: 'POST',
+      body: JSON.stringify({
+        occurrence_date: occurrenceDate,
+        client_date: clientDate || format(new Date(), 'yyyy-MM-dd'),
+      }),
     }),
 
-  claimTask: (id: string) =>
+  claimTask: (id: string, occurrenceDate?: string, clientDate?: string) =>
     fetchJson<Task>(`/api/tasks/${id}/claim`, {
       method: 'POST',
+      body: JSON.stringify({
+        occurrence_date: occurrenceDate,
+        client_date: clientDate || format(new Date(), 'yyyy-MM-dd'),
+      }),
     }),
 
   unclaimTask: (id: string) =>
