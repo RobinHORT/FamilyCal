@@ -3091,7 +3091,24 @@ router.get('/stock/barcode/:barcode', authenticateToken, (req: AuthRequest, res:
 router.post('/stock', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     const familyId = req.user!.family_id;
-    const { name, category, quantity, unit, low_stock_threshold, earliest_expiry_date, location, notes, is_favorite, barcode, brand_or_label } = req.body;
+    const {
+      name,
+      category,
+      quantity,
+      unit,
+      low_stock_threshold,
+      target_stock,
+      restock_target,
+      shopping_trigger,
+      expiry_days_threshold,
+      auto_add_to_shopping,
+      earliest_expiry_date,
+      location,
+      notes,
+      is_favorite,
+      barcode,
+      brand_or_label,
+    } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Stock item name is required' });
@@ -3103,6 +3120,11 @@ router.post('/stock', authenticateToken, (req: AuthRequest, res: Response) => {
       quantity,
       unit,
       low_stock_threshold,
+      target_stock: target_stock !== undefined ? target_stock : restock_target,
+      restock_target: restock_target !== undefined ? restock_target : target_stock,
+      shopping_trigger,
+      expiry_days_threshold,
+      auto_add_to_shopping,
       earliest_expiry_date,
       location,
       notes,

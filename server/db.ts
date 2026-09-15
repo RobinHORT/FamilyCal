@@ -224,7 +224,10 @@ export function initDatabase() {
       quantity REAL NOT NULL DEFAULT 0,
       unit TEXT DEFAULT 'packs',
       low_stock_threshold REAL DEFAULT 1,
+      target_stock REAL DEFAULT 2,
       restock_target REAL DEFAULT 2,
+      shopping_trigger TEXT DEFAULT 'low_stock',
+      expiry_days_threshold INTEGER DEFAULT 2,
       auto_add_to_shopping INTEGER DEFAULT 1,
       earliest_expiry_date TEXT,
       location TEXT,
@@ -602,13 +605,33 @@ export function initDatabase() {
       console.warn('Family table migration check warning:', famMigErr);
     }
 
-    // Check stock_items columns for restock_target and auto_add_to_shopping
+    // Check stock_items columns for target_stock, restock_target, shopping_trigger, expiry_days_threshold, and auto_add_to_shopping
     try {
       const stockCols = db.prepare(`PRAGMA table_info(stock_items);`).all() as Array<{ name: string }>;
       const hasRestockTarget = stockCols.some((col) => col.name === 'restock_target');
       if (!hasRestockTarget) {
         db.prepare(`ALTER TABLE stock_items ADD COLUMN restock_target REAL DEFAULT 2;`).run();
         console.log('Migration applied: added restock_target column to stock_items table.');
+      }
+
+      const hasTargetStock = stockCols.some((col) => col.name === 'target_stock');
+      if (!hasTargetStock) {
+        db.prepare(`ALTER TABLE stock_items ADD COLUMN target_stock REAL DEFAULT 2;`).run();
+        db.prepare(`UPDATE stock_items SET target_stock = restock_target WHERE restock_target IS NOT NULL;`).run();
+        console.log('Migration applied: added target_stock column to stock_items table.');
+      }
+
+      const hasShoppingTrigger = stockCols.some((col) => col.name === 'shopping_trigger');
+      if (!hasShoppingTrigger) {
+        db.prepare(`ALTER TABLE stock_items ADD COLUMN shopping_trigger TEXT DEFAULT 'low_stock';`).run();
+        db.prepare(`UPDATE stock_items SET shopping_trigger = 'none' WHERE auto_add_to_shopping = 0;`).run();
+        console.log('Migration applied: added shopping_trigger column to stock_items table.');
+      }
+
+      const hasExpiryDaysThreshold = stockCols.some((col) => col.name === 'expiry_days_threshold');
+      if (!hasExpiryDaysThreshold) {
+        db.prepare(`ALTER TABLE stock_items ADD COLUMN expiry_days_threshold INTEGER DEFAULT 2;`).run();
+        console.log('Migration applied: added expiry_days_threshold column to stock_items table.');
       }
 
       const hasAutoAdd = stockCols.some((col) => col.name === 'auto_add_to_shopping');
@@ -1278,10 +1301,168 @@ export function seedDefaultStockForFamily(familyId: string) {
 }
 
 /**
+ * Evaluate and synchronize automatic shopping list triggers for household stock items.
+ * Triggers supported:
+ * 1. Low Stock: current stock <= low_stock_threshold -> requirement = target_stock - current_stock
+ * 2. Zero Stock: current stock <= 0 -> requirement = target_stock (or 1)
+ * 3. Before Expiry: earliest_expiry_date within expiry_days_threshold (days) -> requirement created, stock kept intact
+ * 4. Low Stock + Before Expiry: either condition activates shopping list entry (single canonical entry, never duplicated)
+ * 5. None: stock tracked without auto-shopping
+ *
+ * Ticked shopping items act as a temporary purchased state and are cleared when Add Stock increases inventory.
+ */
+export function evaluateStockShoppingTriggers(familyId: string) {
+  try {
+    const stockItems = db.prepare(`SELECT * FROM stock_items WHERE family_id = ?`).all(familyId) as any[];
+    if (!stockItems || stockItems.length === 0) return;
+
+    const now = new Date().toISOString();
+    const todayStr = now.split('T')[0];
+    const todayDate = new Date(todayStr + 'T00:00:00Z');
+
+    for (const item of stockItems) {
+      const targetStock = Number(item.target_stock !== undefined && item.target_stock !== null ? item.target_stock : (item.restock_target ?? 2));
+      const lowThreshold = Number(item.low_stock_threshold !== undefined && item.low_stock_threshold !== null ? item.low_stock_threshold : 1);
+      const triggerMode: string = item.shopping_trigger || (item.auto_add_to_shopping === 0 ? 'none' : 'low_stock');
+      const expiryDays = Number(item.expiry_days_threshold !== undefined && item.expiry_days_threshold !== null ? item.expiry_days_threshold : 2);
+      const currentQty = Number(item.quantity || 0);
+
+      // Query active (uncompleted) and ticked (purchased) items for this canonical stock item
+      const activeItems = db.prepare(`
+        SELECT id, quantity, is_auto_generated, notes
+        FROM shopping_list_items
+        WHERE family_id = ? AND is_completed = 0 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
+        ORDER BY created_at ASC
+      `).all(familyId, item.id, item.name) as Array<{ id: string; quantity: number; is_auto_generated: number; notes: string | null }>;
+
+      const tickedItems = db.prepare(`
+        SELECT id, quantity, is_auto_generated
+        FROM shopping_list_items
+        WHERE family_id = ? AND is_completed = 1 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
+        ORDER BY created_at ASC
+      `).all(familyId, item.id, item.name) as Array<{ id: string; quantity: number; is_auto_generated: number }>;
+
+      if (triggerMode === 'none') {
+        // Remove any auto-generated uncompleted shopping entries
+        for (const act of activeItems) {
+          if (act.is_auto_generated) {
+            db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(act.id);
+          }
+        }
+        continue;
+      }
+
+      // Condition 1: Low stock
+      const isLowStock = (triggerMode === 'low_stock' || triggerMode === 'low_stock_and_expiry') && currentQty <= lowThreshold;
+
+      // Condition 2: Zero stock
+      const isZeroStock = triggerMode === 'zero_stock' && currentQty <= 0;
+
+      // Condition 3: Before expiry
+      let isExpiringSoon = false;
+      let daysUntilExpiry: number | null = null;
+      if ((triggerMode === 'before_expiry' || triggerMode === 'low_stock_and_expiry') && item.earliest_expiry_date) {
+        const expDate = new Date(item.earliest_expiry_date + 'T00:00:00Z');
+        const diffTime = expDate.getTime() - todayDate.getTime();
+        daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (daysUntilExpiry <= expiryDays) {
+          isExpiringSoon = true;
+        }
+      }
+
+      const isTriggered = isLowStock || isZeroStock || isExpiringSoon;
+
+      // Calculate required quantity & informative trigger reason
+      let neededQty = 1;
+      let triggerReason = 'Auto added: stock replenishment';
+      if (isLowStock && isExpiringSoon) {
+        neededQty = Math.max(1, targetStock - currentQty);
+        triggerReason = `Auto added: low stock (${currentQty}/${targetStock} ${item.unit}) & expiring ${daysUntilExpiry! <= 0 ? 'today/expired' : 'in ' + daysUntilExpiry + 'd'}`;
+      } else if (isLowStock) {
+        neededQty = Math.max(1, targetStock - currentQty);
+        triggerReason = `Auto added: low stock (${currentQty}/${targetStock} ${item.unit})`;
+      } else if (isZeroStock) {
+        neededQty = Math.max(1, targetStock > 0 ? targetStock : 1);
+        triggerReason = `Auto added: zero stock (${targetStock} ${item.unit} target)`;
+      } else if (isExpiringSoon) {
+        neededQty = Math.max(1, targetStock > currentQty ? targetStock - currentQty : (targetStock > 0 ? targetStock : 1));
+        triggerReason = `Auto added: expiring ${daysUntilExpiry! <= 0 ? 'today/expired' : 'in ' + daysUntilExpiry + 'd'} (${item.earliest_expiry_date})`;
+      }
+
+      const totalTickedQty = tickedItems.reduce((sum, t) => sum + Number(t.quantity || 0), 0);
+
+      if (isTriggered) {
+        if (tickedItems.length > 0) {
+          // A ticked item is already present (purchased, awaiting physical Add Stock confirmation)
+          if (neededQty > totalTickedQty) {
+            const deltaNeeded = neededQty - totalTickedQty;
+            if (activeItems.length > 0) {
+              db.prepare(`
+                UPDATE shopping_list_items
+                SET quantity = ?, unit = ?, category = ?, stock_item_id = ?, notes = ?, updated_at = ?
+                WHERE id = ?
+              `).run(deltaNeeded, item.unit, item.category, item.id, triggerReason, now, activeItems[0].id);
+
+              for (let i = 1; i < activeItems.length; i++) {
+                db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(activeItems[i].id);
+              }
+            } else {
+              const shopId = 'shop_' + uuidv4().slice(0, 8);
+              db.prepare(`
+                INSERT INTO shopping_list_items (id, family_id, stock_item_id, name, quantity, unit, category, is_completed, is_auto_generated, notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)
+              `).run(shopId, familyId, item.id, item.name, deltaNeeded, item.unit, item.category, triggerReason, now, now);
+            }
+          } else {
+            // Ticked purchased items fully satisfy the target quantity; clean up active duplicates
+            for (const act of activeItems) {
+              if (act.is_auto_generated) {
+                db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(act.id);
+              }
+            }
+          }
+        } else {
+          // No ticked item: synchronize the single active requirement
+          if (activeItems.length > 0) {
+            db.prepare(`
+              UPDATE shopping_list_items
+              SET quantity = ?, unit = ?, category = ?, stock_item_id = ?, notes = ?, updated_at = ?
+              WHERE id = ?
+            `).run(neededQty, item.unit, item.category, item.id, triggerReason, now, activeItems[0].id);
+
+            // Clean up any extraneous active duplicates
+            for (let i = 1; i < activeItems.length; i++) {
+              db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(activeItems[i].id);
+            }
+          } else {
+            const shopId = 'shop_' + uuidv4().slice(0, 8);
+            db.prepare(`
+              INSERT INTO shopping_list_items (id, family_id, stock_item_id, name, quantity, unit, category, is_completed, is_auto_generated, notes, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)
+            `).run(shopId, familyId, item.id, item.name, neededQty, item.unit, item.category, triggerReason, now, now);
+          }
+        }
+      } else {
+        // Not triggered: remove auto-generated active item if stock is satisfied (or >= target)
+        for (const act of activeItems) {
+          if (act.is_auto_generated) {
+            db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(act.id);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('evaluateStockShoppingTriggers error:', err);
+  }
+}
+
+/**
  * Get all stock items for a family.
  * MANDATORY REQUIREMENT: Stock items are ALWAYS sorted A–Z by the canonical stock item name.
  */
 export function getStockItems(familyId: string) {
+  evaluateStockShoppingTriggers(familyId);
+
   const items = db.prepare(`
     SELECT * FROM stock_items
     WHERE family_id = ?
@@ -1369,7 +1550,10 @@ export function createStockItem(familyId: string, data: {
   quantity?: number;
   unit?: string;
   low_stock_threshold?: number;
+  target_stock?: number;
   restock_target?: number;
+  shopping_trigger?: string;
+  expiry_days_threshold?: number;
   auto_add_to_shopping?: boolean | number;
   earliest_expiry_date?: string | null;
   location?: string | null;
@@ -1385,21 +1569,25 @@ export function createStockItem(familyId: string, data: {
   const quantity = Math.max(0, Number(data.quantity) || 0);
   const unit = data.unit || 'packs';
   const lowThreshold = data.low_stock_threshold !== undefined ? Number(data.low_stock_threshold) : 1;
-  const restockTarget = data.restock_target !== undefined ? Math.max(lowThreshold + 1, Number(data.restock_target)) : Math.max(2, lowThreshold * 2);
-  const autoAddToShopping = data.auto_add_to_shopping !== undefined ? (data.auto_add_to_shopping ? 1 : 0) : 1;
+  const targetStock = data.target_stock !== undefined ? Math.max(1, Number(data.target_stock)) : (data.restock_target !== undefined ? Math.max(1, Number(data.restock_target)) : Math.max(2, lowThreshold * 2));
+  const shoppingTrigger = data.shopping_trigger || (data.auto_add_to_shopping === 0 || data.auto_add_to_shopping === false ? 'none' : 'low_stock');
+  const expiryDaysThreshold = data.expiry_days_threshold !== undefined ? Math.max(0, Number(data.expiry_days_threshold)) : 2;
+  const autoAddToShopping = shoppingTrigger !== 'none' ? 1 : 0;
   const expiry = data.earliest_expiry_date || null;
   const location = data.location || null;
   const notes = data.notes || null;
   const isFavorite = data.is_favorite ? 1 : 0;
 
   db.prepare(`
-    INSERT INTO stock_items (id, family_id, name, category, quantity, unit, low_stock_threshold, restock_target, auto_add_to_shopping, earliest_expiry_date, location, notes, is_favorite, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, familyId, name, category, quantity, unit, lowThreshold, restockTarget, autoAddToShopping, expiry, location, notes, isFavorite, now, now);
+    INSERT INTO stock_items (id, family_id, name, category, quantity, unit, low_stock_threshold, target_stock, restock_target, shopping_trigger, expiry_days_threshold, auto_add_to_shopping, earliest_expiry_date, location, notes, is_favorite, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, familyId, name, category, quantity, unit, lowThreshold, targetStock, targetStock, shoppingTrigger, expiryDaysThreshold, autoAddToShopping, expiry, location, notes, isFavorite, now, now);
 
   if (data.barcode && data.barcode.trim()) {
     addBarcodeToStockItem(familyId, id, data.barcode.trim(), data.brand_or_label);
   }
+
+  evaluateStockShoppingTriggers(familyId);
 
   return getStockItemById(familyId, id);
 }
@@ -1410,7 +1598,10 @@ export function updateStockItem(familyId: string, id: string, data: {
   quantity?: number;
   unit?: string;
   low_stock_threshold?: number;
+  target_stock?: number;
   restock_target?: number;
+  shopping_trigger?: string;
+  expiry_days_threshold?: number;
   auto_add_to_shopping?: boolean | number;
   earliest_expiry_date?: string | null;
   location?: string | null;
@@ -1425,9 +1616,11 @@ export function updateStockItem(familyId: string, id: string, data: {
   const category = data.category !== undefined ? data.category : existing.category;
   const quantity = data.quantity !== undefined ? Math.max(0, Number(data.quantity)) : existing.quantity;
   const unit = data.unit !== undefined ? data.unit : existing.unit;
-  const lowThreshold = data.low_stock_threshold !== undefined ? Number(data.low_stock_threshold) : existing.low_stock_threshold;
-  const restockTarget = data.restock_target !== undefined ? Number(data.restock_target) : (existing.restock_target || Math.max(2, lowThreshold * 2));
-  const autoAddToShopping = data.auto_add_to_shopping !== undefined ? (data.auto_add_to_shopping ? 1 : 0) : (existing.auto_add_to_shopping !== undefined ? (existing.auto_add_to_shopping ? 1 : 0) : 1);
+  const lowThreshold = data.low_stock_threshold !== undefined ? Number(data.low_stock_threshold) : (existing.low_stock_threshold ?? 1);
+  const targetStock = data.target_stock !== undefined ? Math.max(1, Number(data.target_stock)) : (data.restock_target !== undefined ? Math.max(1, Number(data.restock_target)) : (existing.target_stock || existing.restock_target || Math.max(2, lowThreshold * 2)));
+  const shoppingTrigger = data.shopping_trigger !== undefined ? data.shopping_trigger : (data.auto_add_to_shopping !== undefined ? (data.auto_add_to_shopping ? 'low_stock' : 'none') : (existing.shopping_trigger || 'low_stock'));
+  const expiryDaysThreshold = data.expiry_days_threshold !== undefined ? Math.max(0, Number(data.expiry_days_threshold)) : (existing.expiry_days_threshold ?? 2);
+  const autoAddToShopping = shoppingTrigger !== 'none' ? 1 : 0;
   const expiry = data.earliest_expiry_date !== undefined ? data.earliest_expiry_date : existing.earliest_expiry_date;
   const location = data.location !== undefined ? data.location : existing.location;
   const notes = data.notes !== undefined ? data.notes : existing.notes;
@@ -1435,9 +1628,11 @@ export function updateStockItem(familyId: string, id: string, data: {
 
   db.prepare(`
     UPDATE stock_items
-    SET name = ?, category = ?, quantity = ?, unit = ?, low_stock_threshold = ?, restock_target = ?, auto_add_to_shopping = ?, earliest_expiry_date = ?, location = ?, notes = ?, is_favorite = ?, updated_at = ?
+    SET name = ?, category = ?, quantity = ?, unit = ?, low_stock_threshold = ?, target_stock = ?, restock_target = ?, shopping_trigger = ?, expiry_days_threshold = ?, auto_add_to_shopping = ?, earliest_expiry_date = ?, location = ?, notes = ?, is_favorite = ?, updated_at = ?
     WHERE id = ? AND family_id = ?
-  `).run(name, category, quantity, unit, lowThreshold, restockTarget, autoAddToShopping, expiry, location, notes, isFavorite, now, id, familyId);
+  `).run(name, category, quantity, unit, lowThreshold, targetStock, targetStock, shoppingTrigger, expiryDaysThreshold, autoAddToShopping, expiry, location, notes, isFavorite, now, id, familyId);
+
+  evaluateStockShoppingTriggers(familyId);
 
   return getStockItemById(familyId, id);
 }
@@ -1505,115 +1700,18 @@ export function adjustStockItemQuantity(
     now
   );
 
-  // AUTOMATIC SHOPPING LIST SYNCHRONIZATION
-  // Rule: Low stock / Automatic Shopping & Ticked State Management
-  const lowThreshold = item.low_stock_threshold ?? 1;
-  const restockTarget = item.restock_target ?? Math.max(lowThreshold + 1, lowThreshold * 2);
-  const autoAddEnabled = item.auto_add_to_shopping !== 0;
-
-  if (options.action === 'use') {
-    if (newQuantity <= lowThreshold && autoAddEnabled) {
-      // Calculate total required restock quantity to reach target
-      const requiredRestockQty = Math.max(1, restockTarget - newQuantity);
-
-      // Check if an uncompleted (active) shopping list item for this stock item already exists
-      const activeShopItem = db.prepare(`
-        SELECT id, quantity, is_auto_generated
-        FROM shopping_list_items
-        WHERE family_id = ? AND is_completed = 0 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
-        ORDER BY created_at DESC
-        LIMIT 1
-      `).get(familyId, item.id, item.name) as { id: string; quantity: number; is_auto_generated: number } | undefined;
-
-      // Check if a ticked (purchased but pending Add Stock confirmation) shopping item exists
-      const tickedShopItem = db.prepare(`
-        SELECT id, quantity, is_auto_generated
-        FROM shopping_list_items
-        WHERE family_id = ? AND is_completed = 1 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
-        ORDER BY created_at DESC
-        LIMIT 1
-      `).get(familyId, item.id, item.name) as { id: string; quantity: number; is_auto_generated: number } | undefined;
-
-      if (activeShopItem) {
-        // Update required quantity rather than creating duplicate shopping entries
-        db.prepare(`
-          UPDATE shopping_list_items
-          SET quantity = ?, unit = ?, category = ?, stock_item_id = ?, updated_at = ?
-          WHERE id = ?
-        `).run(requiredRestockQty, item.unit, item.category, item.id, now, activeShopItem.id);
-      } else if (tickedShopItem) {
-        // A ticked item already exists (temporary purchased / pending-stock state).
-        // Do NOT duplicate if the ticked item already covers this requirement.
-        // If the user used even more and the restock needed exceeds the ticked amount, add only the delta as active.
-        if (requiredRestockQty > tickedShopItem.quantity) {
-          const additionalNeeded = requiredRestockQty - tickedShopItem.quantity;
-          const shopId = 'shop_' + uuidv4().slice(0, 8);
-          db.prepare(`
-            INSERT INTO shopping_list_items (id, family_id, stock_item_id, name, quantity, unit, category, is_completed, is_auto_generated, notes, added_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 'Auto added: low household stock', ?, ?, ?)
-          `).run(shopId, familyId, item.id, item.name, additionalNeeded, item.unit, item.category, options.member_id || null, now, now);
-        }
-      } else {
-        // Neither active nor ticked exists: insert new active shopping list item
-        const shopId = 'shop_' + uuidv4().slice(0, 8);
-        db.prepare(`
-          INSERT INTO shopping_list_items (id, family_id, stock_item_id, name, quantity, unit, category, is_completed, is_auto_generated, notes, added_by, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 'Auto added: low household stock', ?, ?, ?)
-        `).run(shopId, familyId, item.id, item.name, requiredRestockQty, item.unit, item.category, options.member_id || null, now, now);
-      }
-    }
-  } else if (options.action === 'add' || options.action === 'set' || options.action === 'shopping_purchase') {
-    // When Stock is replenished using "Add Stock":
-    // 1. Remove/archive any matching ticked/purchased Shopping List items for this canonical stock item
+  // ADD STOCK IS THE PHYSICAL CONFIRMATION:
+  // When Stock is replenished (Add Stock, Set, or Shopping Purchase):
+  // 1. Remove/resolve any matching ticked/purchased Shopping List items for this canonical stock item
+  if (options.action === 'add' || options.action === 'set' || options.action === 'shopping_purchase') {
     db.prepare(`
       DELETE FROM shopping_list_items
       WHERE family_id = ? AND is_completed = 1 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
     `).run(familyId, item.id, item.name);
-
-    // 2. Recalculate the stock requirement using the low-stock threshold and restock target
-    const remainingRequired = restockTarget - newQuantity;
-
-    // Find any active (uncompleted) shopping list items for this stock item
-    const activeItems = db.prepare(`
-      SELECT id, quantity, is_auto_generated
-      FROM shopping_list_items
-      WHERE family_id = ? AND is_completed = 0 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
-      ORDER BY created_at ASC
-    `).all(familyId, item.id, item.name) as Array<{ id: string; quantity: number; is_auto_generated: number }>;
-
-    if (newQuantity >= restockTarget || remainingRequired <= 0) {
-      // If Stock is now at or above the restock target, there should be NO active Shopping List entry for that stock item.
-      for (const act of activeItems) {
-        db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(act.id);
-      }
-    } else {
-      // If Stock is still below the restock target, create/update ONLY the remaining required quantity as an active Shopping List entry.
-      // Never duplicate the same shopping requirement.
-      if (autoAddEnabled) {
-        const neededQty = Math.max(1, remainingRequired);
-        if (activeItems.length > 0) {
-          const first = activeItems[0];
-          db.prepare(`
-            UPDATE shopping_list_items
-            SET quantity = ?, unit = ?, category = ?, stock_item_id = ?, updated_at = ?
-            WHERE id = ?
-          `).run(neededQty, item.unit, item.category, item.id, now, first.id);
-
-          // Clean up any extra duplicate active entries if present
-          for (let i = 1; i < activeItems.length; i++) {
-            db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(activeItems[i].id);
-          }
-        } else {
-          // Create an active entry for only the remaining needed quantity
-          const shopId = 'shop_' + uuidv4().slice(0, 8);
-          db.prepare(`
-            INSERT INTO shopping_list_items (id, family_id, stock_item_id, name, quantity, unit, category, is_completed, is_auto_generated, notes, added_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 'Auto added: low household stock', ?, ?, ?)
-          `).run(shopId, familyId, item.id, item.name, neededQty, item.unit, item.category, options.member_id || null, now, now);
-        }
-      }
-    }
   }
+
+  // 2. Synchronize triggers and recalculate remaining shopping list requirements
+  evaluateStockShoppingTriggers(familyId);
 
   return getStockItemById(familyId, id);
 }
@@ -1662,6 +1760,8 @@ export function removeBarcodeFromStockItem(familyId: string, barcodeId: string) 
 // ==========================================
 
 export function getShoppingListItems(familyId: string) {
+  evaluateStockShoppingTriggers(familyId);
+
   const items = db.prepare(`
     SELECT s.*, si.name as stock_item_name, si.quantity as stock_item_quantity, si.unit as stock_item_unit
     FROM shopping_list_items s

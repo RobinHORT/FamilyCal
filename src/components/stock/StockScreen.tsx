@@ -153,6 +153,13 @@ export const StockScreen: React.FC = () => {
   // Derived low stock items count
   const lowStockItems = useMemo(() => {
     return stockItems.filter((item) => {
+      const trigger = item.shopping_trigger || 'low_stock';
+      if (trigger === 'zero_stock') {
+        return item.quantity <= 0;
+      }
+      if (trigger === 'none') {
+        return false;
+      }
       const threshold = item.low_stock_threshold ?? 1;
       return item.quantity <= threshold;
     });
@@ -229,16 +236,18 @@ export const StockScreen: React.FC = () => {
   const handleAddStockItemToShoppingList = async (item: StockItem, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
+      const target = item.target_stock ?? item.restock_target ?? Math.max(2, (item.low_stock_threshold || 1) * 2);
+      const neededQty = Math.max(1, target - item.quantity);
       await api.addShoppingListItem({
         name: item.name,
-        quantity: 1,
+        quantity: neededQty,
         unit: item.unit,
         category: item.category,
         stock_item_id: item.id,
-        notes: `Restock pantry (Current: ${item.quantity} ${item.unit})`,
+        notes: `Restock requirement (Target: ${target}, Current: ${item.quantity} ${item.unit})`,
       });
       loadData();
-      alert(`Added "${item.name}" to Shopping List!`);
+      alert(`Added "${item.name}" (${neededQty} ${item.unit}) to Shopping List!`);
     } catch (err: any) {
       alert(`Error adding to shopping list: ${err.message}`);
     }
@@ -253,13 +262,15 @@ export const StockScreen: React.FC = () => {
           (s) => !s.is_completed && (s.stock_item_id === item.id || s.name.toLowerCase() === item.name.toLowerCase())
         );
         if (!alreadyInList) {
+          const target = item.target_stock ?? item.restock_target ?? Math.max(2, (item.low_stock_threshold || 1) * 2);
+          const neededQty = Math.max(1, target - item.quantity);
           await api.addShoppingListItem({
             name: item.name,
-            quantity: Math.max(1, (item.low_stock_threshold || 1) * 2 - item.quantity),
+            quantity: neededQty,
             unit: item.unit,
             category: item.category,
             stock_item_id: item.id,
-            notes: `Auto low stock replenishment`,
+            notes: `Auto low stock replenishment (Target: ${target}, Current: ${item.quantity})`,
           });
         }
       }
@@ -632,7 +643,14 @@ export const StockScreen: React.FC = () => {
           {filteredStockItems.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
               {filteredStockItems.map((item) => {
-                const isLow = item.quantity <= (item.low_stock_threshold ?? 1);
+                const trigger = item.shopping_trigger || 'low_stock';
+                const isZeroTrigger = trigger === 'zero_stock';
+                const isLow = isZeroTrigger
+                  ? item.quantity === 0
+                  : trigger === 'none'
+                  ? false
+                  : item.quantity <= (item.low_stock_threshold ?? 1);
+                const targetStockVal = item.target_stock ?? item.restock_target ?? 2;
                 const isExpanded = expandedBarcodesItemId === item.id;
                 const barcodeCount = item.barcodes?.length || 0;
 
@@ -705,14 +723,33 @@ export const StockScreen: React.FC = () => {
                         </div>
 
                         {/* Status Badges */}
-                        <div className="flex items-center gap-1.5">
-                          {isLow && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {item.quantity === 0 && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-red-100 text-red-900 border border-red-200">
+                              <AlertTriangle className="w-3 h-3 text-red-700" /> Out of Stock
+                            </span>
+                          )}
+                          {isLow && item.quantity > 0 && (
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
                               <AlertTriangle className="w-3 h-3 text-amber-700" /> Low Stock
                             </span>
                           )}
                           {getExpiryBadge(item.earliest_expiry_date)}
                         </div>
+                      </div>
+
+                      {/* Target Stock & Shopping Trigger Summary */}
+                      <div className="flex items-center justify-between text-[11px] text-gray-500 bg-gray-50/80 border border-gray-100 rounded-xl px-2.5 py-1.5">
+                        <span className="font-medium text-gray-700">
+                          Target: <span className="font-bold text-gray-900">{targetStockVal} {item.unit}</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200/80 px-1.5 py-0.5 rounded-md">
+                          {trigger === 'low_stock' && `Auto: ≤ ${item.low_stock_threshold ?? 1}`}
+                          {trigger === 'zero_stock' && 'Auto: Zero Stock'}
+                          {trigger === 'before_expiry' && `Auto: Exp (${item.expiry_days_threshold ?? 2}d)`}
+                          {trigger === 'low_stock_and_expiry' && `Auto: Low + Exp (${item.expiry_days_threshold ?? 2}d)`}
+                          {trigger === 'none' && 'Manual'}
+                        </span>
                       </div>
 
                       {/* Notes snippet if present */}
@@ -723,7 +760,7 @@ export const StockScreen: React.FC = () => {
                       )}
 
                       {/* Barcode mapping summary toggle */}
-                      <div className="pt-1">
+                      <div className="pt-0.5">
                         <button
                           type="button"
                           onClick={() => setExpandedBarcodesItemId(isExpanded ? null : item.id)}
@@ -935,6 +972,11 @@ export const StockScreen: React.FC = () => {
                             Pantry Linked
                           </span>
                         )}
+                        {item.is_completed ? (
+                          <span className="inline-flex items-center gap-0.5 text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded text-[10px] font-semibold">
+                            Purchased (Scan Add Stock to confirm)
+                          </span>
+                        ) : null}
                         {item.notes && <span className="italic text-gray-400">"{item.notes}"</span>}
                       </div>
                     </div>

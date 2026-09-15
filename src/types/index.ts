@@ -212,6 +212,8 @@ export interface GoogleConfigResponse {
 }
 
 // Stock & Inventory Types
+export type ShoppingTriggerMode = 'low_stock' | 'zero_stock' | 'before_expiry' | 'low_stock_and_expiry' | 'none';
+
 export interface StockBarcode {
   id: string;
   family_id: string;
@@ -231,7 +233,10 @@ export interface StockItem {
   quantity: number;
   unit: string;
   low_stock_threshold: number;
+  target_stock?: number;
   restock_target?: number;
+  shopping_trigger?: ShoppingTriggerMode;
+  expiry_days_threshold?: number;
   auto_add_to_shopping?: boolean | number;
   earliest_expiry_date?: string | null;
   location?: string | null;

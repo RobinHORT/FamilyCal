@@ -13,8 +13,11 @@ import {
   Star,
   Link,
   Sparkles,
+  Clock,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
-import { StockItem, STOCK_CATEGORIES, STOCK_UNITS } from '../../types';
+import { StockItem, ShoppingTriggerMode, STOCK_CATEGORIES, STOCK_UNITS } from '../../types';
 import { api } from '../../api/client';
 
 interface StockItemModalProps {
@@ -37,8 +40,9 @@ export const StockItemModal: React.FC<StockItemModalProps> = ({
   const [quantity, setQuantity] = useState<number>(1);
   const [unit, setUnit] = useState('packs');
   const [lowStockThreshold, setLowStockThreshold] = useState<number>(1);
-  const [restockTarget, setRestockTarget] = useState<number>(2);
-  const [autoAddToShopping, setAutoAddToShopping] = useState<boolean>(true);
+  const [targetStock, setTargetStock] = useState<number>(2);
+  const [shoppingTrigger, setShoppingTrigger] = useState<ShoppingTriggerMode>('low_stock');
+  const [expiryDaysThreshold, setExpiryDaysThreshold] = useState<number>(2);
   const [earliestExpiryDate, setEarliestExpiryDate] = useState('');
   const [location, setLocation] = useState('');
   const [notes, setNotes] = useState('');
@@ -65,8 +69,10 @@ export const StockItemModal: React.FC<StockItemModalProps> = ({
       setQuantity(item.quantity);
       setUnit(item.unit || 'packs');
       setLowStockThreshold(item.low_stock_threshold ?? 1);
-      setRestockTarget(item.restock_target ?? Math.max(2, (item.low_stock_threshold ?? 1) * 2));
-      setAutoAddToShopping(item.auto_add_to_shopping !== false && item.auto_add_to_shopping !== 0);
+      setTargetStock(item.target_stock ?? item.restock_target ?? Math.max(2, (item.low_stock_threshold ?? 1) * 2));
+      const initialTrigger: ShoppingTriggerMode = item.shopping_trigger || (item.auto_add_to_shopping === 0 || item.auto_add_to_shopping === false ? 'none' : 'low_stock');
+      setShoppingTrigger(initialTrigger);
+      setExpiryDaysThreshold(item.expiry_days_threshold ?? 2);
       setEarliestExpiryDate(item.earliest_expiry_date || '');
       setLocation(item.location || '');
       setNotes(item.notes || '');
@@ -79,8 +85,9 @@ export const StockItemModal: React.FC<StockItemModalProps> = ({
       setQuantity(1);
       setUnit('packs');
       setLowStockThreshold(1);
-      setRestockTarget(2);
-      setAutoAddToShopping(true);
+      setTargetStock(2);
+      setShoppingTrigger('low_stock');
+      setExpiryDaysThreshold(2);
       setEarliestExpiryDate('');
       setLocation('Pantry');
       setNotes('');
@@ -114,8 +121,11 @@ export const StockItemModal: React.FC<StockItemModalProps> = ({
           quantity,
           unit,
           low_stock_threshold: lowStockThreshold,
-          restock_target: restockTarget,
-          auto_add_to_shopping: autoAddToShopping,
+          target_stock: targetStock,
+          restock_target: targetStock,
+          shopping_trigger: shoppingTrigger,
+          expiry_days_threshold: expiryDaysThreshold,
+          auto_add_to_shopping: shoppingTrigger !== 'none',
           earliest_expiry_date: earliestExpiryDate || null,
           location: location || null,
           notes: notes || null,
@@ -129,8 +139,11 @@ export const StockItemModal: React.FC<StockItemModalProps> = ({
           quantity,
           unit,
           low_stock_threshold: lowStockThreshold,
-          restock_target: restockTarget,
-          auto_add_to_shopping: autoAddToShopping,
+          target_stock: targetStock,
+          restock_target: targetStock,
+          shopping_trigger: shoppingTrigger,
+          expiry_days_threshold: expiryDaysThreshold,
+          auto_add_to_shopping: shoppingTrigger !== 'none',
           earliest_expiry_date: earliestExpiryDate || null,
           location: location || null,
           notes: notes || null,
@@ -340,11 +353,27 @@ export const StockItemModal: React.FC<StockItemModalProps> = ({
             </div>
           </div>
 
-          {/* Low Stock Alert Threshold & Restock Target */}
+          {/* Target Stock & Low Stock Threshold */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> Low Stock Alert At
+                <Package className="w-3.5 h-3.5 text-blue-500" /> Target Stock *
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="any"
+                value={targetStock}
+                onChange={(e) => setTargetStock(Math.max(1, Number(e.target.value)))}
+                placeholder="2"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 font-medium"
+              />
+              <p className="text-[10px] text-gray-400 mt-0.5">Quantity to keep on hand</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> Low-Stock Threshold
               </label>
               <input
                 type="number"
@@ -355,41 +384,100 @@ export const StockItemModal: React.FC<StockItemModalProps> = ({
                 placeholder="1"
                 className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 font-medium"
               />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1">
-                <Package className="w-3.5 h-3.5 text-blue-500" /> Restock Target
-              </label>
-              <input
-                type="number"
-                min="1"
-                step="any"
-                value={restockTarget}
-                onChange={(e) => setRestockTarget(Math.max(1, Number(e.target.value)))}
-                placeholder="2"
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 font-medium"
-              />
+              <p className="text-[10px] text-gray-400 mt-0.5">Triggers restock when ≤ this</p>
             </div>
           </div>
 
-          {/* Auto-Add to Shopping List Toggle */}
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-purple-50/60 border border-purple-100">
-            <div>
-              <span className="text-xs font-bold text-purple-900 block">Auto-add to Shopping List</span>
-              <span className="text-[10px] text-purple-700 font-medium">
-                When stock falls to/below {lowStockThreshold}, automatically calculate needed restock ({Math.max(1, restockTarget - lowStockThreshold)} {unit})
+          {/* Shopping Trigger Configuration */}
+          <div className="p-3.5 rounded-2xl bg-purple-50/60 border border-purple-100 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-purple-950 flex items-center gap-1.5">
+                <RefreshCw className="w-3.5 h-3.5 text-purple-600" /> Shopping List Trigger
+              </label>
+              <span className="text-[10px] font-semibold text-purple-700 uppercase tracking-wider">
+                Automated Replenishment
               </span>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoAddToShopping}
-                onChange={(e) => setAutoAddToShopping(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
-            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-semibold text-purple-900 mb-1">Trigger Condition</label>
+                <select
+                  value={shoppingTrigger}
+                  onChange={(e) => setShoppingTrigger(e.target.value as ShoppingTriggerMode)}
+                  className="w-full bg-white border border-purple-200 rounded-xl px-3 py-1.5 text-xs text-gray-900 font-medium focus:outline-none focus:border-purple-600 cursor-pointer h-[34px]"
+                >
+                  <option value="low_stock">Low Stock (≤ {lowStockThreshold} {unit})</option>
+                  <option value="zero_stock">Zero-Stock Mode (reaches 0)</option>
+                  <option value="before_expiry">Before Expiry Date</option>
+                  <option value="low_stock_and_expiry">Low Stock OR Before Expiry</option>
+                  <option value="none">None (Manual tracking only)</option>
+                </select>
+              </div>
+
+              {(shoppingTrigger === 'before_expiry' || shoppingTrigger === 'low_stock_and_expiry') ? (
+                <div>
+                  <label className="block text-[11px] font-semibold text-purple-900 mb-1 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-purple-600" /> Days Before Expiry
+                  </label>
+                  <div className="flex items-center bg-white border border-purple-200 rounded-xl px-3 py-1.5 h-[34px]">
+                    <input
+                      type="number"
+                      min="0"
+                      max="90"
+                      value={expiryDaysThreshold}
+                      onChange={(e) => setExpiryDaysThreshold(Math.max(0, Number(e.target.value)))}
+                      className="w-full text-xs text-gray-900 font-bold focus:outline-none"
+                    />
+                    <span className="text-[11px] text-purple-700 font-medium pl-1">days</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center text-[11px] text-purple-700 bg-white/70 border border-purple-100 rounded-xl px-3 py-1.5 h-[34px]">
+                  {shoppingTrigger === 'low_stock' && `Triggers when quantity ≤ ${lowStockThreshold}`}
+                  {shoppingTrigger === 'zero_stock' && 'Triggers when quantity reaches 0'}
+                  {shoppingTrigger === 'none' && 'Item will not auto-add to shopping list'}
+                </div>
+              )}
+            </div>
+
+            {/* Live Calculation Formula Explanation */}
+            <div className="bg-white/80 border border-purple-100 rounded-xl p-2.5 text-[11px] space-y-1">
+              <div className="text-purple-900 font-semibold flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-purple-600" />
+                <span>Replenishment Rule:</span>
+              </div>
+              <div className="text-purple-800 text-[10.5px] leading-relaxed">
+                {shoppingTrigger === 'low_stock' && (
+                  <>
+                    When stock falls to/below <span className="font-bold">{lowStockThreshold} {unit}</span>, Shopping List requires <span className="font-bold text-purple-950">{Math.max(1, targetStock - lowStockThreshold)} {unit}</span> (Target {targetStock} - Current).
+                  </>
+                )}
+                {shoppingTrigger === 'zero_stock' && (
+                  <>
+                    When stock reaches <span className="font-bold">0</span>, Shopping List automatically adds <span className="font-bold text-purple-950">{targetStock} {unit}</span> (full Target Stock).
+                  </>
+                )}
+                {shoppingTrigger === 'before_expiry' && (
+                  <>
+                    When within <span className="font-bold">{expiryDaysThreshold} days</span> of expiry ({earliestExpiryDate || 'date set'}), adds <span className="font-bold text-purple-950">{Math.max(1, targetStock > quantity ? targetStock - quantity : targetStock)} {unit}</span> to Shopping List while keeping Stock intact.
+                  </>
+                )}
+                {shoppingTrigger === 'low_stock_and_expiry' && (
+                  <>
+                    Either low stock (≤ <span className="font-bold">{lowStockThreshold}</span>) OR expiring within <span className="font-bold">{expiryDaysThreshold} days</span> adds <span className="font-bold text-purple-950">{Math.max(1, targetStock - quantity)} {unit}</span> to Shopping List (single canonical entry).
+                  </>
+                )}
+                {shoppingTrigger === 'none' && (
+                  <>
+                    Manual tracking only. This item will not be automatically generated on the household Shopping List.
+                  </>
+                )}
+              </div>
+              <p className="text-[10px] text-gray-500 pt-0.5 border-t border-purple-100/60">
+                Ticking an item in Shopping List marks it as purchased. Adding stock physically confirms and updates inventory.
+              </p>
+            </div>
           </div>
 
           {/* Location & Expiry Date */}
