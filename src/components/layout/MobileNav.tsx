@@ -28,7 +28,6 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activeTab, setActiveTab })
 
   const allTabs = [
     { id: 'calendar', label: 'Calendar', icon: Calendar },
-    { id: 'family', label: 'Family', icon: Users },
     { id: 'tasks', label: 'Tasks', icon: CheckSquare },
     { id: 'stock', label: 'Stock', icon: Package },
     { id: 'notifications', label: 'Notifications', icon: Bell },
@@ -36,7 +35,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activeTab, setActiveTab })
   ] as const;
 
   const tabs = isViewer
-    ? allTabs.filter((t) => t.id === 'calendar' || t.id === 'tasks' || t.id === 'stock')
+    ? allTabs.filter((t) => t.id === 'calendar' || t.id === 'tasks')
     : allTabs;
 
   return (

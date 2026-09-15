@@ -29,6 +29,14 @@ export const QuickAdjustModal: React.FC<QuickAdjustModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  React.useEffect(() => {
+    if (isOpen && item) {
+      setAmount(1);
+      setExpiryDate(item.earliest_expiry_date || '');
+      setError(null);
+    }
+  }, [isOpen, item]);
+
   if (!isOpen || !item) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -147,19 +155,22 @@ export const QuickAdjustModal: React.FC<QuickAdjustModalProps> = ({
             </div>
           </div>
 
-          {mode === 'add' && (
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
-                Expiry Date of Newly Added Item (Optional)
-              </label>
-              <input
-                type="date"
-                value={expiryDate}
-                onChange={(e) => setExpiryDate(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 cursor-pointer font-medium"
-              />
-            </div>
-          )}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              {mode === 'add' ? 'Expiry Date of Newly Added Item (Optional)' : 'Expiry Date (Optional)'}
+            </label>
+            <input
+              type="date"
+              value={expiryDate}
+              onChange={(e) => setExpiryDate(e.target.value)}
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 cursor-pointer font-medium"
+            />
+            {item.earliest_expiry_date && (
+              <p className="text-[11px] text-gray-500 mt-1">
+                Existing registered expiry: <strong>{item.earliest_expiry_date}</strong> (preserved unless modified).
+              </p>
+            )}
+          </div>
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-100">
             <button

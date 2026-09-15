@@ -23,12 +23,20 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { EditCalendarModal } from '../calendar/EditCalendarModal';
+import { FamilyView } from '../family/FamilyView';
 import { Calendar } from '../../types';
 import { getPastelColorInfo } from '../../utils/colors';
 
-export const IntegrationsView: React.FC = () => {
+export type SettingsSubTab = 'integrations' | 'family';
+
+interface IntegrationsViewProps {
+  initialTab?: SettingsSubTab;
+}
+
+export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab = 'integrations' }) => {
   const { calendars, updateCalendar, fetchCalendarData } = useCalendar();
-  const { members, colorSoftness, updateColorSoftness } = useFamily();
+  const { family, members, colorSoftness, updateColorSoftness } = useFamily();
+  const [subTab, setSubTab] = useState<SettingsSubTab>(initialTab);
   const [googleConfig, setGoogleConfig] = useState<GoogleConfigResponse | null>(null);
   const [syncLogs, setSyncLogs] = useState<GoogleSyncLog[]>([]);
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
@@ -37,6 +45,12 @@ export const IntegrationsView: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [updatingCalId, setUpdatingCalId] = useState<string | null>(null);
   const [editingCalendar, setEditingCalendar] = useState<Calendar | null>(null);
+
+  useEffect(() => {
+    if (initialTab) {
+      setSubTab(initialTab);
+    }
+  }, [initialTab]);
 
   const loadAll = async () => {
     setIsLoading(true);
@@ -135,26 +149,98 @@ export const IntegrationsView: React.FC = () => {
   const connectedAccounts = googleConfig?.connectedAccounts || [];
 
   return (
-    <div id="integrations-view-container" className="flex flex-col flex-1 max-w-5xl mx-auto w-full space-y-6 pb-12">
-      {/* View Header */}
-      <div className="pb-4 border-b border-gray-200">
-        <h2 className="text-2xl font-bold text-gray-900 tracking-tight font-serif">
-          Integrations & System Settings
-        </h2>
-        <p className="text-xs text-gray-500 mt-1">
-          Configure Google Calendar synchronization, export household backups, and check system health.
-        </p>
+    <div id="settings-view-container" className="flex flex-col flex-1 max-w-5xl mx-auto w-full space-y-6 pb-12">
+      {/* Settings Navigation Subtabs */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-200">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 tracking-tight font-serif">
+            Settings
+          </h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {subTab === 'family'
+              ? 'Manage household members, logins, custom colours, and family preferences.'
+              : 'Configure Google Calendar synchronization, colour softness, export backups, and view diagnostics.'}
+          </p>
+        </div>
+
+        {/* Sub-navigation switcher: Integrations & System | Family */}
+        <div id="settings-subtabs" className="flex items-center gap-1.5 p-1 bg-gray-100/90 rounded-2xl border border-gray-200/80 shrink-0 self-start sm:self-auto shadow-2xs">
+          <button
+            id="settings-tab-integrations-btn"
+            type="button"
+            onClick={() => setSubTab('integrations')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              subTab === 'integrations'
+                ? 'bg-white text-gray-900 shadow-xs'
+                : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Integrations & System</span>
+          </button>
+
+          <button
+            id="settings-tab-family-btn"
+            type="button"
+            onClick={() => setSubTab('family')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              subTab === 'family'
+                ? 'bg-white text-pink-700 shadow-xs'
+                : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 text-pink-600" />
+            <span>Family</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-pink-100 text-pink-800 text-[10px] font-extrabold ml-0.5">
+              {members.length}
+            </span>
+          </button>
+        </div>
       </div>
 
-      {syncMessage && (
-        <div className="p-3.5 rounded-2xl bg-pink-50 border border-pink-200 text-pink-900 text-xs font-semibold flex items-center gap-2 shadow-xs animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 text-pink-600 shrink-0" />
-          <span>{syncMessage}</span>
-        </div>
-      )}
+      {subTab === 'family' ? (
+        <FamilyView />
+      ) : (
+        <>
+          {syncMessage && (
+            <div className="p-3.5 rounded-2xl bg-pink-50 border border-pink-200 text-pink-900 text-xs font-semibold flex items-center gap-2 shadow-xs animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 text-pink-600 shrink-0" />
+              <span>{syncMessage}</span>
+            </div>
+          )}
 
-      {/* Member Colour Softness Card */}
-      <div id="member-colour-softness-card" className="p-6 rounded-3xl bg-white border border-gray-200 shadow-xs space-y-5">
+          {/* Family Card (Quick access to Settings -> Family) */}
+          <div id="settings-family-overview-card" className="p-6 rounded-3xl bg-white border border-gray-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-pink-50 border border-pink-200 flex items-center justify-center text-pink-600 shadow-2xs shrink-0">
+                <Users className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900 font-serif flex items-center gap-2">
+                  {family?.name || 'Household Family'}
+                  <span className="px-2 py-0.5 rounded-full bg-pink-50 text-pink-700 border border-pink-200 text-[10px] font-bold">
+                    {members.length} {members.length === 1 ? 'Member' : 'Members'}
+                  </span>
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Manage family members, birthdays, roles, custom color themes, and tablet viewer password.
+                </p>
+              </div>
+            </div>
+
+            <button
+              id="settings-goto-family-btn"
+              type="button"
+              onClick={() => setSubTab('family')}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer shrink-0"
+            >
+              <Users className="w-4 h-4" />
+              <span>Manage Family</span>
+            </button>
+          </div>
+
+          {/* Member Colour Softness Card */}
+          <div id="member-colour-softness-card" className="p-6 rounded-3xl bg-white border border-gray-200 shadow-xs space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-pink-50 border border-pink-200 flex items-center justify-center text-pink-600 shadow-2xs shrink-0">
@@ -511,6 +597,8 @@ export const IntegrationsView: React.FC = () => {
         isOpen={!!editingCalendar}
         onClose={() => setEditingCalendar(null)}
       />
+        </>
+      )}
     </div>
   );
 };

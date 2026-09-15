@@ -12,7 +12,6 @@ import { AgendaView } from './components/calendar/AgendaView';
 import { EventModal } from './components/calendar/EventModal';
 import { CalendarAddChoiceModal } from './components/calendar/CalendarAddChoiceModal';
 import { TaskModal } from './components/tasks/TaskModal';
-import { FamilyView } from './components/family/FamilyView';
 import { NotificationsView } from './components/notifications/NotificationsView';
 import { IntegrationsView } from './components/settings/IntegrationsView';
 import { ProfileView } from './components/profile/ProfileView';
@@ -131,7 +130,7 @@ function MainDashboard() {
           }`}
         >
           {activeTab === 'calendar' && <CalendarContainer />}
-          {!isViewer && activeTab === 'family' && <FamilyView />}
+          {!isViewer && activeTab === 'family' && <IntegrationsView initialTab="family" />}
           {activeTab === 'tasks' && <TasksView />}
           {!isViewer && activeTab === 'stock' && <StockScreen />}
           {!isViewer && activeTab === 'notifications' && <NotificationsView />}
