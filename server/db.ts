@@ -1506,18 +1506,18 @@ export function adjustStockItemQuantity(
   );
 
   // AUTOMATIC SHOPPING LIST SYNCHRONIZATION
-  // Rule: Low stock / Automatic Shopping
+  // Rule: Low stock / Automatic Shopping & Ticked State Management
   const lowThreshold = item.low_stock_threshold ?? 1;
   const restockTarget = item.restock_target ?? Math.max(lowThreshold + 1, lowThreshold * 2);
   const autoAddEnabled = item.auto_add_to_shopping !== 0;
 
   if (options.action === 'use') {
     if (newQuantity <= lowThreshold && autoAddEnabled) {
-      // Calculate required restock quantity
+      // Calculate total required restock quantity to reach target
       const requiredRestockQty = Math.max(1, restockTarget - newQuantity);
 
-      // Check if an uncompleted shopping list item for this stock item already exists
-      const existingShopItem = db.prepare(`
+      // Check if an uncompleted (active) shopping list item for this stock item already exists
+      const activeShopItem = db.prepare(`
         SELECT id, quantity, is_auto_generated
         FROM shopping_list_items
         WHERE family_id = ? AND is_completed = 0 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
@@ -1525,15 +1525,36 @@ export function adjustStockItemQuantity(
         LIMIT 1
       `).get(familyId, item.id, item.name) as { id: string; quantity: number; is_auto_generated: number } | undefined;
 
-      if (existingShopItem) {
+      // Check if a ticked (purchased but pending Add Stock confirmation) shopping item exists
+      const tickedShopItem = db.prepare(`
+        SELECT id, quantity, is_auto_generated
+        FROM shopping_list_items
+        WHERE family_id = ? AND is_completed = 1 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
+        ORDER BY created_at DESC
+        LIMIT 1
+      `).get(familyId, item.id, item.name) as { id: string; quantity: number; is_auto_generated: number } | undefined;
+
+      if (activeShopItem) {
         // Update required quantity rather than creating duplicate shopping entries
         db.prepare(`
           UPDATE shopping_list_items
           SET quantity = ?, unit = ?, category = ?, stock_item_id = ?, updated_at = ?
           WHERE id = ?
-        `).run(requiredRestockQty, item.unit, item.category, item.id, now, existingShopItem.id);
+        `).run(requiredRestockQty, item.unit, item.category, item.id, now, activeShopItem.id);
+      } else if (tickedShopItem) {
+        // A ticked item already exists (temporary purchased / pending-stock state).
+        // Do NOT duplicate if the ticked item already covers this requirement.
+        // If the user used even more and the restock needed exceeds the ticked amount, add only the delta as active.
+        if (requiredRestockQty > tickedShopItem.quantity) {
+          const additionalNeeded = requiredRestockQty - tickedShopItem.quantity;
+          const shopId = 'shop_' + uuidv4().slice(0, 8);
+          db.prepare(`
+            INSERT INTO shopping_list_items (id, family_id, stock_item_id, name, quantity, unit, category, is_completed, is_auto_generated, notes, added_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 'Auto added: low household stock', ?, ?, ?)
+          `).run(shopId, familyId, item.id, item.name, additionalNeeded, item.unit, item.category, options.member_id || null, now, now);
+        }
       } else {
-        // Insert new shopping list item
+        // Neither active nor ticked exists: insert new active shopping list item
         const shopId = 'shop_' + uuidv4().slice(0, 8);
         db.prepare(`
           INSERT INTO shopping_list_items (id, family_id, stock_item_id, name, quantity, unit, category, is_completed, is_auto_generated, notes, added_by, created_at, updated_at)
@@ -1541,30 +1562,55 @@ export function adjustStockItemQuantity(
         `).run(shopId, familyId, item.id, item.name, requiredRestockQty, item.unit, item.category, options.member_id || null, now, now);
       }
     }
-  } else if (options.action === 'add' || options.action === 'set') {
-    // When stock is replenished using "Add Stock":
-    // Update the corresponding Shopping List quantity, or remove if target is reached
-    const existingShopItem = db.prepare(`
+  } else if (options.action === 'add' || options.action === 'set' || options.action === 'shopping_purchase') {
+    // When Stock is replenished using "Add Stock":
+    // 1. Remove/archive any matching ticked/purchased Shopping List items for this canonical stock item
+    db.prepare(`
+      DELETE FROM shopping_list_items
+      WHERE family_id = ? AND is_completed = 1 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
+    `).run(familyId, item.id, item.name);
+
+    // 2. Recalculate the stock requirement using the low-stock threshold and restock target
+    const remainingRequired = restockTarget - newQuantity;
+
+    // Find any active (uncompleted) shopping list items for this stock item
+    const activeItems = db.prepare(`
       SELECT id, quantity, is_auto_generated
       FROM shopping_list_items
       WHERE family_id = ? AND is_completed = 0 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
-      ORDER BY created_at DESC
-      LIMIT 1
-    `).get(familyId, item.id, item.name) as { id: string; quantity: number; is_auto_generated: number } | undefined;
+      ORDER BY created_at ASC
+    `).all(familyId, item.id, item.name) as Array<{ id: string; quantity: number; is_auto_generated: number }>;
 
-    if (existingShopItem) {
-      if (newQuantity >= restockTarget || newQuantity > lowThreshold) {
-        // Remove automatic shopping requirement once stock has reached the target
-        if (existingShopItem.is_auto_generated) {
-          db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(existingShopItem.id);
+    if (newQuantity >= restockTarget || remainingRequired <= 0) {
+      // If Stock is now at or above the restock target, there should be NO active Shopping List entry for that stock item.
+      for (const act of activeItems) {
+        db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(act.id);
+      }
+    } else {
+      // If Stock is still below the restock target, create/update ONLY the remaining required quantity as an active Shopping List entry.
+      // Never duplicate the same shopping requirement.
+      if (autoAddEnabled) {
+        const neededQty = Math.max(1, remainingRequired);
+        if (activeItems.length > 0) {
+          const first = activeItems[0];
+          db.prepare(`
+            UPDATE shopping_list_items
+            SET quantity = ?, unit = ?, category = ?, stock_item_id = ?, updated_at = ?
+            WHERE id = ?
+          `).run(neededQty, item.unit, item.category, item.id, now, first.id);
+
+          // Clean up any extra duplicate active entries if present
+          for (let i = 1; i < activeItems.length; i++) {
+            db.prepare(`DELETE FROM shopping_list_items WHERE id = ?`).run(activeItems[i].id);
+          }
         } else {
-          // If manually created, we can mark it completed
-          db.prepare(`UPDATE shopping_list_items SET is_completed = 1, completed_at = ?, updated_at = ? WHERE id = ?`).run(now, now, existingShopItem.id);
+          // Create an active entry for only the remaining needed quantity
+          const shopId = 'shop_' + uuidv4().slice(0, 8);
+          db.prepare(`
+            INSERT INTO shopping_list_items (id, family_id, stock_item_id, name, quantity, unit, category, is_completed, is_auto_generated, notes, added_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 'Auto added: low household stock', ?, ?, ?)
+          `).run(shopId, familyId, item.id, item.name, neededQty, item.unit, item.category, options.member_id || null, now, now);
         }
-      } else {
-        // Still below target: update remaining shopping list quantity
-        const remainingNeeded = Math.max(1, restockTarget - newQuantity);
-        db.prepare(`UPDATE shopping_list_items SET quantity = ?, updated_at = ? WHERE id = ?`).run(remainingNeeded, now, existingShopItem.id);
       }
     }
   }
