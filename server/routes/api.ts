@@ -9,6 +9,21 @@ import {
   syncMemberBirthdaysToCalendarLayer,
   reconcileMemberPoints,
   recordTaskCompletionPoints,
+  getStockItems,
+  getStockItemById,
+  findStockItemByBarcode,
+  createStockItem,
+  updateStockItem,
+  deleteStockItem,
+  adjustStockItemQuantity,
+  addBarcodeToStockItem,
+  removeBarcodeFromStockItem,
+  getShoppingListItems,
+  addShoppingListItem,
+  updateShoppingListItem,
+  toggleShoppingListItem,
+  deleteShoppingListItem,
+  clearCompletedShoppingList,
 } from '../db.js';
 import {
   authenticateToken,
@@ -3031,3 +3046,296 @@ router.get('/backup/export', authenticateToken, (req: AuthRequest, res: Response
     res.status(500).json({ error: err.message });
   }
 });
+
+// ==========================================
+// 9. STOCK & INVENTORY
+// ==========================================
+
+// Get all stock items (ALWAYS sorted A-Z by canonical stock item name)
+router.get('/stock', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const items = getStockItems(familyId);
+    res.json(items);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Lookup stock item by id
+router.get('/stock/item/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const item = getStockItemById(familyId, req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: 'Stock item not found' });
+    }
+    res.json(item);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Lookup stock item by scanned barcode
+router.get('/stock/barcode/:barcode', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const result = findStockItemByBarcode(familyId, req.params.barcode);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create new stock item
+router.post('/stock', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const { name, category, quantity, unit, low_stock_threshold, earliest_expiry_date, location, notes, is_favorite, barcode, brand_or_label } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Stock item name is required' });
+    }
+
+    const created = createStockItem(familyId, {
+      name,
+      category,
+      quantity,
+      unit,
+      low_stock_threshold,
+      earliest_expiry_date,
+      location,
+      notes,
+      is_favorite,
+      barcode,
+      brand_or_label,
+    });
+
+    res.status(201).json(created);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update existing stock item
+router.put('/stock/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const updated = updateStockItem(familyId, req.params.id, req.body);
+    if (!updated) {
+      return res.status(404).json({ error: 'Stock item not found' });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete stock item
+router.delete('/stock/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const success = deleteStockItem(familyId, req.params.id);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Adjust stock quantity (Add Stock, Use Stock, Set Quantity)
+router.post('/stock/:id/adjust', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const memberId = getUserMemberId(req.user!.id, familyId);
+    const { action, amount, barcode, expiry_date, location } = req.body;
+
+    if (!action || !['add', 'use', 'set', 'shopping_purchase'].includes(action)) {
+      return res.status(400).json({ error: 'Valid action (add, use, set, shopping_purchase) is required' });
+    }
+
+    const updated = adjustStockItemQuantity(familyId, req.params.id, {
+      action,
+      amount: Number(amount) || 1,
+      barcode,
+      expiry_date,
+      member_id: memberId,
+    });
+
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Execute barcode scan action (Add Stock or Use Stock)
+router.post('/stock/scan', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const memberId = getUserMemberId(req.user!.id, familyId);
+    const { barcode, mode, amount, expiry_date } = req.body;
+
+    if (!barcode || !barcode.trim()) {
+      return res.status(400).json({ error: 'Barcode is required' });
+    }
+
+    const cleanBarcode = barcode.trim();
+    const scanMode = mode === 'use' ? 'use' : 'add';
+    const scanAmount = Number(amount) || 1;
+
+    const lookup = findStockItemByBarcode(familyId, cleanBarcode);
+
+    if (!lookup.found || !lookup.stockItem) {
+      // Barcode is unmapped / new
+      return res.json({
+        success: false,
+        isMapped: false,
+        barcode: cleanBarcode,
+        message: 'Barcode is not yet linked to any household stock item',
+      });
+    }
+
+    // Barcode is mapped to a canonical stock item! Update quantity according to mode (add or use)
+    const updated = adjustStockItemQuantity(familyId, lookup.stockItem.id, {
+      action: scanMode,
+      amount: scanAmount,
+      barcode: cleanBarcode,
+      expiry_date,
+      member_id: memberId,
+    });
+
+    res.json({
+      success: true,
+      isMapped: true,
+      barcode: cleanBarcode,
+      action: scanMode,
+      delta: scanMode === 'use' ? -scanAmount : scanAmount,
+      stockItem: updated,
+      mapping: lookup.mapping,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add barcode mapping to a canonical stock item
+router.post('/stock/:id/barcodes', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const { barcode, brand_or_label, quantity_delta_per_scan } = req.body;
+
+    if (!barcode || !barcode.trim()) {
+      return res.status(400).json({ error: 'Barcode string is required' });
+    }
+
+    addBarcodeToStockItem(familyId, req.params.id, barcode, brand_or_label, quantity_delta_per_scan || 1);
+    const updated = getStockItemById(familyId, req.params.id);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete barcode mapping
+router.delete('/stock/barcodes/:barcodeId', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const success = removeBarcodeFromStockItem(familyId, req.params.barcodeId);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// 10. SHOPPING LIST
+// ==========================================
+
+// Get shopping list
+router.get('/shopping-list', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const items = getShoppingListItems(familyId);
+    res.json(items);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add item to shopping list
+router.post('/shopping-list', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const memberId = getUserMemberId(req.user!.id, familyId);
+    const { name, quantity, unit, category, stock_item_id, notes } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Item name is required' });
+    }
+
+    const created = addShoppingListItem(familyId, {
+      name,
+      quantity,
+      unit,
+      category,
+      stock_item_id,
+      notes,
+      added_by: memberId,
+    });
+
+    res.status(201).json(created);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update shopping list item
+router.put('/shopping-list/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const updated = updateShoppingListItem(familyId, req.params.id, req.body);
+    if (!updated) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Toggle shopping list item completion
+router.post('/shopping-list/:id/toggle', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const memberId = getUserMemberId(req.user!.id, familyId);
+    const updated = toggleShoppingListItem(familyId, req.params.id, memberId || undefined);
+    if (!updated) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete shopping list item
+router.delete('/shopping-list/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const success = deleteShoppingListItem(familyId, req.params.id);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Clear all completed shopping list items
+router.post('/shopping-list/clear-completed', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const cleared = clearCompletedShoppingList(familyId);
+    res.json({ success: true, count: cleared });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+

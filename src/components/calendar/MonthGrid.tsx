@@ -415,10 +415,6 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                               isEndOfWeek={isEndOfWeek}
                               members={members}
                               eventTypes={eventTypes}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onEditEvent?.(event);
-                              }}
                             />
                           );
                         }
@@ -434,10 +430,6 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                               isStartOfWeek={isStartOfWeek}
                               isEndOfWeek={isEndOfWeek}
                               members={members}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onEditTask?.(task);
-                              }}
                             />
                           );
                         }

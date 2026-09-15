@@ -18,6 +18,7 @@ import { IntegrationsView } from './components/settings/IntegrationsView';
 import { ProfileView } from './components/profile/ProfileView';
 import { TasksView } from './components/tasks/TasksView';
 import { BirthdaysView } from './components/birthdays/BirthdaysView';
+import { StockScreen } from './components/stock/StockScreen';
 import { CalendarContainer } from './components/calendar/CalendarContainer';
 import { TabletViewer } from './components/viewer/TabletViewer';
 import { ViewerLogin } from './components/viewer/ViewerLogin';
@@ -31,7 +32,7 @@ function MainDashboard() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab');
-      if (tabParam && ['calendar', 'family', 'tasks', 'notifications', 'settings', 'profile'].includes(tabParam)) {
+      if (tabParam && ['calendar', 'family', 'tasks', 'stock', 'notifications', 'settings', 'profile'].includes(tabParam)) {
         return tabParam as MainTabType;
       }
     }
@@ -54,7 +55,7 @@ function MainDashboard() {
       setCurrentPath(path);
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab');
-      if (tabParam && ['calendar', 'family', 'tasks', 'notifications', 'settings', 'profile'].includes(tabParam)) {
+      if (tabParam && ['calendar', 'family', 'tasks', 'stock', 'notifications', 'settings', 'profile'].includes(tabParam)) {
         setActiveTab(tabParam as MainTabType);
       }
     };
@@ -132,6 +133,7 @@ function MainDashboard() {
           {activeTab === 'calendar' && <CalendarContainer />}
           {!isViewer && activeTab === 'family' && <FamilyView />}
           {activeTab === 'tasks' && <TasksView />}
+          {!isViewer && activeTab === 'stock' && <StockScreen />}
           {!isViewer && activeTab === 'notifications' && <NotificationsView />}
           {!isViewer && activeTab === 'settings' && <IntegrationsView />}
           {!isViewer && activeTab === 'profile' && <ProfileView />}

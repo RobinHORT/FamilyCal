@@ -3,6 +3,7 @@ import {
   Calendar,
   Users,
   CheckSquare,
+  Package,
   Bell,
   Settings,
 } from 'lucide-react';
@@ -29,12 +30,13 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activeTab, setActiveTab })
     { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'family', label: 'Family', icon: Users },
     { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+    { id: 'stock', label: 'Stock', icon: Package },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'settings', label: 'Settings', icon: Settings },
   ] as const;
 
   const tabs = isViewer
-    ? allTabs.filter((t) => t.id === 'calendar' || t.id === 'tasks')
+    ? allTabs.filter((t) => t.id === 'calendar' || t.id === 'tasks' || t.id === 'stock')
     : allTabs;
 
   return (

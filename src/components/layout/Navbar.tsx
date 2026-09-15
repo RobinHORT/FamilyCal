@@ -5,6 +5,7 @@ import {
   Calendar as CalIcon,
   Users,
   CheckSquare,
+  Package,
   Bell,
   Settings,
   SlidersHorizontal,
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react';
 import { getPastelColorInfo } from '../../utils/colors';
 
-export type MainTabType = 'calendar' | 'family' | 'tasks' | 'notifications' | 'settings' | 'profile';
+export type MainTabType = 'calendar' | 'family' | 'tasks' | 'stock' | 'notifications' | 'settings' | 'profile';
 
 interface NavbarProps {
   activeTab: MainTabType;
@@ -52,12 +53,13 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
     { id: 'calendar', label: 'Calendar', icon: CalIcon },
     { id: 'family', label: 'Family', icon: Users },
     { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+    { id: 'stock', label: 'Stock', icon: Package },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'settings', label: 'Settings', icon: Settings },
   ] as const;
 
   const navTabs = isViewer
-    ? allTabs.filter((t) => t.id === 'calendar' || t.id === 'tasks')
+    ? allTabs.filter((t) => t.id === 'calendar' || t.id === 'tasks' || t.id === 'stock')
     : allTabs;
 
   return (

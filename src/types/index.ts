@@ -211,6 +211,105 @@ export interface GoogleConfigResponse {
   connectedAccounts: GoogleAccount[];
 }
 
+// Stock & Inventory Types
+export interface StockBarcode {
+  id: string;
+  family_id: string;
+  stock_item_id: string;
+  barcode: string;
+  brand_or_label?: string | null;
+  quantity_delta_per_scan: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StockItem {
+  id: string;
+  family_id: string;
+  name: string; // Canonical stock item name
+  category: string;
+  quantity: number;
+  unit: string;
+  low_stock_threshold: number;
+  restock_target?: number;
+  auto_add_to_shopping?: boolean | number;
+  earliest_expiry_date?: string | null;
+  location?: string | null;
+  notes?: string | null;
+  is_favorite?: number | boolean;
+  barcodes?: StockBarcode[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StockLog {
+  id: string;
+  family_id: string;
+  stock_item_id: string;
+  stock_item_name?: string;
+  action: 'add' | 'use' | 'adjust' | 'shopping_purchase';
+  quantity_changed: number;
+  quantity_after: number;
+  barcode?: string | null;
+  expiry_date?: string | null;
+  member_id?: string | null;
+  member_name?: string | null;
+  created_at: string;
+}
+
+export interface ShoppingListItem {
+  id: string;
+  family_id: string;
+  stock_item_id?: string | null;
+  name: string;
+  quantity: number;
+  unit: string;
+  category: string;
+  is_completed: number | boolean;
+  is_auto_generated?: number | boolean;
+  completed_at?: string | null;
+  completed_by?: string | null;
+  added_by?: string | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const STOCK_UNITS = [
+  'packs',
+  'bottles',
+  'boxes',
+  'bags',
+  'cans',
+  'tubs',
+  'jars',
+  'cartons',
+  'rolls',
+  'loaves',
+  'pieces',
+  'items',
+  'kg',
+  'g',
+  'L',
+  'mL',
+] as const;
+
+export const STOCK_CATEGORIES = [
+  'Dairy & Fridge',
+  'Pantry Essentials',
+  'Fresh Produce',
+  'Bakery',
+  'Meat & Seafood',
+  'Frozen Foods',
+  'Snacks & Treats',
+  'Beverages',
+  'Household & Cleaning',
+  'Personal Care & Health',
+  'Baby & Kids',
+  'Pet Supplies',
+  'Other',
+] as const;
+
 export interface SystemStats {
   status: string;
   version: string;

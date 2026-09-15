@@ -11,6 +11,9 @@ import {
   GoogleAccount,
   GoogleSyncLog,
   SystemStats,
+  StockItem,
+  StockBarcode,
+  ShoppingListItem,
 } from '../types';
 
 class ApiError extends Error {
@@ -296,4 +299,112 @@ export const api = {
 
   // System Stats & Export
   getSystemStats: () => fetchJson<SystemStats>('/api/system/stats'),
+
+  // Stock & Inventory
+  getStockItems: () => fetchJson<StockItem[]>('/api/stock'),
+
+  getStockItem: (id: string) => fetchJson<StockItem>(`/api/stock/item/${id}`),
+
+  lookupBarcode: (barcode: string) =>
+    fetchJson<{ found: boolean; barcode: string; stockItem: StockItem | null; mapping: StockBarcode | null }>(
+      `/api/stock/barcode/${encodeURIComponent(barcode)}`
+    ),
+
+  createStockItem: (data: Partial<StockItem> & { barcode?: string; brand_or_label?: string }) =>
+    fetchJson<StockItem>('/api/stock', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateStockItem: (id: string, data: Partial<StockItem>) =>
+    fetchJson<StockItem>(`/api/stock/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  deleteStockItem: (id: string) =>
+    fetchJson<{ success: boolean }>(`/api/stock/${id}`, {
+      method: 'DELETE',
+    }),
+
+  adjustStockQuantity: (
+    id: string,
+    data: {
+      action: 'add' | 'use' | 'set' | 'shopping_purchase';
+      amount: number;
+      barcode?: string;
+      expiry_date?: string;
+      location?: string;
+    }
+  ) =>
+    fetchJson<StockItem>(`/api/stock/${id}/adjust`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  scanBarcode: (data: {
+    barcode: string;
+    mode: 'add' | 'use';
+    amount?: number;
+    expiry_date?: string;
+    brand_or_label?: string;
+  }) =>
+    fetchJson<{
+      success: boolean;
+      isMapped: boolean;
+      barcode: string;
+      action?: 'add' | 'use';
+      delta?: number;
+      stockItem?: StockItem;
+      mapping?: StockBarcode;
+      message?: string;
+    }>('/api/stock/scan', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  addBarcodeMapping: (stockItemId: string, barcode: string, brandOrLabel?: string, deltaPerScan: number = 1) =>
+    fetchJson<StockItem>(`/api/stock/${stockItemId}/barcodes`, {
+      method: 'POST',
+      body: JSON.stringify({
+        barcode,
+        brand_or_label: brandOrLabel,
+        quantity_delta_per_scan: deltaPerScan,
+      }),
+    }),
+
+  deleteBarcodeMapping: (barcodeId: string) =>
+    fetchJson<{ success: boolean }>(`/api/stock/barcodes/${barcodeId}`, {
+      method: 'DELETE',
+    }),
+
+  // Shopping List
+  getShoppingList: () => fetchJson<ShoppingListItem[]>('/api/shopping-list'),
+
+  addShoppingListItem: (data: Partial<ShoppingListItem>) =>
+    fetchJson<ShoppingListItem>('/api/shopping-list', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateShoppingListItem: (id: string, data: Partial<ShoppingListItem>) =>
+    fetchJson<ShoppingListItem>(`/api/shopping-list/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  toggleShoppingListItem: (id: string) =>
+    fetchJson<ShoppingListItem>(`/api/shopping-list/${id}/toggle`, {
+      method: 'POST',
+    }),
+
+  deleteShoppingListItem: (id: string) =>
+    fetchJson<{ success: boolean }>(`/api/shopping-list/${id}`, {
+      method: 'DELETE',
+    }),
+
+  clearCompletedShoppingList: () =>
+    fetchJson<{ success: boolean; count: number }>('/api/shopping-list/clear-completed', {
+      method: 'POST',
+    }),
 };
