@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CheckSquare, Calendar, Clock, AlertCircle, Trash2, Archive, Check, Bell, BellOff, BellRing, Repeat, Users } from 'lucide-react';
+import { X, CheckSquare, Calendar, Clock, AlertCircle, Trash2, Archive, Check, Bell, BellOff, BellRing, Repeat, Users, Award, Sparkles, UserCheck, UserPlus } from 'lucide-react';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
-import { Priority, Task, TaskRecurrenceRule } from '../../types';
+import { Priority, Task, TaskRecurrenceRule, TaskAssignmentMode } from '../../types';
 import { getNotificationPermission, requestNotificationPermission, NotificationPermissionState } from '../../utils/taskNotifications';
 import { getPastelColorInfo } from '../../utils/colors';
-import { getTaskAssignedMemberIds, canMemberToggleTask } from '../../utils/taskPermissions';
+import { getTaskAssignedMemberIds, canMemberToggleTask, isAdultOrAdminRole } from '../../utils/taskPermissions';
 
 export const TaskModal: React.FC = () => {
   const {
@@ -16,6 +16,7 @@ export const TaskModal: React.FC = () => {
     closeTaskModal,
     taskModalInitialDate,
     editingTask,
+    tasks,
     createTask,
     updateTask,
     deleteTask,
@@ -28,6 +29,7 @@ export const TaskModal: React.FC = () => {
 
   const activeMembers = members.filter((m) => m.is_active === 1);
   const currentMemberId = memberProfile?.id || members.find((m) => m.user_id === user?.id || m.id === user?.id)?.id || user?.id;
+  const isAdultOrAdmin = isAdultOrAdminRole(user, memberProfile);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -38,6 +40,10 @@ export const TaskModal: React.FC = () => {
   const [recurringInterval, setRecurringInterval] = useState<number>(1);
   const [recurringUnit, setRecurringUnit] = useState<'day' | 'week' | 'month'>('day');
   const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
+  const [assignmentMode, setAssignmentMode] = useState<TaskAssignmentMode>('assigned');
+  const [claimLimit, setClaimLimit] = useState<number>(1); // 1 = single person, 0 = multiple people
+  const [points, setPoints] = useState<number>(10);
+  const [pointsAwarded, setPointsAwarded] = useState<number>(0);
   const [priority, setPriority] = useState<Priority>('medium');
   const [isArchived, setIsArchived] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
@@ -62,7 +68,24 @@ export const TaskModal: React.FC = () => {
         setRecurringInterval(editingTask.recurring_interval ? Number(editingTask.recurring_interval) : 1);
         setRecurringUnit(editingTask.recurring_unit || 'day');
 
-        const existingIds = getTaskAssignedMemberIds(editingTask);
+        setAssignmentMode(editingTask.assignment_mode || 'assigned');
+        setClaimLimit(editingTask.claim_limit !== undefined && editingTask.claim_limit !== null ? Number(editingTask.claim_limit) : 1);
+        setPoints(editingTask.points !== undefined && editingTask.points !== null ? Number(editingTask.points) : 0);
+        setPointsAwarded(editingTask.points_awarded !== undefined && editingTask.points_awarded !== null ? Number(editingTask.points_awarded) : 0);
+
+        let existingIds: string[] = [];
+        if (editingTask.task_group_id) {
+          const groupTasks = tasks.filter((t) => t.task_group_id === editingTask.task_group_id);
+          const ids = new Set<string>();
+          groupTasks.forEach((t) => {
+            getTaskAssignedMemberIds(t).forEach((id) => ids.add(id));
+          });
+          existingIds = Array.from(ids);
+        }
+        if (existingIds.length === 0) {
+          existingIds = getTaskAssignedMemberIds(editingTask);
+        }
+
         if (existingIds.length > 0) {
           setAssignedMemberIds(existingIds);
         } else if (currentMemberId) {
@@ -85,6 +108,11 @@ export const TaskModal: React.FC = () => {
         setRecurringInterval(1);
         setRecurringUnit('day');
 
+        setAssignmentMode('assigned');
+        setClaimLimit(1);
+        setPoints(isAdultOrAdmin ? 10 : 0);
+        setPointsAwarded(0);
+
         if (currentMemberId) {
           setAssignedMemberIds([currentMemberId]);
         } else if (activeMembers.length > 0) {
@@ -99,7 +127,7 @@ export const TaskModal: React.FC = () => {
       }
       setError(null);
     }
-  }, [isTaskModalOpen, editingTask, taskModalInitialDate]);
+  }, [isTaskModalOpen, editingTask, taskModalInitialDate, tasks, isAdultOrAdmin]);
 
   if (!isTaskModalOpen) return null;
 
@@ -134,7 +162,7 @@ export const TaskModal: React.FC = () => {
       return;
     }
 
-    if (assignedMemberIds.length === 0) {
+    if (assignmentMode === 'assigned' && assignedMemberIds.length === 0) {
       setError('Please assign at least one family member to this task');
       return;
     }
@@ -149,14 +177,18 @@ export const TaskModal: React.FC = () => {
         due_date: dueDate,
         due_time: dueTime || null,
         reminder_minutes: reminderMinutes,
-        assigned_member_ids: assignedMemberIds,
-        assigned_member_id: assignedMemberIds[0] || null,
+        assigned_member_ids: assignmentMode === 'open' ? [] : (assignmentMode === 'everyone' ? activeMembers.map((m) => m.id) : assignedMemberIds),
+        assigned_member_id: assignmentMode === 'open' ? null : (assignmentMode === 'everyone' ? (activeMembers[0]?.id || null) : (assignedMemberIds[0] || null)),
         priority,
         is_archived: isArchived ? 1 : 0,
         completed: isCompleted,
         recurring_rule: recurringRule,
         recurring_interval: recurringRule === 'custom' ? recurringInterval : 1,
         recurring_unit: recurringRule === 'custom' ? recurringUnit : 'day',
+        assignment_mode: assignmentMode,
+        claim_limit: assignmentMode === 'open' ? claimLimit : 1,
+        points: isAdultOrAdmin ? Math.max(0, points || 0) : 0,
+        points_awarded: isAdultOrAdmin && editingTask?.completed ? Math.max(0, pointsAwarded || 0) : undefined,
       };
 
       if (editingTask) {
@@ -175,10 +207,14 @@ export const TaskModal: React.FC = () => {
 
   const handleDelete = async () => {
     if (!editingTask) return;
-    if (window.confirm('Are you sure you want to delete this task?')) {
+    const isGrouped = Boolean(editingTask.task_group_id && tasks.filter((t) => t.task_group_id === editingTask.task_group_id).length > 1);
+    const confirmMsg = isGrouped
+      ? 'Are you sure you want to delete this task for all assigned family members?'
+      : 'Are you sure you want to delete this task?';
+    if (window.confirm(confirmMsg)) {
       setIsSubmitting(true);
       try {
-        await deleteTask(editingTask.id);
+        await deleteTask(editingTask.id, { allInGroup: true });
         closeTaskModal();
       } catch (err: any) {
         setError(err.message || 'Failed to delete task');
@@ -195,7 +231,7 @@ export const TaskModal: React.FC = () => {
     }
     setIsSubmitting(true);
     try {
-      await archiveTask(editingTask.id);
+      await archiveTask(editingTask.id, { allInGroup: true });
       closeTaskModal();
     } catch (err: any) {
       setError(err.message || 'Failed to update archive status');
@@ -210,7 +246,7 @@ export const TaskModal: React.FC = () => {
       return;
     }
 
-    const check = canMemberToggleTask(editingTask, currentMemberId, isViewer);
+    const check = canMemberToggleTask(editingTask, currentMemberId, isViewer, isAdultOrAdmin);
     if (!editingTask.completed && !check.canToggle) {
       setError(check.reason || 'You do not have permission to complete this task');
       return;
@@ -439,80 +475,277 @@ export const TaskModal: React.FC = () => {
               )}
             </div>
 
-            {/* Assign Member */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
-                  Assign Family Members *
-                </label>
-                <span className="text-[11px] font-semibold text-gray-400">
-                  {assignedMemberIds.length} selected
-                </span>
+            {/* Assignment Mode (Admin/Adult only) */}
+            {isAdultOrAdmin && (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                    Assignment Mode
+                  </label>
+                  <span className="text-[11px] font-semibold text-emerald-600">
+                    {assignmentMode === 'assigned' ? 'Specific Members' : assignmentMode === 'open' ? 'Open to Claim' : 'All Active Members'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAssignmentMode('assigned')}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                      assignmentMode === 'assigned'
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-2 ring-emerald-500/20 shadow-xs'
+                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    <UserCheck className="w-4 h-4 text-emerald-600" />
+                    <span>Assigned</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssignmentMode('open')}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                      assignmentMode === 'open'
+                        ? 'bg-blue-50 text-blue-800 border-blue-300 ring-2 ring-blue-500/20 shadow-xs'
+                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    <UserPlus className="w-4 h-4 text-blue-600" />
+                    <span>Open Chore</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssignmentMode('everyone')}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                      assignmentMode === 'everyone'
+                        ? 'bg-purple-50 text-purple-800 border-purple-300 ring-2 ring-purple-500/20 shadow-xs'
+                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Users className="w-4 h-4 text-purple-600" />
+                    <span>Everyone</span>
+                  </button>
+                </div>
               </div>
+            )}
 
-              <div className="flex flex-wrap gap-2">
-                {/* All Members Toggle */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (assignedMemberIds.length === activeMembers.length) {
-                      // Keep at least first active member
-                      if (activeMembers.length > 0) {
-                        setAssignedMemberIds([activeMembers[0].id]);
-                      }
-                    } else {
-                      setAssignedMemberIds(activeMembers.map((m) => m.id));
-                    }
-                  }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                    assignedMemberIds.length === activeMembers.length
-                      ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
-                      : 'bg-gray-50 text-slate-700 border-gray-200 hover:bg-gray-100'
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>All Members</span>
-                  {assignedMemberIds.length === activeMembers.length && <Check className="w-3 h-3 stroke-[3]" />}
-                </button>
-
-                {/* Individual Family Members */}
-                {activeMembers.map((m) => {
-                  const isSelected = assignedMemberIds.includes(m.id);
-                  const mColor = getPastelColorInfo(m.color);
-
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => {
-                        if (isSelected) {
-                          if (assignedMemberIds.length > 1) {
-                            setAssignedMemberIds(assignedMemberIds.filter((id) => id !== m.id));
-                          }
-                        } else {
-                          setAssignedMemberIds([...assignedMemberIds, m.id]);
-                        }
-                      }}
-                      style={{
-                        backgroundColor: isSelected ? mColor.hex : '#F8FAFC',
-                        borderColor: isSelected ? mColor.borderHex : '#E2E8F0',
-                        color: isSelected ? mColor.textHex : '#64748B',
-                      }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
-                        isSelected ? 'ring-2 ring-emerald-500/30 font-extrabold' : 'hover:border-gray-300 font-medium'
-                      }`}
-                    >
+            {/* Mode-specific detail panel */}
+            {assignmentMode === 'open' ? (
+              <div className="p-3.5 bg-blue-50/70 border border-blue-200/80 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                    <UserPlus className="w-3.5 h-3.5 text-blue-600" />
+                    Claim Limit Configuration
+                  </span>
+                  <span className="text-[10px] uppercase font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
+                    {claimLimit === 1 ? 'Single Claim' : 'Multiple Claims'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-blue-800">
+                  This task is not initially assigned. Eligible family members can see it and choose <strong>Claim Task</strong>.
+                </p>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setClaimLimit(1)}
+                    className={`p-2.5 rounded-xl text-xs border text-left transition-all cursor-pointer ${
+                      claimLimit === 1
+                        ? 'bg-white text-blue-900 border-blue-400 ring-2 ring-blue-500/20 shadow-xs font-bold'
+                        : 'bg-blue-100/40 text-blue-700 border-transparent hover:bg-blue-100/70 font-medium'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center justify-between">
+                      <span>Single Person</span>
+                      {claimLimit === 1 && <Check className="w-3.5 h-3.5 text-blue-600 stroke-[3]" />}
+                    </div>
+                    <div className="text-[10px] text-blue-600 mt-0.5">First to claim owns task</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setClaimLimit(0)}
+                    className={`p-2.5 rounded-xl text-xs border text-left transition-all cursor-pointer ${
+                      claimLimit === 0
+                        ? 'bg-white text-blue-900 border-blue-400 ring-2 ring-blue-500/20 shadow-xs font-bold'
+                        : 'bg-blue-100/40 text-blue-700 border-transparent hover:bg-blue-100/70 font-medium'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center justify-between">
+                      <span>Multiple People</span>
+                      {claimLimit === 0 && <Check className="w-3.5 h-3.5 text-blue-600 stroke-[3]" />}
+                    </div>
+                    <div className="text-[10px] text-blue-600 mt-0.5">Any member claims own copy</div>
+                  </button>
+                </div>
+              </div>
+            ) : assignmentMode === 'everyone' ? (
+              <div className="p-3.5 bg-purple-50/70 border border-purple-200/80 rounded-xl space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900">
+                  <Users className="w-4 h-4 text-purple-600" />
+                  <span>Individual tasks for all {activeMembers.length} family members</span>
+                </div>
+                <p className="text-[11px] text-purple-700">
+                  A completely separate task entry will automatically be created for each active family member using their own real profile and mapped colour.
+                </p>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {activeMembers.map((m) => {
+                    const mColor = getPastelColorInfo(m.color);
+                    return (
                       <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: mColor.dotHex }}
-                      />
-                      <span>{m.name}</span>
-                      {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                    </button>
-                  );
-                })}
+                        key={m.id}
+                        style={{
+                          backgroundColor: mColor.hex,
+                          borderColor: mColor.borderHex,
+                          color: mColor.textHex,
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border"
+                      >
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: mColor.dotHex }} />
+                        {m.name}
+                      </span>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            ) : (
+              /* Assign Member Chips */
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                    Assign Family Members *
+                  </label>
+                  <span className="text-[11px] font-semibold text-gray-400">
+                    {assignedMemberIds.length} selected
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {/* All Members Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (assignedMemberIds.length === activeMembers.length) {
+                        if (activeMembers.length > 0) {
+                          setAssignedMemberIds([activeMembers[0].id]);
+                        }
+                      } else {
+                        setAssignedMemberIds(activeMembers.map((m) => m.id));
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                      assignedMemberIds.length === activeMembers.length
+                        ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
+                        : 'bg-gray-50 text-slate-700 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>All Members</span>
+                    {assignedMemberIds.length === activeMembers.length && <Check className="w-3 h-3 stroke-[3]" />}
+                  </button>
+
+                  {/* Individual Family Members */}
+                  {activeMembers.map((m) => {
+                    const isSelected = assignedMemberIds.includes(m.id);
+                    const mColor = getPastelColorInfo(m.color);
+
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            if (assignedMemberIds.length > 1) {
+                              setAssignedMemberIds(assignedMemberIds.filter((id) => id !== m.id));
+                            }
+                          } else {
+                            setAssignedMemberIds([...assignedMemberIds, m.id]);
+                          }
+                        }}
+                        style={{
+                          backgroundColor: isSelected ? mColor.hex : '#F8FAFC',
+                          borderColor: isSelected ? mColor.borderHex : '#E2E8F0',
+                          color: isSelected ? mColor.textHex : '#64748B',
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                          isSelected ? 'ring-2 ring-emerald-500/30 font-extrabold' : 'hover:border-gray-300 font-medium'
+                        }`}
+                      >
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: mColor.dotHex }}
+                        />
+                        <span>{m.name}</span>
+                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Points / Rewards Setting (Admin/Adult only) */}
+            {isAdultOrAdmin && (
+              <div className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="task-points" className="block text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                    <Award className="w-4 h-4 text-amber-600" />
+                    Points / Reward
+                  </label>
+                  <span className="text-xs font-extrabold text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-600" />
+                    {points} {points === 1 ? 'point' : 'points'}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <div className="flex items-center gap-1">
+                    {[0, 5, 10, 20, 50].map((ptVal) => (
+                      <button
+                        key={ptVal}
+                        type="button"
+                        onClick={() => setPoints(ptVal)}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
+                          points === ptVal
+                            ? 'bg-amber-600 text-white border-amber-700 shadow-2xs'
+                            : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100/60'
+                        }`}
+                      >
+                        {ptVal === 0 ? '0' : `+${ptVal}`}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="text-xs text-amber-900 font-semibold">Custom:</span>
+                    <input
+                      id="task-points"
+                      type="number"
+                      min="0"
+                      max="10000"
+                      value={points}
+                      onChange={(e) => setPoints(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      className="w-16 px-2.5 py-1 bg-white border border-amber-300 rounded-lg text-slate-800 text-xs text-center font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                    />
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-amber-700">
+                  Points are awarded to the family member upon task completion and deducted if reopened.
+                </p>
+
+                {/* If task is already completed and editing as Admin/Adult: allow manual points awarded adjustment */}
+                {editingTask && Boolean(editingTask.completed) && (
+                  <div className="pt-2 border-t border-amber-200/70 flex items-center justify-between text-xs">
+                    <span className="text-amber-900 font-bold">Manual points adjustment:</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="10000"
+                      value={pointsAwarded}
+                      onChange={(e) => setPointsAwarded(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      className="w-16 px-2.5 py-1 bg-white border border-amber-300 rounded-lg text-slate-800 text-xs text-center font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Priority Selector */}
             <div>

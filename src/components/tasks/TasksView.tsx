@@ -19,6 +19,10 @@ import {
   ChevronDown,
   Check,
   Users,
+  Award,
+  Sparkles,
+  UserPlus,
+  Hand,
 } from 'lucide-react';
 import {
   format,
@@ -46,7 +50,8 @@ import { useAuth } from '../../context/AuthContext';
 import { Priority, Task } from '../../types';
 import { getEventAssignmentInfo, getPastelColorInfo } from '../../utils/colors';
 import { formatReminderLabel } from '../../utils/taskNotifications';
-import { getTaskAssignedMemberIds, canMemberToggleTask } from '../../utils/taskPermissions';
+import { getTaskAssignedMemberIds, canMemberToggleTask, canMemberClaimTask, isAdultOrAdminRole } from '../../utils/taskPermissions';
+import { MonthGrid } from '../calendar/MonthGrid';
 
 function formatTaskRepeatLabel(rule?: string | null, interval?: number | null, unit?: string | null): string | null {
   if (!rule || rule === 'none') return null;
@@ -85,6 +90,8 @@ export const TasksView: React.FC = () => {
     goToNextPeriod,
     goToToday,
     toggleTask,
+    claimTask,
+    unclaimTask,
     deleteTask,
     archiveTask,
     openCreateTaskModal,
@@ -94,6 +101,7 @@ export const TasksView: React.FC = () => {
 
   const { members } = useFamily();
   const { user, memberProfile, isAdmin, hasPermission } = useAuth();
+  const isAdultOrAdmin = isAdultOrAdminRole(user, memberProfile);
 
   const isViewer =
     user?.role === 'viewer' ||
@@ -251,7 +259,7 @@ export const TasksView: React.FC = () => {
   // Action handlers
   const handleToggle = async (e: React.MouseEvent, task: Task) => {
     e.stopPropagation();
-    const check = canMemberToggleTask(task, currentMemberId, isViewer);
+    const check = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin);
     if (!task.completed && !check.canToggle) {
       alert(check.reason || 'You do not have permission to complete this task.');
       return;
@@ -265,11 +273,45 @@ export const TasksView: React.FC = () => {
     }
   };
 
+  const handleClaim = async (e: React.MouseEvent, task: Task) => {
+    e.stopPropagation();
+    const check = canMemberClaimTask(task, currentMemberId, isViewer);
+    if (!check.canClaim) {
+      alert(check.reason || 'You cannot claim this task.');
+      return;
+    }
+
+    try {
+      await claimTask(task.id);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'Failed to claim task');
+    }
+  };
+
+  const handleUnclaim = async (e: React.MouseEvent, task: Task) => {
+    e.stopPropagation();
+    try {
+      await unclaimTask(task.id);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'Failed to release task');
+    }
+  };
+
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (window.confirm('Delete this task?')) {
+    const target = tasks.find((t) => t.id === id);
+    const isGrouped = Boolean(
+      target?.task_group_id &&
+      tasks.filter((t) => t.task_group_id === target.task_group_id).length > 1
+    );
+    const confirmMsg = isGrouped
+      ? 'Delete this task for all assigned family members?'
+      : 'Delete this task?';
+    if (window.confirm(confirmMsg)) {
       try {
-        await deleteTask(id);
+        await deleteTask(id, { allInGroup: true });
       } catch (err) {
         console.error(err);
       }
@@ -279,7 +321,7 @@ export const TasksView: React.FC = () => {
   const handleArchive = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     try {
-      await archiveTask(id);
+      await archiveTask(id, { allInGroup: true });
     } catch (err) {
       console.error(err);
     }
@@ -313,8 +355,14 @@ export const TasksView: React.FC = () => {
   // Render Task Card Component (EXACT MATCH to EventCard visual system)
   const renderTaskCard = (task: Task, compact: boolean = false) => {
     const isCompleted = task.completed;
-    const toggleCheck = canMemberToggleTask(task, currentMemberId, isViewer);
+    const toggleCheck = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin);
     const isActionable = isCompleted || toggleCheck.canToggle;
+
+    const isOpenTask = task.assignment_mode === 'open';
+    const assignedIds = getTaskAssignedMemberIds(task);
+    const isClaimed = assignedIds.length > 0;
+    const isClaimedByMe = Boolean(currentMemberId && assignedIds.includes(currentMemberId));
+    const claimCheck = canMemberClaimTask(task, currentMemberId, isViewer);
 
     const assignmentInfo = getEventAssignmentInfo(task as any, members);
 
@@ -323,17 +371,21 @@ export const TasksView: React.FC = () => {
         key={task.id}
         onClick={() => openEditTaskModal(task)}
         style={{
-          background: assignmentInfo.isFamilyEvent
-            ? assignmentInfo.segmentedGradient
-            : assignmentInfo.primaryColorInfo.hex,
-          borderColor: assignmentInfo.borderHex,
+          background: (isOpenTask && !isClaimed)
+            ? '#F0F9FF'
+            : (assignmentInfo.isFamilyEvent
+                ? assignmentInfo.segmentedGradient
+                : assignmentInfo.primaryColorInfo.hex),
+          borderColor: (isOpenTask && !isClaimed)
+            ? '#BAE6FD'
+            : assignmentInfo.borderHex,
         }}
         className={`relative p-3.5 sm:p-4 rounded-2xl border shadow-2xs hover:shadow-md active:scale-99 transition-all cursor-pointer flex flex-col justify-between gap-2.5 group overflow-hidden w-full max-w-full min-w-0 box-border ${
           isCompleted ? 'opacity-75' : ''
         }`}
       >
         {/* Visible boundary dividers for multi-colour Family task card */}
-        {assignmentInfo.isFamilyEvent && (
+        {assignmentInfo.isFamilyEvent && !isOpenTask && (
           <div className="absolute inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0">
             {assignmentInfo.participatingMembers.map((m, idx) => (
               <div
@@ -369,7 +421,24 @@ export const TasksView: React.FC = () => {
               )}
             </button>
 
-            {assignmentInfo.isFamilyEvent ? (
+            {isOpenTask && !isClaimed ? (
+              <>
+                <div
+                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-2xs shrink-0 bg-sky-500"
+                  title="Open Chore - Available for anyone to claim"
+                >
+                  <Hand className="w-3.5 h-3.5" />
+                </div>
+                <span className="text-xs font-extrabold text-sky-950 tracking-tight shrink-0">
+                  Open Chore
+                </span>
+                {task.claim_limit && task.claim_limit > 1 ? (
+                  <span className="text-[10px] font-semibold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-full">
+                    Limit: {task.claim_limit}
+                  </span>
+                ) : null}
+              </>
+            ) : assignmentInfo.isFamilyEvent ? (
               <>
                 <div
                   className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-2xs shrink-0"
@@ -410,12 +479,58 @@ export const TasksView: React.FC = () => {
                 <span className="text-xs font-bold text-slate-800 tracking-tight truncate min-w-0 flex-1">
                   {assignmentInfo.label}
                 </span>
+                {isOpenTask && isClaimed && (
+                  <span className="text-[9px] font-bold text-blue-700 bg-blue-100/80 px-1.5 py-0.5 rounded-full shrink-0">
+                    Claimed
+                  </span>
+                )}
               </>
             )}
           </div>
 
           {/* Badges & Actions */}
           <div className="flex items-center gap-1.5 shrink-0 max-w-full">
+            {/* Points Badge */}
+            {task.points !== undefined && task.points !== null && task.points > 0 && (
+              <span
+                className="flex items-center gap-1 text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 shrink-0 shadow-2xs"
+                title={task.completed && task.points_awarded !== undefined ? `Earned: ${task.points_awarded} pts` : `Reward: ${task.points} pts`}
+              >
+                <Sparkles className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                <span>{task.completed && task.points_awarded !== undefined ? `+${task.points_awarded}` : `${task.points}`} pts</span>
+              </span>
+            )}
+
+            {/* Claim Task Button for Open Uncompleted Tasks */}
+            {isOpenTask && !isCompleted && claimCheck.canClaim && (
+              <button
+                type="button"
+                onClick={(e) => handleClaim(e, task)}
+                className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 active:scale-95 text-white text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                title="Claim this chore"
+              >
+                <Hand className="w-3 h-3" />
+                <span>Claim</span>
+              </button>
+            )}
+
+            {/* Claimed Status & Release Button */}
+            {isOpenTask && !isCompleted && isClaimedByMe && (
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-[10px] font-bold text-sky-700 bg-sky-100/90 border border-sky-200 px-2 py-0.5 rounded-md">
+                  Claimed by You
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => handleUnclaim(e, task)}
+                  className="text-[10px] text-slate-500 hover:text-rose-600 font-semibold cursor-pointer underline px-1"
+                  title="Release this chore back to open"
+                >
+                  Release
+                </button>
+              </div>
+            )}
+
             {getPriorityBadge(task.priority)}
             {task.recurring_rule && task.recurring_rule !== 'none' && (
               <span
@@ -727,6 +842,11 @@ export const TasksView: React.FC = () => {
                   }}
                 />
                 <span>{member.name}</span>
+                {member.points !== undefined && member.points > 0 && (
+                  <span className="text-[10px] font-extrabold px-1.5 py-0.2 rounded-full bg-amber-200/60 text-amber-900 ml-0.5">
+                    ★ {member.points}
+                  </span>
+                )}
                 {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
               </button>
             );
@@ -743,119 +863,18 @@ export const TasksView: React.FC = () => {
             <div id="desktop-month-split" className="hidden md:grid md:grid-cols-12 gap-3.5 lg:gap-4 flex-1 items-stretch min-h-0 h-full touch-pan-y overflow-hidden">
               {/* Left: MONTH CALENDAR (Locked, fully visible, non-scrollable) */}
               <div className="md:col-span-7 lg:col-span-7 xl:col-span-8 flex flex-col min-w-0 h-full min-h-0 overflow-hidden">
-                <div className="flex flex-col flex-1 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-2xs h-full min-h-0">
-                  {/* 7 Days Header */}
-                  <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50/70 text-center text-[11px] sm:text-xs font-bold text-gray-500 py-1.5 sm:py-2 shrink-0 select-none">
-                    <div>Mon</div>
-                    <div>Tue</div>
-                    <div>Wed</div>
-                    <div>Thu</div>
-                    <div>Fri</div>
-                    <div>Sat</div>
-                    <div>Sun</div>
-                  </div>
-
-                  {/* Week Rows Matrix */}
-                  <div className="flex-1 flex flex-col divide-y divide-gray-100 bg-gray-50/20 min-h-0 h-full">
-                    {weeks.map((weekDaysList, weekIdx) => (
-                      <div key={weekIdx} className="flex-1 flex flex-col min-h-0 border-b border-gray-100 last:border-b-0 relative">
-                        <div className="grid grid-cols-7 flex-1 divide-x divide-gray-100 relative h-full">
-                          {weekDaysList.map((dayDate) => {
-                            const isCurrentMonth = isSameMonth(dayDate, monthStart);
-                            const isDayToday = isToday(dayDate);
-                            const isSelected = isSameDay(dayDate, selectedDate);
-                            const dayTasks = getTasksForDay(dayDate);
-                            const overflow = Math.max(0, dayTasks.length - 2);
-
-                            return (
-                              <div
-                                key={dayDate.toISOString()}
-                                onClick={() => setSelectedDate(dayDate)}
-                                className={`p-1 sm:p-1.5 flex flex-col justify-between transition-colors cursor-pointer select-none relative ${
-                                  !isCurrentMonth ? 'bg-gray-50/40 text-gray-300' : 'bg-white text-gray-800'
-                                } ${isSelected ? 'ring-2 ring-blue-500/80 ring-inset bg-blue-50/20' : ''}`}
-                              >
-                                {/* Day Number Header */}
-                                <div className="flex items-center justify-between mb-1">
-                                  <span
-                                    className={`text-xs font-extrabold flex items-center justify-center rounded-lg w-5 h-5 sm:w-6 sm:h-6 ${
-                                      isDayToday
-                                        ? 'bg-blue-600 text-white shadow-xs'
-                                        : isCurrentMonth
-                                        ? 'text-slate-800'
-                                        : 'text-gray-300'
-                                    }`}
-                                  >
-                                    {format(dayDate, 'd')}
-                                  </span>
-                                  {dayTasks.length > 0 && (
-                                    <span className="text-[10px] font-bold text-blue-700 bg-blue-100/80 px-1.5 py-0.2 rounded-full">
-                                      {dayTasks.length}
-                                    </span>
-                                  )}
-                                </div>
-
-                                {/* Task Pills Stack */}
-                                <div className="flex-1 my-0.5 space-y-1 overflow-hidden pointer-events-none">
-                                  {dayTasks.slice(0, 2).map((t) => {
-                                    const assignmentInfo = getEventAssignmentInfo(t as any, members);
-
-                                    return (
-                                      <div
-                                        key={t.id}
-                                        style={{
-                                          background: assignmentInfo.isFamilyEvent
-                                            ? assignmentInfo.segmentedGradient
-                                            : assignmentInfo.primaryColorInfo.hex,
-                                          borderColor: assignmentInfo.borderHex,
-                                        }}
-                                        className={`relative px-1.5 py-0.5 rounded-md text-[10px] font-bold flex items-center justify-between gap-1 border shadow-2xs overflow-hidden select-none pointer-events-none ${
-                                          t.completed ? 'opacity-70' : ''
-                                        }`}
-                                        title={`${t.title} (${assignmentInfo.label})`}
-                                      >
-                                        {/* Divided boundary lines for family multi-member task */}
-                                        {assignmentInfo.isFamilyEvent && (
-                                          <div className="absolute inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0">
-                                            {assignmentInfo.participatingMembers.map((m, idx) => (
-                                              <div key={m.id || idx} className="flex-1 h-full border-r border-black/8 last:border-r-0" />
-                                            ))}
-                                          </div>
-                                        )}
-
-                                        <div className="relative z-10 flex items-center gap-1 truncate min-w-0 w-full pointer-events-none">
-                                          <span className="shrink-0 p-0 text-slate-800">
-                                            {t.completed ? (
-                                              <CheckCircle2 className="w-2.5 h-2.5 fill-blue-600 text-white" />
-                                            ) : (
-                                              <Circle className="w-2.5 h-2.5 stroke-[2.2]" />
-                                            )}
-                                          </span>
-                                          <span className={`truncate ${t.completed ? 'line-through text-slate-700' : 'text-slate-900'}`}>
-                                            {t.title}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-
-                                {/* Overflow count */}
-                                {overflow > 0 ? (
-                                  <div className="text-[10px] sm:text-[11px] font-extrabold text-blue-600 pl-0.5 pt-0.5 relative z-20 pointer-events-none">
-                                    +{overflow} more
-                                  </div>
-                                ) : (
-                                  <div className="h-2" />
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <MonthGrid
+                  currentDate={currentDate}
+                  selectedDay={selectedDate}
+                  onSelectDay={setSelectedDate}
+                  filteredEvents={[]}
+                  tasks={visibleTasks}
+                  members={members}
+                  eventTypes={[]}
+                  onEditTask={openEditTaskModal}
+                  maxVisibleSlots={2}
+                  className="h-full flex-1 min-h-0 overflow-hidden"
+                />
               </div>
 
               {/* Right: SELECTED DAY DAY VIEW */}
@@ -910,101 +929,17 @@ export const TasksView: React.FC = () => {
               }}
             >
               {/* Month Grid Card */}
-              <div className="flex flex-col bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-2xs">
-                <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50/70 text-center text-[11px] font-bold text-gray-500 py-1.5 shrink-0 select-none">
-                  <div>Mon</div>
-                  <div>Tue</div>
-                  <div>Wed</div>
-                  <div>Thu</div>
-                  <div>Fri</div>
-                  <div>Sat</div>
-                  <div>Sun</div>
-                </div>
-
-                <div className="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-gray-100 bg-gray-50/20">
-                  {monthDays.map((dayDate) => {
-                    const isCurrentMonth = isSameMonth(dayDate, monthStart);
-                    const isDayToday = isToday(dayDate);
-                    const isSelected = isSameDay(dayDate, selectedDate);
-                    const dayTasks = getTasksForDay(dayDate);
-                    const overflow = Math.max(0, dayTasks.length - 3);
-
-                    return (
-                      <div
-                        key={dayDate.toISOString()}
-                        onClick={() => setSelectedDate(dayDate)}
-                        className={`p-1 flex flex-col justify-between transition-colors cursor-pointer select-none relative min-h-[96px] ${
-                          !isCurrentMonth ? 'bg-gray-50/40 text-gray-300' : 'bg-white text-gray-800'
-                        } ${isSelected ? 'ring-2 ring-blue-500/80 ring-inset bg-blue-50/20' : ''}`}
-                      >
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span
-                            className={`text-[11px] font-extrabold flex items-center justify-center rounded-lg w-5 h-5 ${
-                              isDayToday
-                                ? 'bg-blue-600 text-white shadow-xs'
-                                : isCurrentMonth
-                                ? 'text-slate-800'
-                                : 'text-gray-300'
-                            }`}
-                          >
-                            {format(dayDate, 'd')}
-                          </span>
-                        </div>
-
-                        {/* Task Pills Stack */}
-                        <div className="flex-1 my-0.5 space-y-0.5 overflow-hidden pointer-events-none">
-                          {dayTasks.slice(0, 3).map((t) => {
-                            const assignmentInfo = getEventAssignmentInfo(t as any, members);
-
-                            return (
-                              <div
-                                key={t.id}
-                                style={{
-                                  background: assignmentInfo.isFamilyEvent
-                                    ? assignmentInfo.segmentedGradient
-                                    : assignmentInfo.primaryColorInfo.hex,
-                                  borderColor: assignmentInfo.borderHex,
-                                }}
-                                className={`relative px-1 py-0.5 rounded text-[9px] font-bold flex items-center justify-between gap-0.5 border shadow-2xs overflow-hidden select-none pointer-events-none ${
-                                  t.completed ? 'opacity-70' : ''
-                                }`}
-                                title={`${t.title} (${assignmentInfo.label})`}
-                              >
-                                {assignmentInfo.isFamilyEvent && (
-                                  <div className="absolute inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0">
-                                    {assignmentInfo.participatingMembers.map((m, idx) => (
-                                      <div key={m.id || idx} className="flex-1 h-full border-r border-black/8 last:border-r-0" />
-                                    ))}
-                                  </div>
-                                )}
-
-                                <div className="relative z-10 flex items-center gap-0.5 truncate min-w-0 w-full pointer-events-none">
-                                  <span className="shrink-0 p-0 text-slate-800">
-                                    {t.completed ? (
-                                      <CheckCircle2 className="w-2 h-2 fill-blue-600 text-white" />
-                                    ) : (
-                                      <Circle className="w-2 h-2 stroke-[2.2]" />
-                                    )}
-                                  </span>
-                                  <span className={`truncate leading-none ${t.completed ? 'line-through text-slate-700' : 'text-slate-900'}`}>
-                                    {t.title}
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {overflow > 0 && (
-                          <div className="text-[9px] font-extrabold text-blue-600 pl-0.5 pt-0.5 relative z-20 pointer-events-none leading-none">
-                            +{overflow} more
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+              <MonthGrid
+                currentDate={currentDate}
+                selectedDay={selectedDate}
+                onSelectDay={setSelectedDate}
+                filteredEvents={[]}
+                tasks={visibleTasks}
+                members={members}
+                eventTypes={[]}
+                onEditTask={openEditTaskModal}
+                maxVisibleSlots={3}
+              />
 
               {/* Selected Day Agenda Section Below */}
               <div className="flex flex-col gap-3 pt-1 w-full max-w-full min-w-0">

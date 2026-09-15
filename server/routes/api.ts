@@ -2,7 +2,14 @@ import express, { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
-import { db, seedDefaultEventTypesForFamily, seedDefaultCalendarLayersForFamily, syncMemberBirthdaysToCalendarLayer } from '../db.js';
+import {
+  db,
+  seedDefaultEventTypesForFamily,
+  seedDefaultCalendarLayersForFamily,
+  syncMemberBirthdaysToCalendarLayer,
+  reconcileMemberPoints,
+  recordTaskCompletionPoints,
+} from '../db.js';
 import {
   authenticateToken,
   requireAdmin,
@@ -1764,6 +1771,7 @@ function advanceRecurringTaskIfApplicable(
   );
 
   const nextTaskId = 'tsk_' + uuidv4().slice(0, 8);
+  const nextGroupId = 'grp_' + uuidv4().slice(0, 8);
   const now = nowIso || new Date().toISOString();
   const cleanReminder = task.reminder_minutes !== undefined && task.reminder_minutes !== null && task.reminder_minutes !== ''
     ? Number(task.reminder_minutes)
@@ -1771,24 +1779,30 @@ function advanceRecurringTaskIfApplicable(
 
   db.prepare(`
     INSERT INTO tasks (
-      id, family_id, title, description, due_date, due_time, reminder_minutes,
-      completed, completed_at, is_archived, assigned_member_id, priority,
-      recurring_rule, recurring_interval, recurring_unit, created_at, updated_at
+      id, family_id, task_group_id, title, description, due_date, due_time, reminder_minutes,
+      completed, completed_at, is_archived, assigned_member_id, assigned_member_ids, priority,
+      recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit, points,
+      points_awarded, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     nextTaskId,
     familyId,
+    nextGroupId,
     task.title,
     task.description || null,
     nextDueDate,
     task.due_time || null,
     cleanReminder,
     task.assigned_member_id || null,
+    JSON.stringify(task.assigned_member_id ? [task.assigned_member_id] : []),
     task.priority || 'medium',
     rule,
     interval,
     unit,
+    task.assignment_mode || 'assigned',
+    task.claim_limit !== undefined && task.claim_limit !== null ? task.claim_limit : 1,
+    task.points || 0,
     now,
     now
   );
@@ -1801,7 +1815,14 @@ function advanceRecurringTaskIfApplicable(
   `).get(nextTaskId) as any;
 }
 
+function isReqAdultOrAdmin(req: AuthRequest, currentMember?: any): boolean {
+  if (req.user?.role === 'administrator' || req.user?.role === 'adult') return true;
+  if (currentMember?.role === 'administrator' || currentMember?.role === 'adult') return true;
+  return false;
+}
+
 function formatTaskRow(t: any) {
+  if (!t) return t;
   let assignedIds: string[] = [];
   try {
     if (t.assigned_member_ids) {
@@ -1818,10 +1839,16 @@ function formatTaskRow(t: any) {
 
   return {
     ...t,
+    task_group_id: t.task_group_id || null,
+    parent_task_id: t.parent_task_id || null,
+    assignment_mode: t.assignment_mode || 'assigned',
+    claim_limit: t.claim_limit !== undefined && t.claim_limit !== null ? Number(t.claim_limit) : 1,
+    points: t.points !== undefined && t.points !== null ? Number(t.points) : 0,
+    points_awarded: t.points_awarded !== undefined && t.points_awarded !== null ? Number(t.points_awarded) : 0,
     completed: Boolean(t.completed),
     is_archived: Boolean(t.is_archived),
     assigned_member_ids: assignedIds,
-    assigned_member_id: assignedIds[0] || t.assigned_member_id || null,
+    assigned_member_id: t.assigned_member_id || (t.assignment_mode === 'open' ? null : (assignedIds[0] || null)),
     due_date: t.due_date ? t.due_date.split('T')[0] : todayStr,
     recurring_rule: t.recurring_rule || 'none',
     recurring_interval: t.recurring_interval ? Number(t.recurring_interval) : 1,
@@ -1847,6 +1874,16 @@ router.get('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
 
 router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
+    if (req.user?.isViewer) {
+      return res.status(403).json({ error: 'Viewers cannot create tasks.' });
+    }
+
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
+
     const {
       title,
       description,
@@ -1860,6 +1897,9 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       recurring_rule,
       recurring_interval,
       recurring_unit,
+      assignment_mode,
+      claim_limit,
+      points,
     } = req.body;
 
     if (!title || !title.trim()) {
@@ -1868,24 +1908,6 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
 
     const todayStr = new Date().toISOString().split('T')[0];
     const cleanDueDate = due_date ? due_date.split('T')[0] : todayStr;
-
-    let finalMemberIds: string[] = [];
-    if (Array.isArray(assigned_member_ids) && assigned_member_ids.length > 0) {
-      finalMemberIds = assigned_member_ids;
-    } else if (assigned_member_id) {
-      finalMemberIds = [assigned_member_id];
-    } else {
-      // Find active family members as fallback
-      const activeMembers = db.prepare(`SELECT id FROM family_members WHERE family_id = ? AND is_active = 1`).all(req.user!.family_id) as any[];
-      finalMemberIds = activeMembers.map((m: any) => m.id);
-    }
-
-    if (finalMemberIds.length === 0) {
-      return res.status(400).json({ error: 'Every task must be assigned to at least one family member.' });
-    }
-
-    const primaryMemberId = finalMemberIds[0];
-    const taskId = 'tsk_' + uuidv4().slice(0, 8);
     const now = new Date().toISOString();
     const cleanReminder = reminder_minutes !== undefined && reminder_minutes !== null && reminder_minutes !== '' 
       ? Number(reminder_minutes) 
@@ -1894,40 +1916,145 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
     const interval = recurring_interval ? Math.max(1, Number(recurring_interval)) : 1;
     const unit = recurring_unit || 'day';
 
-    db.prepare(`
-      INSERT INTO tasks (
-        id, family_id, title, description, due_date, due_time, reminder_minutes,
-        completed, is_archived, assigned_member_id, assigned_member_ids, priority,
-        recurring_rule, recurring_interval, recurring_unit, created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      taskId,
-      req.user!.family_id,
-      title.trim(),
-      description || null,
-      cleanDueDate,
-      due_time || null,
-      cleanReminder,
-      is_archived ? 1 : 0,
-      primaryMemberId,
-      JSON.stringify(finalMemberIds),
-      priority || 'medium',
-      rule,
-      interval,
-      unit,
-      now,
-      now
-    );
+    // Points and assignment mode logic:
+    // Only Admin or Adult can set points or use open/everyone mode.
+    // Children can only create assigned tasks with 0 points.
+    const cleanPoints = isAdultAdmin ? Math.max(0, parseInt(points, 10) || 0) : 0;
+    const cleanMode: 'assigned' | 'open' | 'everyone' = isAdultAdmin && (assignment_mode === 'open' || assignment_mode === 'everyone')
+      ? assignment_mode
+      : 'assigned';
 
-    const created = db.prepare(`
+    const cleanClaimLimit = cleanMode === 'open'
+      ? (claim_limit === 0 || claim_limit === 'multiple' || claim_limit === null ? 0 : 1)
+      : 1;
+
+    // Handle Open assignment mode
+    if (cleanMode === 'open') {
+      const taskId = 'tsk_' + uuidv4().slice(0, 8);
+      const taskGroupId = 'grp_' + uuidv4().slice(0, 8);
+
+      db.prepare(`
+        INSERT INTO tasks (
+          id, family_id, task_group_id, title, description, due_date, due_time, reminder_minutes,
+          completed, completed_at, is_archived, assigned_member_id, assigned_member_ids, priority,
+          recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit, points,
+          points_awarded, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, NULL, '[]', ?, ?, ?, ?, 'open', ?, ?, 0, ?, ?)
+      `).run(
+        taskId,
+        req.user!.family_id,
+        taskGroupId,
+        title.trim(),
+        description || null,
+        cleanDueDate,
+        due_time || null,
+        cleanReminder,
+        is_archived ? 1 : 0,
+        priority || 'medium',
+        rule,
+        interval,
+        unit,
+        cleanClaimLimit,
+        cleanPoints,
+        now,
+        now
+      );
+
+      const createdRow = db.prepare(`
+        SELECT t.*, NULL as member_name, NULL as member_color, NULL as member_avatar
+        FROM tasks t
+        WHERE t.id = ?
+      `).get(taskId) as any;
+
+      return res.status(201).json(formatTaskRow(createdRow));
+    }
+
+    // Handle Everyone or Assigned mode
+    let targetMemberIds: string[] = [];
+
+    if (cleanMode === 'everyone') {
+      const activeMembers = db.prepare(
+        `SELECT id FROM family_members WHERE family_id = ? AND is_active = 1`
+      ).all(req.user!.family_id) as any[];
+
+      targetMemberIds = activeMembers.map((m: any) => m.id);
+      if (targetMemberIds.length === 0) {
+        return res.status(400).json({ error: 'No active family members found.' });
+      }
+    } else {
+      if (Array.isArray(assigned_member_ids) && assigned_member_ids.length > 0) {
+        targetMemberIds = Array.from(new Set(assigned_member_ids.filter(Boolean)));
+      } else if (assigned_member_id) {
+        targetMemberIds = [assigned_member_id];
+      } else if (currentMember?.id) {
+        targetMemberIds = [currentMember.id];
+      } else {
+        const activeMembers = db.prepare(
+          `SELECT id FROM family_members WHERE family_id = ? AND is_active = 1`
+        ).all(req.user!.family_id) as any[];
+        targetMemberIds = activeMembers.map((m: any) => m.id);
+      }
+
+      if (targetMemberIds.length === 0) {
+        return res.status(400).json({ error: 'Please select at least one family member.' });
+      }
+    }
+
+    // Shared group ID for multi-member tasks
+    const taskGroupId = targetMemberIds.length > 1 ? ('grp_' + uuidv4().slice(0, 8)) : ('tsk_' + uuidv4().slice(0, 8));
+    const createdTaskIds: string[] = [];
+
+    const insertStmt = db.prepare(`
+      INSERT INTO tasks (
+        id, family_id, task_group_id, title, description, due_date, due_time, reminder_minutes,
+        completed, completed_at, is_archived, assigned_member_id, assigned_member_ids, priority,
+        recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit, points,
+        points_awarded, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?)
+    `);
+
+    for (const memberId of targetMemberIds) {
+      const taskId = 'tsk_' + uuidv4().slice(0, 8);
+      createdTaskIds.push(taskId);
+
+      insertStmt.run(
+        taskId,
+        req.user!.family_id,
+        taskGroupId,
+        title.trim(),
+        description || null,
+        cleanDueDate,
+        due_time || null,
+        cleanReminder,
+        is_archived ? 1 : 0,
+        memberId,
+        JSON.stringify([memberId]),
+        priority || 'medium',
+        rule,
+        interval,
+        unit,
+        cleanMode,
+        cleanPoints,
+        now,
+        now
+      );
+    }
+
+    const createdRows = db.prepare(`
       SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
       FROM tasks t
       LEFT JOIN family_members m ON t.assigned_member_id = m.id
-      WHERE t.id = ?
-    `).get(taskId) as any;
+      WHERE t.id IN (${createdTaskIds.map(() => '?').join(',')})
+    `).all(...createdTaskIds) as any[];
 
-    res.status(201).json(formatTaskRow(created));
+    const formattedRows = createdRows.map(formatTaskRow);
+
+    res.status(201).json({
+      ...formattedRows[0],
+      created_tasks: formattedRows,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1935,6 +2062,10 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
 
 router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
+    if (req.user?.isViewer) {
+      return res.status(403).json({ error: 'Viewers cannot modify tasks.' });
+    }
+
     const { id } = req.params;
     const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
       id,
@@ -1942,6 +2073,19 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
     ) as any;
 
     if (!task) return res.status(404).json({ error: 'Task not found.' });
+
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
+
+    // Permission enforcement for children
+    if (!isAdultAdmin) {
+      if (task.assigned_member_id !== currentMember?.id) {
+        return res.status(403).json({ error: 'You can only edit tasks assigned to you.' });
+      }
+    }
 
     const {
       title,
@@ -1957,13 +2101,18 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
       recurring_rule,
       recurring_interval,
       recurring_unit,
+      points,
+      points_awarded,
+      claim_limit,
     } = req.body;
+
     const now = new Date().toISOString();
     const todayStr = new Date().toISOString().split('T')[0];
 
     const wasCompleted = Boolean(task.completed);
     const newCompleted = completed !== undefined ? (completed ? 1 : 0) : task.completed;
-    const newCompletedAt = newCompleted ? (task.completed_at || now) : null;
+    const willComplete = Boolean(newCompleted);
+    const newCompletedAt = willComplete ? (task.completed_at || now) : null;
     const newArchived = is_archived !== undefined ? (is_archived ? 1 : 0) : task.is_archived;
     const newReminder = reminder_minutes !== undefined 
       ? (reminder_minutes !== null && reminder_minutes !== '' ? Number(reminder_minutes) : null)
@@ -1973,10 +2122,72 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
     const newInterval = recurring_interval !== undefined ? Math.max(1, Number(recurring_interval) || 1) : (task.recurring_interval || 1);
     const newUnit = recurring_unit !== undefined ? (recurring_unit || 'day') : (task.recurring_unit || 'day');
 
+    const cleanDueDate = due_date !== undefined ? (due_date ? due_date.split('T')[0] : todayStr) : task.due_date;
+    const cleanTitle = title !== undefined ? title.trim() : task.title;
+    const cleanDesc = description !== undefined ? (description || null) : task.description;
+    const cleanDueTime = due_time !== undefined ? (due_time || null) : task.due_time;
+    const cleanPriority = priority !== undefined ? priority : task.priority;
+
+    // Points updates (Adults/Admins only)
+    const pointsChanged = isAdultAdmin && points !== undefined && Number(points) !== Number(task.points);
+    const newPoints = isAdultAdmin && points !== undefined ? Math.max(0, parseInt(points, 10) || 0) : task.points;
+
+    // If this is an open task with claim_limit update
+    const newClaimLimit = isAdultAdmin && claim_limit !== undefined
+      ? (claim_limit === 0 || claim_limit === 'multiple' || claim_limit === null ? 0 : 1)
+      : task.claim_limit;
+
+    // If this is an open task without assigned member, handle update directly
+    if (task.assignment_mode === 'open' && !task.assigned_member_id) {
+      db.prepare(`
+        UPDATE tasks
+        SET title = ?, description = ?, due_date = ?, due_time = ?, reminder_minutes = ?,
+            priority = ?, is_archived = ?, recurring_rule = ?, recurring_interval = ?,
+            recurring_unit = ?, claim_limit = ?, points = ?, updated_at = ?
+        WHERE id = ? AND family_id = ?
+      `).run(
+        cleanTitle,
+        cleanDesc,
+        cleanDueDate,
+        cleanDueTime,
+        newReminder,
+        cleanPriority,
+        newArchived,
+        newRule,
+        newInterval,
+        newUnit,
+        newClaimLimit,
+        newPoints,
+        now,
+        id,
+        req.user!.family_id
+      );
+
+      const updatedRow = db.prepare(`
+        SELECT t.*, NULL as member_name, NULL as member_color, NULL as member_avatar
+        FROM tasks t
+        WHERE t.id = ?
+      `).get(id) as any;
+
+      return res.json(formatTaskRow(updatedRow));
+    }
+
+    let taskGroupId = task.task_group_id;
+    let siblingTasks: any[] = [];
+    if (taskGroupId) {
+      siblingTasks = db.prepare('SELECT * FROM tasks WHERE task_group_id = ? AND family_id = ?').all(
+        taskGroupId,
+        req.user!.family_id
+      ) as any[];
+    } else {
+      siblingTasks = [task];
+    }
+
+    // Determine final member assignments if adult is editing
     let finalMemberIds: string[] = [];
-    if (assigned_member_ids !== undefined) {
+    if (isAdultAdmin && assigned_member_ids !== undefined) {
       finalMemberIds = Array.isArray(assigned_member_ids) ? assigned_member_ids : [];
-    } else if (assigned_member_id !== undefined) {
+    } else if (isAdultAdmin && assigned_member_id !== undefined) {
       finalMemberIds = assigned_member_id ? [assigned_member_id] : [];
     } else {
       try {
@@ -1989,50 +2200,103 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
       }
     }
 
-    if (finalMemberIds.length === 0) {
-      return res.status(400).json({ error: 'Every task must be assigned to at least one family member.' });
+    if (finalMemberIds.length === 0 && task.assigned_member_id) {
+      finalMemberIds = [task.assigned_member_id];
     }
 
-    const primaryMemberId = finalMemberIds[0];
-    const cleanDueDate = due_date !== undefined ? (due_date ? due_date.split('T')[0] : todayStr) : task.due_date;
+    // If member assignments are being modified by an adult
+    if (isAdultAdmin && assigned_member_ids !== undefined) {
+      const removedTasks = siblingTasks.filter((s) => !finalMemberIds.includes(s.assigned_member_id));
+      for (const rem of removedTasks) {
+        if (rem.assigned_member_id) {
+          recordTaskCompletionPoints(req.user!.family_id, rem.assigned_member_id, rem.id, 0, false);
+        }
+        db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(rem.id, req.user!.family_id);
+      }
+    }
 
-    db.prepare(`
-      UPDATE tasks
-      SET title = ?, description = ?, due_date = ?, due_time = ?, reminder_minutes = ?,
-          assigned_member_id = ?, assigned_member_ids = ?, priority = ?, completed = ?, completed_at = ?,
-          is_archived = ?, recurring_rule = ?, recurring_interval = ?, recurring_unit = ?, updated_at = ?
-      WHERE id = ? AND family_id = ?
-    `).run(
-      title !== undefined ? title.trim() : task.title,
-      description !== undefined ? (description || null) : task.description,
-      cleanDueDate,
-      due_time !== undefined ? (due_time || null) : task.due_time,
-      newReminder,
-      primaryMemberId,
-      JSON.stringify(finalMemberIds),
-      priority !== undefined ? priority : task.priority,
-      newCompleted,
-      newCompletedAt,
-      newArchived,
-      newRule,
-      newInterval,
-      newUnit,
-      now,
-      id,
-      req.user!.family_id
-    );
+    // Update sibling tasks
+    for (const s of siblingTasks) {
+      const isTarget = s.id === id;
+      const entryCompleted = isTarget && completed !== undefined ? (completed ? 1 : 0) : s.completed;
+      const entryCompletedAt = isTarget && completed !== undefined ? (completed ? (s.completed_at || now) : null) : s.completed_at;
+
+      db.prepare(`
+        UPDATE tasks
+        SET title = ?, description = ?, due_date = ?, due_time = ?, reminder_minutes = ?,
+            priority = ?, completed = ?, completed_at = ?, is_archived = ?,
+            recurring_rule = ?, recurring_interval = ?, recurring_unit = ?,
+            points = ?, updated_at = ?
+        WHERE id = ? AND family_id = ?
+      `).run(
+        cleanTitle,
+        cleanDesc,
+        cleanDueDate,
+        cleanDueTime,
+        newReminder,
+        cleanPriority,
+        entryCompleted,
+        entryCompletedAt,
+        newArchived,
+        newRule,
+        newInterval,
+        newUnit,
+        newPoints,
+        now,
+        s.id,
+        req.user!.family_id
+      );
+
+      // Reconcile points if points changed or completed state changed
+      if (s.assigned_member_id) {
+        if (isTarget && completed !== undefined && Boolean(completed) !== Boolean(s.completed)) {
+          recordTaskCompletionPoints(
+            req.user!.family_id,
+            s.assigned_member_id,
+            s.id,
+            newPoints,
+            Boolean(completed)
+          );
+        } else if (pointsChanged && s.completed) {
+          recordTaskCompletionPoints(
+            req.user!.family_id,
+            s.assigned_member_id,
+            s.id,
+            newPoints,
+            true,
+            'Points updated for task'
+          );
+        }
+      }
+    }
+
+    // Manual points awarded adjustment if adult provided points_awarded
+    if (isAdultAdmin && points_awarded !== undefined && points_awarded !== null && !isNaN(Number(points_awarded))) {
+      const adjPoints = Math.max(0, parseInt(points_awarded, 10));
+      if (task.assigned_member_id) {
+        recordTaskCompletionPoints(
+          req.user!.family_id,
+          task.assigned_member_id,
+          task.id,
+          adjPoints,
+          true,
+          'Manual points awarded adjustment by adult/admin'
+        );
+      }
+    }
 
     // If transitioned from incomplete to complete, advance recurring task
     if (!wasCompleted && newCompleted === 1) {
       const updatedForAdvance = {
         ...task,
-        title: title !== undefined ? title.trim() : task.title,
-        description: description !== undefined ? description : task.description,
+        title: cleanTitle,
+        description: cleanDesc,
         due_date: cleanDueDate,
-        due_time: due_time !== undefined ? due_time : task.due_time,
+        due_time: cleanDueTime,
         reminder_minutes: newReminder,
-        assigned_member_id: primaryMemberId,
-        priority: priority !== undefined ? priority : task.priority,
+        assigned_member_id: task.assigned_member_id,
+        priority: cleanPriority,
+        points: newPoints,
       };
       advanceRecurringTaskIfApplicable(
         updatedForAdvance,
@@ -2057,8 +2321,200 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
   }
 });
 
+router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (req.user?.isViewer) {
+      return res.status(403).json({ error: 'Viewers cannot claim tasks.' });
+    }
+
+    const { id } = req.params;
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
+      id,
+      req.user!.family_id
+    ) as any;
+
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found.' });
+    }
+
+    if (task.assignment_mode !== 'open') {
+      return res.status(400).json({ error: 'Only open tasks can be claimed.' });
+    }
+
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    if (!currentMember) {
+      return res.status(400).json({ error: 'Family member profile not found.' });
+    }
+
+    const now = new Date().toISOString();
+    const groupId = task.task_group_id || task.id;
+
+    // Check all tasks belonging to this open task group or referencing this parent task
+    const groupTasks = db.prepare(`
+      SELECT * FROM tasks
+      WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?) AND family_id = ?
+    `).all(groupId, task.id, task.id, req.user!.family_id) as any[];
+
+    // Check if this member has already claimed it
+    const alreadyClaimed = groupTasks.some((t) => t.assigned_member_id === currentMember.id);
+    if (alreadyClaimed) {
+      return res.status(400).json({ error: 'You have already claimed this task.' });
+    }
+
+    const claimLimit = task.claim_limit !== undefined && task.claim_limit !== null ? Number(task.claim_limit) : 1;
+
+    if (claimLimit === 1) {
+      // Single person claim: first eligible member to claim becomes owner
+      if (task.assigned_member_id) {
+        return res.status(400).json({ error: 'This task has already been claimed.' });
+      }
+
+      db.prepare(`
+        UPDATE tasks
+        SET assigned_member_id = ?, assigned_member_ids = ?, claimed_at = ?, claimed_by = ?, updated_at = ?
+        WHERE id = ? AND family_id = ?
+      `).run(currentMember.id, JSON.stringify([currentMember.id]), now, currentMember.id, now, task.id, req.user!.family_id);
+
+      const updated = db.prepare(`
+        SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+        FROM tasks t
+        LEFT JOIN family_members m ON t.assigned_member_id = m.id
+        WHERE t.id = ?
+      `).get(task.id) as any;
+
+      return res.json(formatTaskRow(updated));
+    } else {
+      // Multiple people claim: create an individual participant entry for this claimant
+      const claimedCount = groupTasks.filter((t) => t.assigned_member_id !== null).length;
+      if (claimLimit > 1 && claimedCount >= claimLimit) {
+        return res.status(400).json({ error: 'Claim limit for this task has been reached.' });
+      }
+
+      const newParticipantTaskId = 'tsk_' + uuidv4().slice(0, 8);
+      db.prepare(`
+        INSERT INTO tasks (
+          id, family_id, task_group_id, parent_task_id, title, description, due_date, due_time,
+          reminder_minutes, completed, completed_at, is_archived, assigned_member_id, assigned_member_ids,
+          priority, recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit,
+          points, points_awarded, claimed_at, claimed_by, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 0, ?, ?, ?, ?)
+      `).run(
+        newParticipantTaskId,
+        req.user!.family_id,
+        groupId,
+        task.id,
+        task.title,
+        task.description || null,
+        task.due_date,
+        task.due_time || null,
+        task.reminder_minutes,
+        currentMember.id,
+        JSON.stringify([currentMember.id]),
+        task.priority || 'medium',
+        task.recurring_rule || 'none',
+        task.recurring_interval || 1,
+        task.recurring_unit || 'day',
+        claimLimit,
+        task.points || 0,
+        now,
+        currentMember.id,
+        now,
+        now
+      );
+
+      const created = db.prepare(`
+        SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+        FROM tasks t
+        LEFT JOIN family_members m ON t.assigned_member_id = m.id
+        WHERE t.id = ?
+      `).get(newParticipantTaskId) as any;
+
+      return res.status(201).json(formatTaskRow(created));
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/tasks/:id/unclaim', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (req.user?.isViewer) {
+      return res.status(403).json({ error: 'Viewers cannot unclaim tasks.' });
+    }
+
+    const { id } = req.params;
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
+      id,
+      req.user!.family_id
+    ) as any;
+
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found.' });
+    }
+
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
+
+    // If task has a parent_task_id (spawned participant row)
+    if (task.parent_task_id) {
+      if (!isAdultAdmin && task.assigned_member_id !== currentMember?.id) {
+        return res.status(403).json({ error: 'You can only unclaim your own participation.' });
+      }
+
+      if (task.assigned_member_id) {
+        recordTaskCompletionPoints(req.user!.family_id, task.assigned_member_id, task.id, 0, false);
+      }
+
+      db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(id, req.user!.family_id);
+      return res.json({ success: true, message: 'Unclaimed successfully.' });
+    }
+
+    // Original open task with single claim
+    if (task.assignment_mode === 'open') {
+      if (!isAdultAdmin && task.assigned_member_id !== currentMember?.id) {
+        return res.status(403).json({ error: 'You can only unclaim your own claimed task.' });
+      }
+
+      if (task.assigned_member_id) {
+        recordTaskCompletionPoints(req.user!.family_id, task.assigned_member_id, task.id, 0, false);
+      }
+
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE tasks
+        SET assigned_member_id = NULL, assigned_member_ids = '[]', claimed_at = NULL, claimed_by = NULL,
+            completed = 0, completed_at = NULL, points_awarded = 0, updated_at = ?
+        WHERE id = ? AND family_id = ?
+      `).run(now, id, req.user!.family_id);
+
+      const updated = db.prepare(`
+        SELECT t.*, NULL as member_name, NULL as member_color, NULL as member_avatar
+        FROM tasks t
+        WHERE t.id = ?
+      `).get(id) as any;
+
+      return res.json(formatTaskRow(updated));
+    }
+
+    return res.status(400).json({ error: 'Task is not an open task.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
+    if (req.user?.isViewer) {
+      return res.status(403).json({ error: 'Viewers cannot modify tasks.' });
+    }
+
     const { id } = req.params;
     const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
       id,
@@ -2067,19 +2523,23 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
 
     if (!task) return res.status(404).json({ error: 'Task not found.' });
 
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+    const currentMemberId = currentMember?.id;
+    const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
+
+    // Unclaimed open tasks cannot be completed
+    if (task.assignment_mode === 'open' && !task.assigned_member_id) {
+      return res.status(400).json({ error: 'This task is open and must be claimed before it can be completed.' });
+    }
+
     const wasCompleted = Boolean(task.completed);
     const willComplete = !wasCompleted;
     const newCompleted = willComplete ? 1 : 0;
     const now = new Date().toISOString();
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // Find current requesting family member ID
-    const currentMember = db.prepare(
-      'SELECT id FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
-    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
-    const currentMemberId = currentMember?.id;
-
-    // Verify member assignment rule
     let assignedIds: string[] = [];
     try {
       if (task.assigned_member_ids) {
@@ -2092,16 +2552,21 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
       assignedIds = [task.assigned_member_id];
     }
 
-    if (currentMemberId && !assignedIds.includes(currentMemberId)) {
-      return res.status(403).json({ error: 'Only assigned family members can complete this task.' });
-    }
+    // Permission enforcement:
+    // Adult or Admin can complete or reopen on behalf of any member.
+    // Children can only toggle their own tasks!
+    if (!isAdultAdmin) {
+      if (currentMemberId && !assignedIds.includes(currentMemberId)) {
+        return res.status(403).json({ error: 'Only the assigned family member can complete this task.' });
+      }
 
-    // Verify date rule when ticking off
-    const taskDueDateStr = task.due_date ? task.due_date.split('T')[0] : todayStr;
-    if (willComplete && todayStr < taskDueDateStr) {
-      return res.status(400).json({
-        error: `Tasks cannot be completed before their due date (${taskDueDateStr}).`,
-      });
+      // Verify date rule when ticking off
+      const taskDueDateStr = task.due_date ? task.due_date.split('T')[0] : todayStr;
+      if (willComplete && todayStr < taskDueDateStr) {
+        return res.status(400).json({
+          error: `Tasks cannot be completed before their due date (${taskDueDateStr}).`,
+        });
+      }
     }
 
     db.prepare(`
@@ -2109,6 +2574,19 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
       SET completed = ?, completed_at = ?, updated_at = ?
       WHERE id = ? AND family_id = ?
     `).run(newCompleted, willComplete ? now : null, now, id, req.user!.family_id);
+
+    // Award or reverse points
+    const targetMemberId = task.assigned_member_id || (assignedIds.length > 0 ? assignedIds[0] : null);
+    if (targetMemberId) {
+      const pointsToAward = Number(task.points) || 0;
+      recordTaskCompletionPoints(
+        req.user!.family_id,
+        targetMemberId,
+        task.id,
+        pointsToAward,
+        willComplete
+      );
+    }
 
     // If transitioned from incomplete to complete, advance recurring task
     if (!wasCompleted && willComplete) {
@@ -2135,9 +2613,68 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
   }
 });
 
+router.post('/tasks/:id/adjust-points', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (req.user?.isViewer) {
+      return res.status(403).json({ error: 'Viewers cannot modify points.' });
+    }
+
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    if (!isReqAdultOrAdmin(req, currentMember)) {
+      return res.status(403).json({ error: 'Only administrators and adults can adjust points.' });
+    }
+
+    const { id } = req.params;
+    const { points_awarded, notes } = req.body;
+
+    if (points_awarded === undefined || points_awarded === null || isNaN(Number(points_awarded))) {
+      return res.status(400).json({ error: 'Valid points value is required.' });
+    }
+
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
+      id,
+      req.user!.family_id
+    ) as any;
+
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+
+    const cleanPoints = Math.max(0, parseInt(points_awarded, 10));
+    const targetMemberId = task.assigned_member_id;
+
+    if (!targetMemberId) {
+      return res.status(400).json({ error: 'Cannot award points to an unassigned task.' });
+    }
+
+    recordTaskCompletionPoints(
+      req.user!.family_id,
+      targetMemberId,
+      task.id,
+      cleanPoints,
+      true,
+      notes || 'Manual points adjustment by adult/admin'
+    );
+
+    const updated = db.prepare(`
+      SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+      FROM tasks t
+      LEFT JOIN family_members m ON t.assigned_member_id = m.id
+      WHERE t.id = ?
+    `).get(id) as any;
+
+    res.json(formatTaskRow(updated));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/tasks/:id/archive', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const allInGroup = req.query.allInGroup === 'true' || req.query.allInGroup === '1' || req.body?.allInGroup === true;
+
     const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
       id,
       req.user!.family_id
@@ -2148,11 +2685,19 @@ router.post('/tasks/:id/archive', authenticateToken, (req: AuthRequest, res: Res
     const newArchived = task.is_archived ? 0 : 1;
     const now = new Date().toISOString();
 
-    db.prepare(`
-      UPDATE tasks
-      SET is_archived = ?, updated_at = ?
-      WHERE id = ? AND family_id = ?
-    `).run(newArchived, now, id, req.user!.family_id);
+    if (allInGroup && task.task_group_id) {
+      db.prepare(`
+        UPDATE tasks
+        SET is_archived = ?, updated_at = ?
+        WHERE task_group_id = ? AND family_id = ?
+      `).run(newArchived, now, task.task_group_id, req.user!.family_id);
+    } else {
+      db.prepare(`
+        UPDATE tasks
+        SET is_archived = ?, updated_at = ?
+        WHERE id = ? AND family_id = ?
+      `).run(newArchived, now, id, req.user!.family_id);
+    }
 
     const updated = db.prepare(`
       SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
@@ -2161,14 +2706,7 @@ router.post('/tasks/:id/archive', authenticateToken, (req: AuthRequest, res: Res
       WHERE t.id = ?
     `).get(id) as any;
 
-    res.json({
-      ...updated,
-      completed: Boolean(updated.completed),
-      is_archived: Boolean(updated.is_archived),
-      recurring_rule: updated.recurring_rule || 'none',
-      recurring_interval: updated.recurring_interval ? Number(updated.recurring_interval) : 1,
-      recurring_unit: updated.recurring_unit || 'day',
-    });
+    res.json(formatTaskRow(updated));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -2176,8 +2714,53 @@ router.post('/tasks/:id/archive', authenticateToken, (req: AuthRequest, res: Res
 
 router.delete('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
+    if (req.user?.isViewer) {
+      return res.status(403).json({ error: 'Viewers cannot delete tasks.' });
+    }
+
     const { id } = req.params;
-    db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(id, req.user!.family_id);
+    const allInGroup = req.query.allInGroup === 'true' || req.query.allInGroup === '1';
+
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
+      id,
+      req.user!.family_id
+    ) as any;
+
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found.' });
+    }
+
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    if (!isReqAdultOrAdmin(req, currentMember) && task.assigned_member_id !== currentMember?.id) {
+      return res.status(403).json({ error: 'You do not have permission to delete this task.' });
+    }
+
+    if (allInGroup && task.task_group_id) {
+      const affectedTasks = db.prepare(
+        'SELECT id, assigned_member_id FROM tasks WHERE task_group_id = ? AND family_id = ?'
+      ).all(task.task_group_id, req.user!.family_id) as any[];
+
+      db.prepare('DELETE FROM tasks WHERE task_group_id = ? AND family_id = ?').run(
+        task.task_group_id,
+        req.user!.family_id
+      );
+
+      for (const t of affectedTasks) {
+        if (t.assigned_member_id) {
+          reconcileMemberPoints(req.user!.family_id, t.assigned_member_id);
+        }
+      }
+    } else {
+      const memberId = task.assigned_member_id;
+      db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(id, req.user!.family_id);
+      if (memberId) {
+        reconcileMemberPoints(req.user!.family_id, memberId);
+      }
+    }
+
     res.json({ success: true, message: 'Task deleted.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -16,6 +16,7 @@ interface FamilyContextType {
   fetchFamilyData: () => Promise<void>;
   addMember: (data: Partial<FamilyMember> & { login?: { enabled: boolean; username?: string; password?: string } }) => Promise<FamilyMember>;
   updateMember: (id: string, data: Partial<FamilyMember>) => Promise<FamilyMember>;
+  adjustMemberPoints: (id: string, data: { points?: number; delta?: number; notes?: string }) => Promise<any>;
   removeMember: (id: string) => Promise<void>;
   manageMemberLogin: (id: string, data: { enabled: boolean; username?: string; password?: string }) => Promise<any>;
   updateHousehold: (data: { name?: string; timezone?: string; viewerPassword?: string; colorSoftness?: number; color_softness?: number }) => Promise<void>;
@@ -107,6 +108,12 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     return updated;
   };
 
+  const adjustMemberPoints = async (id: string, data: { points?: number; delta?: number; notes?: string }) => {
+    const res = await api.adjustMemberPoints(id, data);
+    await fetchFamilyData();
+    return res;
+  };
+
   const removeMember = async (id: string) => {
     await api.deleteMember(id);
     await fetchFamilyData();
@@ -143,6 +150,7 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
         fetchFamilyData,
         addMember,
         updateMember,
+        adjustMemberPoints,
         removeMember,
         manageMemberLogin,
         updateHousehold,

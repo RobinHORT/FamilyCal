@@ -10,32 +10,39 @@ import {
   isSameDay,
   isToday,
   differenceInCalendarDays,
+  parseISO,
 } from 'date-fns';
-import { CalendarEvent, FamilyMember, EventType } from '../../types';
-import { EventPill, MultiDayEventBar } from './EventCard';
+import { CalendarEvent, FamilyMember, EventType, Task } from '../../types';
+import { MultiDayEventBar, MultiDayTaskBar } from './EventCard';
 
 interface MonthGridProps {
   currentDate: Date;
   selectedDay: Date;
   onSelectDay: (day: Date) => void;
-  filteredEvents: CalendarEvent[];
+  filteredEvents?: CalendarEvent[];
+  tasks?: Task[];
   members: FamilyMember[];
   eventTypes?: EventType[];
   onEditEvent?: (event: CalendarEvent) => void;
+  onEditTask?: (task: Task) => void;
   maxVisibleSlots?: number;
   className?: string;
 }
 
-interface WeekEventSlot {
-  event: CalendarEvent;
+interface WeekItemSlot {
+  type: 'event' | 'task';
+  id: string;
+  event?: CalendarEvent;
+  task?: Task;
   startCol: number;
   endCol: number;
   isStartOfWeek: boolean;
   isEndOfWeek: boolean;
   isMultiDay: boolean;
+  sortTime: number;
 }
 
-interface ScheduledSlot extends WeekEventSlot {
+interface ScheduledSlot extends WeekItemSlot {
   slotIdx: number;
 }
 
@@ -43,10 +50,12 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
   currentDate,
   selectedDay,
   onSelectDay,
-  filteredEvents,
+  filteredEvents = [],
+  tasks = [],
   members,
   eventTypes,
   onEditEvent,
+  onEditTask,
   maxVisibleSlots = 2,
   className = '',
 }) => {
@@ -103,10 +112,71 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
     });
   };
 
+  const getTasksForDay = (dayDate: Date) => {
+    if (!tasks || tasks.length === 0) return [];
+    const dayStr = format(dayDate, 'yyyy-MM-dd');
+
+    return tasks.filter((t) => {
+      if (t.is_archived) return false;
+
+      const sStr = (t as any).start_date || (t as any).start_time;
+      const eStr = (t as any).end_date || (t as any).end_time || t.due_date;
+
+      if (sStr && eStr) {
+        const s = parseISO(sStr.slice(0, 10));
+        const e = parseISO(eStr.slice(0, 10));
+        if (isSameDay(s, dayDate) || (dayDate >= s && dayDate <= e)) return true;
+      } else if (t.due_date && t.due_date.slice(0, 10) === dayStr) {
+        return true;
+      }
+
+      if (!t.due_date) return false;
+      const due = parseISO(t.due_date.slice(0, 10));
+      if (dayDate < due) return false;
+
+      const rule = t.recurring_rule;
+      if (!rule || rule === 'none') return false;
+
+      const interval = Math.max(1, Number(t.recurring_interval) || 1);
+      const diffDays = differenceInCalendarDays(dayDate, due);
+
+      if (rule === 'daily') {
+        return diffDays % interval === 0;
+      }
+      if (rule === 'weekly') {
+        return dayDate.getDay() === due.getDay() && Math.floor(diffDays / 7) % interval === 0;
+      }
+      if (rule === 'fortnightly') {
+        return dayDate.getDay() === due.getDay() && Math.floor(diffDays / 14) % interval === 0;
+      }
+      if (rule === 'monthly') {
+        return dayDate.getDate() === due.getDate();
+      }
+      if (rule === 'custom') {
+        const unit = t.recurring_unit || 'day';
+        if (unit === 'day') return diffDays % interval === 0;
+        if (unit === 'week') return dayDate.getDay() === due.getDay() && Math.floor(diffDays / 7) % interval === 0;
+        if (unit === 'month') return dayDate.getDate() === due.getDate();
+      }
+
+      return false;
+    });
+  };
+
   const isEventMultiDay = (evt: CalendarEvent) => {
     if (evt.recurring_rule && evt.recurring_rule !== 'none') return false;
     const s = new Date(evt.start_time);
     const e = new Date(evt.end_time);
+    return !isSameDay(s, e) && e > s;
+  };
+
+  const isTaskMultiDay = (t: Task) => {
+    if (t.recurring_rule && t.recurring_rule !== 'none') return false;
+    const sStr = (t as any).start_date || (t as any).start_time;
+    const eStr = (t as any).end_date || (t as any).end_time || t.due_date;
+    if (!sStr || !eStr) return false;
+    const s = parseISO(sStr.slice(0, 10));
+    const e = parseISO(eStr.slice(0, 10));
     return !isSameDay(s, e) && e > s;
   };
 
@@ -126,14 +196,16 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
       {/* Week Rows */}
       <div className="flex-1 flex flex-col divide-y divide-gray-100 bg-gray-50/20 min-h-0 h-full">
         {weeks.map((weekDays, weekIdx) => {
-          // Map events in this week
-          const weekEventsMap = new Map<string, WeekEventSlot>();
+          // Map all items in this week
+          const weekItemsMap = new Map<string, WeekItemSlot>();
 
+          // Process Events
           weekDays.forEach((dayDate, colIdx) => {
             const dayEvts = getEventsForDay(dayDate);
             dayEvts.forEach((evt) => {
               const multi = isEventMultiDay(evt);
-              if (!weekEventsMap.has(evt.id)) {
+              const key = `evt-${evt.id}`;
+              if (!weekItemsMap.has(key)) {
                 let startCol = colIdx;
                 let endCol = colIdx;
                 const evtStart = new Date(evt.start_time);
@@ -159,16 +231,19 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                 const isStartOfWeek = multi && startCol === 0 && evtStart < weekDays[0];
                 const isEndOfWeek = multi && endCol === 6 && evtEnd >= addDays(weekDays[6], 1);
 
-                weekEventsMap.set(evt.id, {
+                weekItemsMap.set(key, {
+                  type: 'event',
+                  id: evt.id,
                   event: evt,
                   startCol,
                   endCol,
                   isStartOfWeek,
                   isEndOfWeek,
                   isMultiDay: multi,
+                  sortTime: evtStart.getTime(),
                 });
               } else if (multi) {
-                const info = weekEventsMap.get(evt.id)!;
+                const info = weekItemsMap.get(key)!;
                 if (colIdx > info.endCol) {
                   info.endCol = colIdx;
                 }
@@ -176,20 +251,74 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
             });
           });
 
-          // Sort week events
-          const sortedWeekEvents = Array.from(weekEventsMap.values()).sort((a, b) => {
+          // Process Tasks
+          weekDays.forEach((dayDate, colIdx) => {
+            const dayTasks = getTasksForDay(dayDate);
+            dayTasks.forEach((task) => {
+              const multi = isTaskMultiDay(task);
+              const key = `task-${task.id}`;
+              if (!weekItemsMap.has(key)) {
+                let startCol = colIdx;
+                let endCol = colIdx;
+                const sStr = (task as any).start_date || (task as any).start_time || task.due_date;
+                const eStr = (task as any).end_date || (task as any).end_time || task.due_date;
+                const taskStart = sStr ? parseISO(sStr.slice(0, 10)) : dayDate;
+                const taskEnd = eStr ? parseISO(eStr.slice(0, 10)) : dayDate;
+
+                if (multi) {
+                  for (let c = 0; c < 7; c++) {
+                    const d = weekDays[c];
+                    if (isSameDay(taskStart, d) || (d >= taskStart && d <= taskEnd)) {
+                      startCol = c;
+                      break;
+                    }
+                  }
+                  for (let c = 6; c >= 0; c--) {
+                    const d = weekDays[c];
+                    if (isSameDay(taskEnd, d) || (d >= taskStart && d <= taskEnd)) {
+                      endCol = c;
+                      break;
+                    }
+                  }
+                }
+
+                const isStartOfWeek = multi && startCol === 0 && taskStart < weekDays[0];
+                const isEndOfWeek = multi && endCol === 6 && taskEnd >= addDays(weekDays[6], 1);
+
+                weekItemsMap.set(key, {
+                  type: 'task',
+                  id: task.id,
+                  task,
+                  startCol,
+                  endCol,
+                  isStartOfWeek,
+                  isEndOfWeek,
+                  isMultiDay: multi,
+                  sortTime: taskStart.getTime(),
+                });
+              } else if (multi) {
+                const info = weekItemsMap.get(key)!;
+                if (colIdx > info.endCol) {
+                  info.endCol = colIdx;
+                }
+              }
+            });
+          });
+
+          // Sort week items: multi-day with longest span first, then startCol, then sortTime
+          const sortedWeekItems = Array.from(weekItemsMap.values()).sort((a, b) => {
             const spanA = a.endCol - a.startCol;
             const spanB = b.endCol - b.startCol;
-            if (spanA !== spanB) return spanB - spanA; // Longer multi-day first
+            if (spanA !== spanB) return spanB - spanA;
             if (a.startCol !== b.startCol) return a.startCol - b.startCol;
-            return new Date(a.event.start_time).getTime() - new Date(b.event.start_time).getTime();
+            return a.sortTime - b.sortTime;
           });
 
           // Slot assignment matrix
           const scheduledSlots: ScheduledSlot[] = [];
           const occupied: boolean[][] = Array.from({ length: 7 }, () => []);
 
-          sortedWeekEvents.forEach((item) => {
+          sortedWeekItems.forEach((item) => {
             let slot = 0;
             while (true) {
               let isFree = true;
@@ -219,9 +348,10 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                   const isCurrentMonth = isSameMonth(dayDate, monthStart);
                   const isDayToday = isToday(dayDate);
                   const isSelected = isSameDay(dayDate, selectedDay);
-                  const allDayEvts = getEventsForDay(dayDate);
-                  const totalEventsOnDay = allDayEvts.length;
-                  const overflowCount = Math.max(0, totalEventsOnDay - maxVisibleSlots);
+                  const itemsOnThisDay = scheduledSlots.filter(
+                    (s) => s.startCol <= colIdx && colIdx <= s.endCol
+                  );
+                  const overflowCount = itemsOnThisDay.filter((s) => s.slotIdx >= maxVisibleSlots).length;
 
                   return (
                     <div
@@ -262,30 +392,57 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                 })}
               </div>
 
-              {/* Events Overlay Layer */}
+              {/* Overlay Layer for Spanning Continuous Multi-Day and Single-Day Pills */}
               <div className="absolute inset-x-0 top-[26px] sm:top-8 px-1 sm:px-1.5 flex flex-col gap-1 pointer-events-none z-10">
                 {Array.from({ length: maxVisibleSlots }).map((_, slotIdx) => {
-                  const eventsInRow = scheduledSlots.filter((s) => s.slotIdx === slotIdx);
+                  const itemsInRow = scheduledSlots.filter((s) => s.slotIdx === slotIdx);
 
                   return (
                     <div key={slotIdx} className="grid grid-cols-7 gap-x-1 sm:gap-x-1.5 h-5 sm:h-5.5 relative">
-                      {eventsInRow.map((slotInfo) => {
-                        const { event, startCol, endCol, isStartOfWeek, isEndOfWeek } = slotInfo;
+                      {itemsInRow.map((slotInfo) => {
+                        const { type, event, task, startCol, endCol, isStartOfWeek, isEndOfWeek } = slotInfo;
                         const spanCount = endCol - startCol + 1;
 
-                        return (
-                          <MultiDayEventBar
-                            key={event.id + '-' + slotIdx}
-                            event={event}
-                            startCol={startCol}
-                            endCol={endCol}
-                            spanCount={spanCount}
-                            isStartOfWeek={isStartOfWeek}
-                            isEndOfWeek={isEndOfWeek}
-                            members={members}
-                            eventTypes={eventTypes}
-                          />
-                        );
+                        if (type === 'event' && event) {
+                          return (
+                            <MultiDayEventBar
+                              key={`evt-${event.id}-${slotIdx}`}
+                              event={event}
+                              startCol={startCol}
+                              endCol={endCol}
+                              spanCount={spanCount}
+                              isStartOfWeek={isStartOfWeek}
+                              isEndOfWeek={isEndOfWeek}
+                              members={members}
+                              eventTypes={eventTypes}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditEvent?.(event);
+                              }}
+                            />
+                          );
+                        }
+
+                        if (type === 'task' && task) {
+                          return (
+                            <MultiDayTaskBar
+                              key={`task-${task.id}-${slotIdx}`}
+                              task={task}
+                              startCol={startCol}
+                              endCol={endCol}
+                              spanCount={spanCount}
+                              isStartOfWeek={isStartOfWeek}
+                              isEndOfWeek={isEndOfWeek}
+                              members={members}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditTask?.(task);
+                              }}
+                            />
+                          );
+                        }
+
+                        return null;
                       })}
                     </div>
                   );

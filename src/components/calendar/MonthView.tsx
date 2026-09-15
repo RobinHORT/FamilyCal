@@ -141,6 +141,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
                 filteredEvents={filteredEvents}
                 members={members}
                 eventTypes={eventTypes}
+                onEditEvent={openEditEventModal}
                 maxVisibleSlots={2}
                 className="h-full flex-1 min-h-0 overflow-hidden"
               />
@@ -182,6 +183,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
               filteredEvents={filteredEvents}
               members={members}
               eventTypes={eventTypes}
+              onEditEvent={openEditEventModal}
               maxVisibleSlots={3}
             />
           </motion.div>

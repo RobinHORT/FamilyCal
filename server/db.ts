@@ -56,6 +56,7 @@ export function initDatabase() {
       birthday TEXT,
       is_active INTEGER DEFAULT 1,
       permissions TEXT,
+      points INTEGER DEFAULT 0,
       created_at TEXT NOT NULL,
       FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
@@ -120,6 +121,8 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
       family_id TEXT NOT NULL,
+      task_group_id TEXT,
+      parent_task_id TEXT,
       title TEXT NOT NULL,
       description TEXT,
       due_date TEXT,
@@ -129,15 +132,40 @@ export function initDatabase() {
       completed_at TEXT,
       is_archived INTEGER DEFAULT 0,
       assigned_member_id TEXT,
+      assigned_member_ids TEXT DEFAULT '[]',
       priority TEXT DEFAULT 'medium', -- low, medium, high
       recurring_rule TEXT DEFAULT 'none', -- none, daily, weekly, fortnightly, monthly, custom
       recurring_interval INTEGER DEFAULT 1,
       recurring_unit TEXT DEFAULT 'day',
+      assignment_mode TEXT DEFAULT 'assigned', -- assigned, open, everyone
+      claim_limit INTEGER DEFAULT 1, -- 1 = single person, 0 = multiple people
+      points INTEGER DEFAULT 0,
+      points_awarded INTEGER DEFAULT 0,
+      claimed_at TEXT,
+      claimed_by TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
       FOREIGN KEY (assigned_member_id) REFERENCES family_members(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS task_points_records (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      points_awarded INTEGER NOT NULL DEFAULT 0,
+      completed INTEGER NOT NULL DEFAULT 1,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_task_points_member_task ON task_points_records(member_id, task_id);
+    CREATE INDEX IF NOT EXISTS idx_task_points_family_member ON task_points_records(family_id, member_id);
 
     CREATE TABLE IF NOT EXISTS google_accounts (
       id TEXT PRIMARY KEY,
@@ -294,8 +322,15 @@ export function initDatabase() {
       console.log('Migration applied: added assigned_member_ids column to tasks table.');
     }
 
-    // Populate assigned_member_ids for tasks if empty or assigned_member_id is set
-    const tasksToUpdate = db.prepare(`SELECT id, family_id, assigned_member_id, assigned_member_ids, due_date, created_at FROM tasks`).all() as any[];
+    const hasTaskGroupId = taskCols.some((col) => col.name === 'task_group_id');
+    if (!hasTaskGroupId) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN task_group_id TEXT;`).run();
+      console.log('Migration applied: added task_group_id column to tasks table.');
+    }
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_tasks_group ON tasks(task_group_id);`).run();
+
+    // Populate assigned_member_ids and split tasks assigned to multiple members into individual entries
+    const tasksToUpdate = db.prepare(`SELECT * FROM tasks`).all() as any[];
     const todayStr = new Date().toISOString().split('T')[0];
 
     for (const t of tasksToUpdate) {
@@ -321,16 +356,148 @@ export function initDatabase() {
       }
 
       const cleanDueDate = t.due_date ? t.due_date.split('T')[0] : (t.created_at ? t.created_at.split('T')[0] : todayStr);
-      const primaryMemberId = ids.length > 0 ? ids[0] : null;
 
-      db.prepare(`
-        UPDATE tasks
-        SET assigned_member_ids = ?, assigned_member_id = ?, due_date = ?
-        WHERE id = ?
-      `).run(JSON.stringify(ids), primaryMemberId, cleanDueDate, t.id);
+      if (ids.length > 1) {
+        // Multi-member task: assign a shared task_group_id and ensure an individual task entry per member
+        const taskGroupId = t.task_group_id || ('grp_' + uuidv4().slice(0, 8));
+        const firstMemberId = ids[0];
+
+        // Update current row for first member
+        db.prepare(`
+          UPDATE tasks
+          SET task_group_id = ?, assigned_member_id = ?, assigned_member_ids = ?, due_date = ?
+          WHERE id = ?
+        `).run(taskGroupId, firstMemberId, JSON.stringify([firstMemberId]), cleanDueDate, t.id);
+
+        // For remaining members, insert separate rows if not already present
+        for (const remMemberId of ids.slice(1)) {
+          const existingSibling = db.prepare(`
+            SELECT id FROM tasks WHERE task_group_id = ? AND assigned_member_id = ?
+          `).get(taskGroupId, remMemberId);
+
+          if (!existingSibling) {
+            const siblingTaskId = 'tsk_' + uuidv4().slice(0, 8);
+            db.prepare(`
+              INSERT INTO tasks (
+                id, family_id, task_group_id, title, description, due_date, due_time,
+                reminder_minutes, completed, completed_at, is_archived, assigned_member_id,
+                assigned_member_ids, priority, recurring_rule, recurring_interval,
+                recurring_unit, created_at, updated_at
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              siblingTaskId,
+              t.family_id,
+              taskGroupId,
+              t.title,
+              t.description || null,
+              cleanDueDate,
+              t.due_time || null,
+              t.reminder_minutes,
+              t.completed || 0,
+              t.completed_at || null,
+              t.is_archived || 0,
+              remMemberId,
+              JSON.stringify([remMemberId]),
+              t.priority || 'medium',
+              t.recurring_rule || 'none',
+              t.recurring_interval || 1,
+              t.recurring_unit || 'day',
+              t.created_at,
+              t.updated_at
+            );
+          }
+        }
+      } else {
+        // Single-member task
+        const primaryMemberId = ids.length > 0 ? ids[0] : null;
+        const taskGroupId = t.task_group_id || t.id;
+        db.prepare(`
+          UPDATE tasks
+          SET task_group_id = ?, assigned_member_ids = ?, assigned_member_id = ?, due_date = ?
+          WHERE id = ?
+        `).run(taskGroupId, JSON.stringify(primaryMemberId ? [primaryMemberId] : []), primaryMemberId, cleanDueDate, t.id);
+      }
     }
   } catch (taskMigErr) {
     console.warn('Tasks table migration check warning:', taskMigErr);
+  }
+
+  // Safe startup migration: Ensure assignment_mode, claim_limit, points, points_awarded, parent_task_id, claimed_at, claimed_by exist on tasks
+  try {
+    const taskCols = db.prepare(`PRAGMA table_info(tasks);`).all() as Array<{ name: string }>;
+    
+    const hasAssignmentMode = taskCols.some((col) => col.name === 'assignment_mode');
+    if (!hasAssignmentMode) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN assignment_mode TEXT DEFAULT 'assigned';`).run();
+      console.log('Migration applied: added assignment_mode column to tasks table.');
+    }
+
+    const hasClaimLimit = taskCols.some((col) => col.name === 'claim_limit');
+    if (!hasClaimLimit) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN claim_limit INTEGER DEFAULT 1;`).run();
+      console.log('Migration applied: added claim_limit column to tasks table.');
+    }
+
+    const hasPoints = taskCols.some((col) => col.name === 'points');
+    if (!hasPoints) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN points INTEGER DEFAULT 0;`).run();
+      console.log('Migration applied: added points column to tasks table.');
+    }
+
+    const hasPointsAwarded = taskCols.some((col) => col.name === 'points_awarded');
+    if (!hasPointsAwarded) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN points_awarded INTEGER DEFAULT 0;`).run();
+      console.log('Migration applied: added points_awarded column to tasks table.');
+    }
+
+    const hasParentTaskId = taskCols.some((col) => col.name === 'parent_task_id');
+    if (!hasParentTaskId) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN parent_task_id TEXT;`).run();
+      console.log('Migration applied: added parent_task_id column to tasks table.');
+    }
+
+    const hasClaimedAt = taskCols.some((col) => col.name === 'claimed_at');
+    if (!hasClaimedAt) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN claimed_at TEXT;`).run();
+      console.log('Migration applied: added claimed_at column to tasks table.');
+    }
+
+    const hasClaimedBy = taskCols.some((col) => col.name === 'claimed_by');
+    if (!hasClaimedBy) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN claimed_by TEXT;`).run();
+      console.log('Migration applied: added claimed_by column to tasks table.');
+    }
+
+    // Safe startup migration: Ensure points column exists on family_members
+    const memberCols = db.prepare(`PRAGMA table_info(family_members);`).all() as Array<{ name: string }>;
+    const hasMemberPoints = memberCols.some((col) => col.name === 'points');
+    if (!hasMemberPoints) {
+      db.prepare(`ALTER TABLE family_members ADD COLUMN points INTEGER DEFAULT 0;`).run();
+      console.log('Migration applied: added points column to family_members table.');
+    }
+
+    // Ensure task_points_records table and index exist
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS task_points_records (
+        id TEXT PRIMARY KEY,
+        family_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        points_awarded INTEGER NOT NULL DEFAULT 0,
+        completed INTEGER NOT NULL DEFAULT 1,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+        FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      );
+    `).run();
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_points_member_task ON task_points_records(member_id, task_id);`).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_task_points_family_member ON task_points_records(family_id, member_id);`).run();
+  } catch (pointsMigErr) {
+    console.warn('Points & assignment migration check warning:', pointsMigErr);
   }
 
   // Safe startup migration: Ensure event_type column exists on events in existing databases
@@ -779,49 +946,151 @@ function seedInitialDataIfEmpty() {
 
   // 6. Seed Helpful Initial Tasks
   const insertTask = db.prepare(`
-    INSERT INTO tasks (id, family_id, title, description, due_date, due_time, completed, assigned_member_id, priority, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (
+      id, family_id, task_group_id, title, description, due_date, due_time,
+      completed, assigned_member_id, assigned_member_ids, priority,
+      assignment_mode, claim_limit, points, points_awarded, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const t1Id = 'tsk_' + uuidv4().slice(0, 8);
   insertTask.run(
-    'tsk_' + uuidv4().slice(0, 8),
+    t1Id,
     familyId,
+    t1Id,
     'Pick up groceries for pizza night 🛒',
     'Flour, mozzarella, tomatoes, pepperoni, fresh basil',
     makeIsoDate(0, 15, 0).slice(0, 10),
     '15:00',
     0,
     member2Id,
+    JSON.stringify([member2Id]),
     'high',
+    'assigned',
+    1,
+    15,
+    0,
     now,
     now
   );
 
+  const t2Id = 'tsk_' + uuidv4().slice(0, 8);
   insertTask.run(
-    'tsk_' + uuidv4().slice(0, 8),
+    t2Id,
     familyId,
+    t2Id,
     'Sign Maya permission slip for zoo field trip 📝',
     'Must be returned by Friday morning',
     makeIsoDate(2, 9, 0).slice(0, 10),
     '09:00',
     0,
     memberAdminId,
+    JSON.stringify([memberAdminId]),
     'medium',
+    'assigned',
+    1,
+    10,
+    0,
     now,
     now
   );
 
+  const t3Id = 'tsk_' + uuidv4().slice(0, 8);
   insertTask.run(
-    'tsk_' + uuidv4().slice(0, 8),
+    t3Id,
     familyId,
+    t3Id,
     'Pack soccer gear into trunk 🎒',
     'Clean socks and ball',
     makeIsoDate(1, 14, 0).slice(0, 10),
     '14:00',
     1,
     member3Id,
+    JSON.stringify([member3Id]),
     'low',
+    'assigned',
+    1,
+    20,
+    20,
     now,
     now
   );
+
+  // Seed open community chore
+  const tOpenId = 'tsk_' + uuidv4().slice(0, 8);
+  insertTask.run(
+    tOpenId,
+    familyId,
+    'grp_open_' + uuidv4().slice(0, 6),
+    'Wash and vacuum the family car 🚗🧼',
+    'Wipe down dashboard, vacuum seats, and rinse outside.',
+    makeIsoDate(3, 11, 0).slice(0, 10),
+    '11:00',
+    0,
+    null,
+    JSON.stringify([]),
+    'medium',
+    'open',
+    1,
+    30,
+    0,
+    now,
+    now
+  );
+
+  // Record initial points for member 3 (completed task)
+  recordTaskCompletionPoints(familyId, member3Id, t3Id, 20, true, 'Initial seed task completion');
 }
+
+export function reconcileMemberPoints(familyId: string, memberId: string): number {
+  try {
+    const result = db.prepare(`
+      SELECT COALESCE(SUM(points_awarded), 0) as total
+      FROM task_points_records
+      WHERE family_id = ? AND member_id = ? AND completed = 1
+    `).get(familyId, memberId) as any;
+
+    const totalPoints = result ? Number(result.total) || 0 : 0;
+    db.prepare(`UPDATE family_members SET points = ? WHERE id = ?`).run(totalPoints, memberId);
+    return totalPoints;
+  } catch (err) {
+    console.error('Error reconciling member points:', err);
+    return 0;
+  }
+}
+
+export function recordTaskCompletionPoints(
+  familyId: string,
+  memberId: string,
+  taskId: string,
+  pointsToAward: number,
+  isCompleted: boolean,
+  notes?: string
+) {
+  const now = new Date().toISOString();
+  const existing = db.prepare(
+    'SELECT * FROM task_points_records WHERE member_id = ? AND task_id = ?'
+  ).get(memberId, taskId) as any;
+
+  if (existing) {
+    db.prepare(`
+      UPDATE task_points_records
+      SET points_awarded = ?, completed = ?, notes = ?, updated_at = ?
+      WHERE id = ?
+    `).run(isCompleted ? pointsToAward : 0, isCompleted ? 1 : 0, notes || null, now, existing.id);
+  } else if (isCompleted) {
+    const recordId = 'pts_' + uuidv4().slice(0, 8);
+    db.prepare(`
+      INSERT INTO task_points_records (id, family_id, member_id, task_id, points_awarded, completed, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(recordId, familyId, memberId, taskId, pointsToAward, notes || null, now, now);
+  }
+
+  // Also sync tasks.points_awarded
+  db.prepare('UPDATE tasks SET points_awarded = ? WHERE id = ?').run(isCompleted ? pointsToAward : 0, taskId);
+
+  // Recalculate member total points
+  reconcileMemberPoints(familyId, memberId);
+}
+

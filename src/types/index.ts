@@ -81,6 +81,7 @@ export interface FamilyMember {
   resolved_permissions?: UserPermissions;
   is_custom_permissions?: boolean;
   has_login?: number | boolean;
+  points?: number;
 }
 
 export interface Calendar {
@@ -139,10 +140,19 @@ export interface CalendarEvent {
 
 export type Priority = 'low' | 'medium' | 'high';
 export type TaskRecurrenceRule = 'none' | 'daily' | 'weekly' | 'fortnightly' | 'monthly' | 'custom';
+export type TaskAssignmentMode = 'assigned' | 'open' | 'everyone';
 
 export interface Task {
   id: string;
   family_id: string;
+  task_group_id?: string | null;
+  parent_task_id?: string | null;
+  assignment_mode?: TaskAssignmentMode;
+  claim_limit?: number | null;
+  points?: number;
+  points_awarded?: number;
+  claimed_at?: string | null;
+  claimed_by?: string | null;
   title: string;
   description?: string | null;
   due_date: string;

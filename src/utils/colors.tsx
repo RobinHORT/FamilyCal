@@ -416,8 +416,9 @@ export function getEventAssignmentInfo(
 
   // If no assigned member IDs provided:
   if (participatingMembers.length === 0) {
-    if ((evt as any).member_id) {
-      const singleM = allMembers.find((m) => m.id === (evt as any).member_id);
+    const singleId = (evt as any).assigned_member_id || (evt as any).member_id;
+    if (singleId) {
+      const singleM = allMembers.find((m) => m.id === singleId);
       if (singleM) {
         participatingMembers = [singleM];
       }

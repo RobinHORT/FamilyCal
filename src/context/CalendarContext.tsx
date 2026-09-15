@@ -64,16 +64,19 @@ interface CalendarContextType {
   createTask: (data: Partial<Task>) => Promise<Task>;
   updateTask: (id: string, data: Partial<Task>) => Promise<Task>;
   toggleTask: (id: string) => Promise<Task>;
-  archiveTask: (id: string) => Promise<Task>;
-  deleteTask: (id: string) => Promise<void>;
+  claimTask: (id: string) => Promise<Task>;
+  unclaimTask: (id: string) => Promise<any>;
+  adjustTaskPoints: (id: string, data: { points_awarded: number; notes?: string }) => Promise<Task>;
+  archiveTask: (id: string, options?: { allInGroup?: boolean }) => Promise<Task>;
+  deleteTask: (id: string, options?: { allInGroup?: boolean }) => Promise<void>;
   triggerGoogleSync: () => Promise<{ success: boolean; eventsSynced: number }>;
 }
 
 const CalendarContext = createContext<CalendarContextType | undefined>(undefined);
 
 export function CalendarProvider({ children }: { children: ReactNode }) {
-  const { user, memberProfile } = useAuth();
-  const { members } = useFamily();
+  const { user, memberProfile, refreshProfile } = useAuth();
+  const { members, fetchFamilyData } = useFamily();
 
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -402,30 +405,55 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const createTask = async (data: Partial<Task>) => {
     const created = await api.createTask(data);
     await fetchTasks();
+    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
     return created;
   };
 
   const updateTask = async (id: string, data: Partial<Task>) => {
     const updated = await api.updateTask(id, data);
     await fetchTasks();
+    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
     return updated;
   };
 
   const toggleTask = async (id: string) => {
     const updated = await api.toggleTask(id);
     await fetchTasks();
+    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
     return updated;
   };
 
-  const archiveTask = async (id: string) => {
-    const updated = await api.archiveTask(id);
+  const claimTask = async (id: string) => {
+    const claimed = await api.claimTask(id);
+    await fetchTasks();
+    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
+    return claimed;
+  };
+
+  const unclaimTask = async (id: string) => {
+    const res = await api.unclaimTask(id);
+    await fetchTasks();
+    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
+    return res;
+  };
+
+  const adjustTaskPoints = async (id: string, data: { points_awarded: number; notes?: string }) => {
+    const updated = await api.adjustTaskPoints(id, data);
+    await fetchTasks();
+    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
+    return updated;
+  };
+
+  const archiveTask = async (id: string, options?: { allInGroup?: boolean }) => {
+    const updated = await api.archiveTask(id, options);
     await fetchTasks();
     return updated;
   };
 
-  const deleteTask = async (id: string) => {
-    await api.deleteTask(id);
+  const deleteTask = async (id: string, options?: { allInGroup?: boolean }) => {
+    await api.deleteTask(id, options);
     await fetchTasks();
+    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
   };
 
   const triggerGoogleSync = async () => {
@@ -500,6 +528,9 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         createTask,
         updateTask,
         toggleTask,
+        claimTask,
+        unclaimTask,
+        adjustTaskPoints,
         archiveTask,
         deleteTask,
         triggerGoogleSync,

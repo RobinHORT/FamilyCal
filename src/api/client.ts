@@ -124,6 +124,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  adjustMemberPoints: (id: string, data: { points?: number; delta?: number; notes?: string }) =>
+    fetchJson<{ success: boolean; member: FamilyMember; points: number }>(`/api/family/members/${id}/points`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   manageMemberLogin: (id: string, data: { enabled: boolean; username?: string; password?: string }) =>
     fetchJson<{ success: boolean; message: string; has_login: number; user_is_active: number; user_username?: string }>(
       `/api/family/members/${id}/login`,
@@ -231,13 +237,30 @@ export const api = {
       method: 'POST',
     }),
 
-  archiveTask: (id: string) =>
-    fetchJson<Task>(`/api/tasks/${id}/archive`, {
+  claimTask: (id: string) =>
+    fetchJson<Task>(`/api/tasks/${id}/claim`, {
       method: 'POST',
     }),
 
-  deleteTask: (id: string) =>
-    fetchJson<{ success: boolean }>(`/api/tasks/${id}`, {
+  unclaimTask: (id: string) =>
+    fetchJson<{ success: boolean; message?: string } | Task>(`/api/tasks/${id}/unclaim`, {
+      method: 'POST',
+    }),
+
+  adjustTaskPoints: (id: string, data: { points_awarded: number; notes?: string }) =>
+    fetchJson<Task>(`/api/tasks/${id}/adjust-points`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  archiveTask: (id: string, options?: { allInGroup?: boolean }) =>
+    fetchJson<Task>(`/api/tasks/${id}/archive${options?.allInGroup ? '?allInGroup=true' : ''}`, {
+      method: 'POST',
+      body: options ? JSON.stringify(options) : undefined,
+    }),
+
+  deleteTask: (id: string, options?: { allInGroup?: boolean }) =>
+    fetchJson<{ success: boolean }>(`/api/tasks/${id}${options?.allInGroup ? '?allInGroup=true' : ''}`, {
       method: 'DELETE',
     }),
 

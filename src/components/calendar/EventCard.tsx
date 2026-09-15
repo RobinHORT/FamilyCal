@@ -1,8 +1,8 @@
 import React from 'react';
 import { format } from 'date-fns';
-import { CalendarEvent, EventType, FamilyMember } from '../../types';
+import { CalendarEvent, EventType, FamilyMember, Task } from '../../types';
 import { getEventAssignmentInfo, getEventTypeInfo, getPastelColorInfo } from '../../utils/colors';
-import { Users, Clock, MapPin, Repeat, Globe } from 'lucide-react';
+import { Users, Clock, MapPin, Repeat, Globe, CheckCircle2, Circle } from 'lucide-react';
 
 interface EventCardProps {
   event: CalendarEvent;
@@ -287,72 +287,148 @@ export const MultiDayEventBar: React.FC<MultiDayEventBarProps> = ({
   const assignmentInfo = getEventAssignmentInfo(event, members);
   const eventType = getEventTypeInfo(event.title, event.event_type, eventTypes);
 
+  // Rounding matches Google Calendar continuous multi-day pills across week boundaries
+  let roundedClass = 'rounded-md';
+  if (spanCount > 1 || isStartOfWeek || isEndOfWeek) {
+    if (isStartOfWeek && isEndOfWeek) {
+      roundedClass = 'rounded-none';
+    } else if (isStartOfWeek) {
+      roundedClass = 'rounded-r-md rounded-l-none';
+    } else if (isEndOfWeek) {
+      roundedClass = 'rounded-l-md rounded-r-none';
+    } else {
+      roundedClass = 'rounded-md';
+    }
+  }
+
+  // Google Calendar title rule: title only appears on the first segment
+  const isFirstSegment = !isStartOfWeek;
+
   return (
     <div
       onClick={onClick}
       style={{
         gridColumnStart: startCol + 1,
         gridColumnEnd: endCol + 2,
+        background: assignmentInfo.isFamilyEvent
+          ? assignmentInfo.segmentedGradient
+          : assignmentInfo.primaryColorInfo.hex,
+        borderColor: assignmentInfo.borderHex,
       }}
-      className={`relative h-5 sm:h-5.5 flex items-center select-none group z-10 ${
+      className={`relative h-5 sm:h-5.5 flex items-center select-none group z-10 border shadow-2xs hover:shadow-xs transition-shadow ${roundedClass} ${
         onClick ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none'
       } ${className}`}
       title={`${event.title} (${assignmentInfo.label} • ${eventType.name})`}
     >
-      {/* Background Layer: Visually split at each calendar-day boundary */}
-      <div
-        className="absolute inset-0 grid gap-x-1 sm:gap-x-1.5 pointer-events-none"
-        style={{ gridTemplateColumns: `repeat(${spanCount}, minmax(0, 1fr))` }}
-      >
-        {Array.from({ length: spanCount }).map((_, idx) => {
-          const isFirstSegment = idx === 0;
-          const isLastSegment = idx === spanCount - 1;
-
-          let roundedClass = 'rounded-none';
-          if (isFirstSegment && isLastSegment) {
-            roundedClass = isStartOfWeek && isEndOfWeek
-              ? 'rounded-none'
-              : isStartOfWeek
-              ? 'rounded-r-md'
-              : isEndOfWeek
-              ? 'rounded-l-md'
-              : 'rounded-md';
-          } else if (isFirstSegment) {
-            roundedClass = isStartOfWeek ? 'rounded-none' : 'rounded-l-md';
-          } else if (isLastSegment) {
-            roundedClass = isEndOfWeek ? 'rounded-none' : 'rounded-r-md';
-          }
-
-          return (
+      {/* Visual boundary lines for multi-member family event */}
+      {assignmentInfo.isFamilyEvent && (
+        <div className="absolute inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0">
+          {assignmentInfo.participatingMembers.map((m, idx) => (
             <div
-              key={idx}
-              style={{
-                background: assignmentInfo.isFamilyEvent
-                  ? assignmentInfo.segmentedGradient
-                  : assignmentInfo.primaryColorInfo.hex,
-                borderColor: assignmentInfo.borderHex,
-              }}
-              className={`h-full border shadow-2xs group-hover:shadow-xs transition-shadow ${roundedClass}`}
-            >
-              {assignmentInfo.isFamilyEvent && (
-                <div className="inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0 h-full">
-                  {assignmentInfo.participatingMembers.map((m, mIdx) => (
-                    <div
-                      key={m.id || mIdx}
-                      className="flex-1 h-full border-r border-black/8 last:border-r-0"
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              key={m.id || idx}
+              className="flex-1 h-full border-r border-black/8 last:border-r-0"
+            />
+          ))}
+        </div>
+      )}
 
-      {/* Title Layer: Continuous visible title across full event span */}
-      <div className="relative z-10 px-1.5 sm:px-2 w-full truncate font-extrabold text-slate-900 text-[10px] sm:text-[11px] leading-none">
-        {event.title} {isStartOfWeek && startCol === 0 ? '(cont.)' : ''}
-      </div>
+      {/* Title Layer: displayed only on the first segment */}
+      {isFirstSegment && (
+        <div className="relative z-10 px-1.5 sm:px-2 w-full truncate font-extrabold text-slate-900 text-[10px] sm:text-[11px] leading-none">
+          {event.title}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export interface MultiDayTaskBarProps {
+  task: Task;
+  startCol: number;
+  endCol: number;
+  spanCount: number;
+  isStartOfWeek: boolean;
+  isEndOfWeek: boolean;
+  members: FamilyMember[];
+  onClick?: (e: React.MouseEvent) => void;
+  className?: string;
+}
+
+export const MultiDayTaskBar: React.FC<MultiDayTaskBarProps> = ({
+  task,
+  startCol,
+  endCol,
+  spanCount,
+  isStartOfWeek,
+  isEndOfWeek,
+  members,
+  onClick,
+  className = '',
+}) => {
+  const assignmentInfo = getEventAssignmentInfo(task as any, members);
+
+  // Rounding matches Google Calendar continuous multi-day pills across week boundaries
+  let roundedClass = 'rounded-md';
+  if (spanCount > 1 || isStartOfWeek || isEndOfWeek) {
+    if (isStartOfWeek && isEndOfWeek) {
+      roundedClass = 'rounded-none';
+    } else if (isStartOfWeek) {
+      roundedClass = 'rounded-r-md rounded-l-none';
+    } else if (isEndOfWeek) {
+      roundedClass = 'rounded-l-md rounded-r-none';
+    } else {
+      roundedClass = 'rounded-md';
+    }
+  }
+
+  // Google Calendar title rule: title only appears on the first segment
+  const isFirstSegment = !isStartOfWeek;
+
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        gridColumnStart: startCol + 1,
+        gridColumnEnd: endCol + 2,
+        background: assignmentInfo.isFamilyEvent
+          ? assignmentInfo.segmentedGradient
+          : assignmentInfo.primaryColorInfo.hex,
+        borderColor: assignmentInfo.borderHex,
+      }}
+      className={`relative h-5 sm:h-5.5 flex items-center select-none group z-10 border shadow-2xs hover:shadow-xs transition-shadow ${roundedClass} ${
+        task.completed ? 'opacity-75' : ''
+      } ${
+        onClick ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none'
+      } ${className}`}
+      title={`${task.title} (${assignmentInfo.label})`}
+    >
+      {/* Visual boundary lines for multi-member family task */}
+      {assignmentInfo.isFamilyEvent && (
+        <div className="absolute inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0">
+          {assignmentInfo.participatingMembers.map((m, idx) => (
+            <div
+              key={m.id || idx}
+              className="flex-1 h-full border-r border-black/8 last:border-r-0"
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Title & Checkbox Layer: displayed only on the first segment */}
+      {isFirstSegment && (
+        <div className="relative z-10 px-1.5 sm:px-2 w-full truncate font-extrabold text-slate-900 text-[10px] sm:text-[11px] leading-none flex items-center gap-1">
+          <span className="shrink-0 p-0 text-slate-800">
+            {task.completed ? (
+              <CheckCircle2 className="w-2.5 h-2.5 fill-blue-600 text-white" />
+            ) : (
+              <Circle className="w-2.5 h-2.5 stroke-[2.2]" />
+            )}
+          </span>
+          <span className={`truncate ${task.completed ? 'line-through text-slate-700' : 'text-slate-900'}`}>
+            {task.title}
+          </span>
+        </div>
+      )}
     </div>
   );
 };
