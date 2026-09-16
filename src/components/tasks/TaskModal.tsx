@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CheckSquare, Calendar, Clock, AlertCircle, Trash2, Archive, Check, Bell, BellOff, BellRing, Repeat, Users, Award, Sparkles, UserCheck, UserPlus } from 'lucide-react';
+import { X, CheckSquare, Calendar, Clock, AlertCircle, Trash2, Archive, Check, Bell, BellOff, BellRing, Repeat, Users, Award, Sparkles, UserCheck, UserPlus, Hand } from 'lucide-react';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
@@ -486,7 +486,7 @@ export const TaskModal: React.FC = () => {
                   Assignment Mode
                 </label>
                 <span className="text-[11px] font-semibold text-emerald-600">
-                  {assignmentMode === 'assigned' ? 'Specific Members' : assignmentMode === 'open' ? 'Open to Claim' : 'All Active Members'}
+                  {assignmentMode === 'assigned' ? 'Specific Members' : assignmentMode === 'open' ? 'Open Chore (Shared)' : 'All Active Members'}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-2">
@@ -507,11 +507,11 @@ export const TaskModal: React.FC = () => {
                   onClick={() => setAssignmentMode('open')}
                   className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex flex-col items-center gap-1 ${
                     assignmentMode === 'open'
-                      ? 'bg-blue-50 text-blue-800 border-blue-300 ring-2 ring-blue-500/20 shadow-xs'
+                      ? 'bg-amber-50 text-amber-800 border-amber-300 ring-2 ring-amber-500/20 shadow-xs'
                       : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
                   }`}
                 >
-                  <UserPlus className="w-4 h-4 text-blue-600" />
+                  <Hand className="w-4 h-4 text-amber-600" />
                   <span>Open Chore</span>
                 </button>
                 <button
@@ -532,51 +532,14 @@ export const TaskModal: React.FC = () => {
 
           {/* Mode-specific detail panel */}
           {assignmentMode === 'open' ? (
-            <div className="p-3.5 bg-blue-50/70 border border-blue-200/80 rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
-                  <UserPlus className="w-3.5 h-3.5 text-blue-600" />
-                  Claim Limit Configuration
-                </span>
-                <span className="text-[10px] uppercase font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
-                  {claimLimit === 1 ? 'Single Claim' : 'Multiple Claims'}
-                </span>
+            <div className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                <Hand className="w-4 h-4 text-amber-600" />
+                <span>Shared open chore</span>
               </div>
-              <p className="text-[11px] text-blue-800">
-                This task is not initially assigned. Eligible family members can see it and choose <strong>Claim Task</strong>.
+              <p className="text-[11px] text-amber-700">
+                This is a shared chore. It does not need to be claimed. Any family member can complete it directly from the agenda.
               </p>
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setClaimLimit(1)}
-                  className={`p-2.5 rounded-xl text-xs border text-left transition-all cursor-pointer ${
-                    claimLimit === 1
-                      ? 'bg-white text-blue-900 border-blue-400 ring-2 ring-blue-500/20 shadow-xs font-bold'
-                      : 'bg-blue-100/40 text-blue-700 border-transparent hover:bg-blue-100/70 font-medium'
-                  }`}
-                >
-                  <div className="font-bold flex items-center justify-between">
-                    <span>Single Person</span>
-                    {claimLimit === 1 && <Check className="w-3.5 h-3.5 text-blue-600 stroke-[3]" />}
-                  </div>
-                  <div className="text-[10px] text-blue-600 mt-0.5">First to claim owns task</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setClaimLimit(0)}
-                  className={`p-2.5 rounded-xl text-xs border text-left transition-all cursor-pointer ${
-                    claimLimit === 0
-                      ? 'bg-white text-blue-900 border-blue-400 ring-2 ring-blue-500/20 shadow-xs font-bold'
-                      : 'bg-blue-100/40 text-blue-700 border-transparent hover:bg-blue-100/70 font-medium'
-                  }`}
-                >
-                  <div className="font-bold flex items-center justify-between">
-                    <span>Multiple People</span>
-                    {claimLimit === 0 && <Check className="w-3.5 h-3.5 text-blue-600 stroke-[3]" />}
-                  </div>
-                  <div className="text-[10px] text-blue-600 mt-0.5">Any member claims own copy</div>
-                </button>
-              </div>
             </div>
           ) : assignmentMode === 'everyone' ? (
             <div className="p-3.5 bg-purple-50/70 border border-purple-200/80 rounded-xl space-y-1.5">

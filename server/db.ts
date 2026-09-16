@@ -22,7 +22,7 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS families (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      timezone TEXT DEFAULT 'UTC',
+      timezone TEXT DEFAULT 'Australia/Melbourne',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -154,6 +154,7 @@ export function initDatabase() {
       family_id TEXT NOT NULL,
       member_id TEXT NOT NULL,
       task_id TEXT NOT NULL,
+      occurrence_date TEXT DEFAULT '',
       points_awarded INTEGER NOT NULL DEFAULT 0,
       completed INTEGER NOT NULL DEFAULT 1,
       notes TEXT,
@@ -163,9 +164,6 @@ export function initDatabase() {
       FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE,
       FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
     );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_task_points_member_task ON task_points_records(member_id, task_id);
-    CREATE INDEX IF NOT EXISTS idx_task_points_family_member ON task_points_records(family_id, member_id);
 
     CREATE TABLE IF NOT EXISTS google_accounts (
       id TEXT PRIMARY KEY,
@@ -559,6 +557,7 @@ export function initDatabase() {
         family_id TEXT NOT NULL,
         member_id TEXT NOT NULL,
         task_id TEXT NOT NULL,
+        occurrence_date TEXT DEFAULT '',
         points_awarded INTEGER NOT NULL DEFAULT 0,
         completed INTEGER NOT NULL DEFAULT 1,
         notes TEXT,
@@ -569,7 +568,19 @@ export function initDatabase() {
         FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
       );
     `).run();
-    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_points_member_task ON task_points_records(member_id, task_id);`).run();
+
+    const pointsCols = db.prepare(`PRAGMA table_info(task_points_records);`).all() as Array<{ name: string }>;
+    const hasOccDate = pointsCols.some((col) => col.name === 'occurrence_date');
+    if (!hasOccDate) {
+      db.prepare(`ALTER TABLE task_points_records ADD COLUMN occurrence_date TEXT DEFAULT '';`).run();
+      console.log('Migration applied: added occurrence_date column to task_points_records.');
+      try {
+        db.prepare(`DROP INDEX IF EXISTS idx_task_points_member_task;`).run();
+      } catch (e) {
+        console.warn('Could not drop old task points index:', e);
+      }
+    }
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_points_member_task_occ ON task_points_records(member_id, task_id, occurrence_date);`).run();
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_task_points_family_member ON task_points_records(family_id, member_id);`).run();
   } catch (pointsMigErr) {
     console.warn('Points & assignment migration check warning:', pointsMigErr);
@@ -659,6 +670,25 @@ export function initDatabase() {
       }
     } catch (shopMigErr) {
       console.warn('Shopping list migration check warning:', shopMigErr);
+    }
+
+    // Migration: ensure timezone column on families and migrate legacy/unset timezones to Australia/Melbourne
+    try {
+      const famCols = db.prepare(`PRAGMA table_info(families);`).all() as Array<{ name: string }>;
+      const hasTz = famCols.some((col) => col.name === 'timezone');
+      if (!hasTz) {
+        db.prepare(`ALTER TABLE families ADD COLUMN timezone TEXT DEFAULT 'Australia/Melbourne';`).run();
+        console.log('Migration applied: added timezone column to families table.');
+      }
+      // Migrate existing households with missing, blank, or legacy timezones (such as America/New_York or UTC) to Australia/Melbourne
+      db.prepare(`
+        UPDATE families
+        SET timezone = 'Australia/Melbourne'
+        WHERE timezone IS NULL OR timezone = '' OR timezone = 'UTC' OR timezone = 'America/New_York';
+      `).run();
+      console.log('Migration applied: verified household timezone default is Australia/Melbourne.');
+    } catch (tzMigErr) {
+      console.warn('Families timezone migration check warning:', tzMigErr);
     }
 
     // Make sure all existing families have default event types seeded
@@ -925,7 +955,7 @@ function seedInitialDataIfEmpty() {
   db.prepare(`
     INSERT INTO families (id, name, timezone, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
-  `).run(familyId, 'The Yimly Family', 'America/New_York', now, now);
+  `).run(familyId, 'The Yimly Family', 'Australia/Melbourne', now, now);
 
   // 2. Create Admin User with username 'Alex'
   db.prepare(`
@@ -1198,12 +1228,13 @@ export function recordTaskCompletionPoints(
   taskId: string,
   pointsToAward: number,
   isCompleted: boolean,
-  notes?: string
+  notes?: string,
+  occurrenceDate: string = ''
 ) {
   const now = new Date().toISOString();
   const existing = db.prepare(
-    'SELECT * FROM task_points_records WHERE member_id = ? AND task_id = ?'
-  ).get(memberId, taskId) as any;
+    'SELECT * FROM task_points_records WHERE member_id = ? AND task_id = ? AND occurrence_date = ?'
+  ).get(memberId, taskId, occurrenceDate) as any;
 
   if (existing) {
     db.prepare(`
@@ -1214,13 +1245,17 @@ export function recordTaskCompletionPoints(
   } else if (isCompleted) {
     const recordId = 'pts_' + uuidv4().slice(0, 8);
     db.prepare(`
-      INSERT INTO task_points_records (id, family_id, member_id, task_id, points_awarded, completed, notes, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
-    `).run(recordId, familyId, memberId, taskId, pointsToAward, notes || null, now, now);
+      INSERT INTO task_points_records (id, family_id, member_id, task_id, occurrence_date, points_awarded, completed, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(recordId, familyId, memberId, taskId, occurrenceDate, pointsToAward, notes || null, now, now);
   }
 
-  // Also sync tasks.points_awarded
-  db.prepare('UPDATE tasks SET points_awarded = ? WHERE id = ?').run(isCompleted ? pointsToAward : 0, taskId);
+  // Also sync tasks.points_awarded if non-recurring or matches main due_date
+  try {
+    db.prepare('UPDATE tasks SET points_awarded = ? WHERE id = ?').run(isCompleted ? pointsToAward : 0, taskId);
+  } catch (err) {
+    // Ignore if fails
+  }
 
   // Recalculate member total points
   reconcileMemberPoints(familyId, memberId);

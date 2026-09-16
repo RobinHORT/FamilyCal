@@ -50,7 +50,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Priority, Task } from '../../types';
 import { getEventAssignmentInfo, getPastelColorInfo } from '../../utils/colors';
 import { formatReminderLabel } from '../../utils/taskNotifications';
-import { getTaskAssignedMemberIds, canMemberToggleTask, canMemberClaimTask, isAdultOrAdminRole, isTaskDateActionable, getHouseholdTodayDateString } from '../../utils/taskPermissions';
+import { getTaskAssignedMemberIds, canMemberToggleTask, canMemberClaimTask, isAdultOrAdminRole, isTaskDateActionable, getHouseholdTodayDateString, isTaskOccurrenceCompleted } from '../../utils/taskPermissions';
 import { MonthGrid } from '../calendar/MonthGrid';
 
 function formatTaskRepeatLabel(rule?: string | null, interval?: number | null, unit?: string | null): string | null {
@@ -189,7 +189,7 @@ export const TasksView: React.FC = () => {
   const getTasksForDay = (day: Date): Task[] => {
     const dayStr = format(day, 'yyyy-MM-dd');
 
-    const dayTasks = visibleTasks
+    return visibleTasks
       .filter((task) => {
         if (!task.due_date) return false;
         const taskDueStr = task.due_date.slice(0, 10);
@@ -197,14 +197,10 @@ export const TasksView: React.FC = () => {
 
         // Check recurring rule
         try {
-          // Spawned child participant tasks are tied to their specific occurrence date and never project recurrence
           if (task.parent_task_id) return false;
 
           const dueDate = parseISO(taskDueStr);
           if (isNaN(dueDate.getTime()) || day < dueDate) return false;
-
-          // Completed recurring tasks should not project forward into future dates
-          if (task.completed && day > dueDate) return false;
 
           const rule = task.recurring_rule;
           if (!rule || rule === 'none') return false;
@@ -242,42 +238,20 @@ export const TasksView: React.FC = () => {
         return false;
       })
       .map((task) => {
+        const isCompleted = isTaskOccurrenceCompleted(task, dayStr, currentMemberId);
         // For recurring tasks, each occurrence has its own occurrence due date
         if (task.recurring_rule && task.recurring_rule !== 'none' && task.due_date && task.due_date.slice(0, 10) !== dayStr) {
           return {
             ...task,
             due_date: dayStr,
+            completed: isCompleted,
           };
         }
-        return task;
+        return {
+          ...task,
+          completed: isCompleted,
+        };
       });
-
-    // Deduplicate: if there is a spawned child task for a parent task on this day,
-    // we should filter out the parent template card appropriately.
-    return dayTasks.filter((t) => {
-      const isParentTemplate = t.recurring_rule && t.recurring_rule !== 'none' && !t.parent_task_id;
-      if (isParentTemplate) {
-        // Find if there is any spawned child for this parent on this day
-        const childOnThisDay = dayTasks.find(
-          (c) => c.parent_task_id === t.id && c.due_date === dayStr
-        );
-        if (childOnThisDay) {
-          const claimLimit = t.claim_limit !== undefined && t.claim_limit !== null ? Number(t.claim_limit) : 1;
-          // If claimLimit is 1, hide parent template completely since it's fully claimed
-          if (claimLimit === 1) {
-            return false;
-          }
-          // If claimLimit > 1 or 0, hide if the current member has already claimed it
-          const currentMemberClaimed = dayTasks.some(
-            (c) => c.parent_task_id === t.id && c.assigned_member_id === currentMemberId && c.due_date === dayStr
-          );
-          if (currentMemberClaimed) {
-            return false;
-          }
-        }
-      }
-      return true;
-    });
   };
 
   // Navigation handlers using CalendarContext methods
@@ -416,14 +390,6 @@ export const TasksView: React.FC = () => {
     const isActionable = isCompleted || toggleCheck.canToggle;
 
     const isOpenTask = task.assignment_mode === 'open';
-    const assignedIds = getTaskAssignedMemberIds(task);
-    const isClaimed = assignedIds.length > 0;
-    const isClaimedByMe = Boolean(currentMemberId && assignedIds.includes(currentMemberId));
-    const claimCheck = canMemberClaimTask(task, currentMemberId, isViewer, tasks, householdTimezone);
-    const isBeforeDueDate = Boolean(task.due_date && !isTaskDateActionable(task.due_date, householdTimezone));
-    const canShowClaimButton = isOpenTask && !isCompleted && !isClaimedByMe && !isViewer && !isBeforeDueDate && (
-      claimCheck.canClaim || (!isClaimed || (task.claim_limit !== undefined && task.claim_limit !== 1))
-    );
 
     const assignmentInfo = getEventAssignmentInfo(task as any, members);
 
@@ -432,13 +398,13 @@ export const TasksView: React.FC = () => {
         key={task.id}
         onClick={() => openEditTaskModal(task)}
         style={{
-          background: (isOpenTask && !isClaimed)
-            ? '#F0F9FF'
+          background: (isOpenTask && !isCompleted)
+            ? '#FEF3C7' // Golden color for open chores!
             : (assignmentInfo.isFamilyEvent
                 ? assignmentInfo.segmentedGradient
                 : assignmentInfo.primaryColorInfo.hex),
-          borderColor: (isOpenTask && !isClaimed)
-            ? '#BAE6FD'
+          borderColor: (isOpenTask && !isCompleted)
+            ? '#FDE68A' // Golden border!
             : assignmentInfo.borderHex,
         }}
         className={`relative p-3.5 sm:p-4 rounded-2xl border shadow-2xs hover:shadow-md active:scale-99 transition-all cursor-pointer flex flex-col justify-between gap-2.5 group overflow-hidden w-full max-w-full min-w-0 box-border ${
@@ -482,22 +448,17 @@ export const TasksView: React.FC = () => {
               )}
             </button>
 
-            {isOpenTask && !isClaimed ? (
+            {isOpenTask ? (
               <>
                 <div
-                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-2xs shrink-0 bg-sky-500"
-                  title="Open Chore - Available for anyone to claim"
+                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-2xs shrink-0 bg-amber-500"
+                  title="Open Chore - Shared chore available for anyone to complete"
                 >
                   <Hand className="w-3.5 h-3.5" />
                 </div>
-                <span className="text-xs font-extrabold text-sky-950 tracking-tight shrink-0">
+                <span className="text-xs font-extrabold text-amber-950 tracking-tight shrink-0">
                   Open Chore
                 </span>
-                {task.claim_limit && task.claim_limit > 1 ? (
-                  <span className="text-[10px] font-semibold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-full">
-                    Limit: {task.claim_limit}
-                  </span>
-                ) : null}
               </>
             ) : assignmentInfo.isFamilyEvent ? (
               <>
@@ -540,11 +501,6 @@ export const TasksView: React.FC = () => {
                 <span className="text-xs font-bold text-slate-800 tracking-tight truncate min-w-0 flex-1">
                   {assignmentInfo.label}
                 </span>
-                {isOpenTask && isClaimed && (
-                  <span className="text-[9px] font-bold text-blue-700 bg-blue-100/80 px-1.5 py-0.5 rounded-full shrink-0">
-                    Claimed
-                  </span>
-                )}
               </>
             )}
           </div>
@@ -560,41 +516,6 @@ export const TasksView: React.FC = () => {
                 <Sparkles className="w-2.5 h-2.5 text-amber-600 shrink-0" />
                 <span>{task.completed && task.points_awarded !== undefined ? `+${task.points_awarded}` : `${task.points}`} pts</span>
               </span>
-            )}
-
-            {/* Claim Task Button for Open Uncompleted Tasks */}
-            {canShowClaimButton && (
-              <button
-                type="button"
-                disabled={!claimCheck.canClaim || claimingTaskIds[task.id]}
-                onClick={(e) => handleClaim(e, task)}
-                className={`px-2.5 py-1 text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center gap-1 shrink-0 ${
-                  claimCheck.canClaim && !claimingTaskIds[task.id]
-                    ? 'bg-sky-600 hover:bg-sky-700 active:scale-95 text-white cursor-pointer'
-                    : 'bg-slate-200/80 text-slate-400 cursor-not-allowed border border-slate-300/50'
-                }`}
-                title={claimingTaskIds[task.id] ? 'Claiming task...' : (claimCheck.canClaim ? 'Claim this chore' : (claimCheck.reason || 'Cannot claim this task'))}
-              >
-                <Hand className="w-3 h-3" />
-                <span>{claimingTaskIds[task.id] ? 'Claiming...' : 'Claim'}</span>
-              </button>
-            )}
-
-            {/* Claimed Status & Release Button */}
-            {isOpenTask && !isCompleted && isClaimedByMe && (
-              <div className="flex items-center gap-1 shrink-0">
-                <span className="text-[10px] font-bold text-sky-700 bg-sky-100/90 border border-sky-200 px-2 py-0.5 rounded-md">
-                  Claimed by You
-                </span>
-                <button
-                  type="button"
-                  onClick={(e) => handleUnclaim(e, task)}
-                  className="text-[10px] text-slate-500 hover:text-rose-600 font-semibold cursor-pointer underline px-1"
-                  title="Release this chore back to open"
-                >
-                  Release
-                </button>
-              </div>
             )}
 
             {getPriorityBadge(task.priority)}

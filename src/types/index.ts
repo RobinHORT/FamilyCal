@@ -142,6 +142,13 @@ export type Priority = 'low' | 'medium' | 'high';
 export type TaskRecurrenceRule = 'none' | 'daily' | 'weekly' | 'fortnightly' | 'monthly' | 'custom';
 export type TaskAssignmentMode = 'assigned' | 'open' | 'everyone';
 
+export interface TaskCompletion {
+  id: string;
+  member_id: string;
+  occurrence_date: string;
+  points_awarded: number;
+}
+
 export interface Task {
   id: string;
   family_id: string;
@@ -172,6 +179,7 @@ export interface Task {
   recurring_unit?: 'day' | 'week' | 'month' | null;
   created_at?: string;
   updated_at?: string;
+  completions?: TaskCompletion[];
 }
 
 export interface BirthdayItem {

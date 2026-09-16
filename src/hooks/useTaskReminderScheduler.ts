@@ -23,12 +23,58 @@ function saveNotifiedMap(map: Record<string, number>) {
   } catch {}
 }
 
+function parseTimestampInTimezone(
+  dateOrDateTimeStr: string,
+  timeStr?: string | null,
+  tz: string = 'Australia/Melbourne'
+): number {
+  if (!dateOrDateTimeStr) return NaN;
+
+  // If already full ISO with Z or offset, standard Date parsing is exact
+  if (dateOrDateTimeStr.includes('Z') || /[+-]\d{2}:\d{2}$/.test(dateOrDateTimeStr)) {
+    return new Date(dateOrDateTimeStr).getTime();
+  }
+
+  const datePart = dateOrDateTimeStr.includes('T')
+    ? dateOrDateTimeStr.split('T')[0]
+    : dateOrDateTimeStr.split(' ')[0];
+
+  const timePart = timeStr && /^\d{1,2}:\d{2}/.test(timeStr)
+    ? (timeStr.length === 5 ? `${timeStr}:00` : timeStr)
+    : (dateOrDateTimeStr.includes('T') ? (dateOrDateTimeStr.split('T')[1] || '09:00:00') : '09:00:00');
+
+  const [yearStr, monthStr, dayStr] = datePart.split('-');
+  const [hourStr, minStr, secStr] = timePart.split(':');
+
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const day = parseInt(dayStr, 10);
+  const hour = parseInt(hourStr || '9', 10);
+  const minute = parseInt(minStr || '0', 10);
+  const second = parseInt(secStr || '0', 10);
+
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return NaN;
+
+  // Create UTC guess and adjust using Intl.DateTimeFormat for the household's timezone
+  try {
+    const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    const invDate = new Date(
+      utcDate.toLocaleString('en-US', { timeZone: tz || 'Australia/Melbourne' })
+    );
+    const diff = utcDate.getTime() - invDate.getTime();
+    return utcDate.getTime() + diff;
+  } catch {
+    return new Date(`${datePart}T${timePart}`).getTime();
+  }
+}
+
 export function useTaskReminderScheduler(
   events: CalendarEvent[] = [],
   tasks: Task[] = [],
   currentUser: User | null = null,
   currentMemberProfile: FamilyMember | null = null,
-  members: FamilyMember[] = []
+  members: FamilyMember[] = [],
+  householdTimezone: string = 'Australia/Melbourne'
 ) {
   const isCheckingRef = useRef(false);
 
@@ -79,10 +125,8 @@ export function useTaskReminderScheduler(
             continue;
           }
 
-          const startDateObj = new Date(event.start_time);
-          if (isNaN(startDateObj.getTime())) continue;
-
-          const startMs = startDateObj.getTime();
+          const startMs = parseTimestampInTimezone(event.start_time, null, householdTimezone);
+          if (isNaN(startMs)) continue;
           const reminderMs = Number(event.reminder_minutes) * 60 * 1000;
           const triggerMs = startMs - reminderMs;
 
@@ -153,20 +197,13 @@ export function useTaskReminderScheduler(
             continue;
           }
 
-          // Build due Date
-          let dueDateTimeString = task.due_date;
-          if (task.due_time && /^\d{1,2}:\d{2}/.test(task.due_time)) {
-            const timePart =
-              task.due_time.length === 5 ? `${task.due_time}:00` : task.due_time;
-            dueDateTimeString = `${task.due_date}T${timePart}`;
-          } else {
-            dueDateTimeString = `${task.due_date}T09:00:00`;
-          }
+          const dueMs = parseTimestampInTimezone(
+            task.due_date,
+            task.due_time || '09:00:00',
+            householdTimezone
+          );
+          if (isNaN(dueMs)) continue;
 
-          const dueDateObj = new Date(dueDateTimeString);
-          if (isNaN(dueDateObj.getTime())) continue;
-
-          const dueMs = dueDateObj.getTime();
           const reminderMs = Number(task.reminder_minutes) * 60 * 1000;
           const triggerMs = dueMs - reminderMs;
 
@@ -240,5 +277,5 @@ export function useTaskReminderScheduler(
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [events, tasks, currentUser, currentMemberProfile, members]);
+  }, [events, tasks, currentUser, currentMemberProfile, members, householdTimezone]);
 }

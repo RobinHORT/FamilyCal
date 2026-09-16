@@ -12,28 +12,41 @@ export function getTaskAssignedMemberIds(task: Task): string[] {
 
 /**
  * Returns today's date formatted as YYYY-MM-DD in the household's configured local timezone.
- * Falls back to local system calendar date.
+ * Defaults to 'Australia/Melbourne'.
  */
 export function getHouseholdTodayDateString(householdTimezone?: string | null): string {
-  if (householdTimezone) {
+  const tz = householdTimezone || 'Australia/Melbourne';
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+
+    if (year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+  } catch {
+    // Fallback if invalid timezone
     try {
       const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: householdTimezone,
+        timeZone: 'Australia/Melbourne',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
       }).formatToParts(new Date());
-
       const year = parts.find((p) => p.type === 'year')?.value;
       const month = parts.find((p) => p.type === 'month')?.value;
       const day = parts.find((p) => p.type === 'day')?.value;
-
       if (year && month && day) {
         return `${year}-${month}-${day}`;
       }
-    } catch {
-      // Fallback if invalid timezone
-    }
+    } catch {}
   }
 
   // Fallback to local system calendar date
@@ -69,6 +82,26 @@ export function isAdultOrAdminRole(user?: any, memberProfile?: any): boolean {
   return false;
 }
 
+export function isTaskOccurrenceCompleted(
+  task: Task,
+  occurrenceDate: string,
+  currentMemberId?: string | null
+): boolean {
+  if (!task.completions || task.completions.length === 0) {
+    return Boolean(task.completed);
+  }
+  const dateStr = occurrenceDate.slice(0, 10);
+  if (task.assignment_mode === 'open') {
+    return task.completions.some(
+      (c) => c.occurrence_date === dateStr && c.member_id === currentMemberId
+    );
+  } else {
+    return task.completions.some(
+      (c) => c.occurrence_date === dateStr
+    );
+  }
+}
+
 export function canMemberToggleTask(
   task: Task,
   currentMemberId?: string | null,
@@ -80,38 +113,41 @@ export function canMemberToggleTask(
     return { canToggle: false, reason: 'Viewer mode cannot modify tasks' };
   }
 
-  // If task is open and unclaimed
-  if (task.assignment_mode === 'open' && !task.assigned_member_id) {
-    return { canToggle: false, reason: 'This task is open and must be claimed before it can be completed' };
-  }
-
-  // Adults and Administrators can complete or reopen on behalf of any family member
-  if (isAdultOrAdmin) {
-    return { canToggle: true };
-  }
-
-  const assignedIds = getTaskAssignedMemberIds(task);
-  const isAssigned = currentMemberId ? assignedIds.includes(currentMemberId) : false;
-
-  if (!isAssigned) {
-    return { canToggle: false, reason: 'Only the assigned family member can complete this task' };
-  }
-
-  if (!task.due_date) {
-    return { canToggle: false, reason: 'Task requires a due date' };
-  }
-
-  // If reopening a completed task, allow assigned member
+  // If already completed (checked), always allow unticking to reopen
   if (task.completed) {
     return { canToggle: true };
   }
 
-  if (!isTaskDateActionable(task.due_date, householdTimezone)) {
-    const formattedDueDate = task.due_date.trim().slice(0, 10);
+  // Verify due date rule: tasks cannot be completed before their due date or outside scheduled date
+  const todayStr = getHouseholdTodayDateString(householdTimezone);
+  const taskDateStr = task.due_date ? task.due_date.trim().slice(0, 10) : '';
+
+  if (taskDateStr > todayStr) {
     return {
       canToggle: false,
-      reason: `Task cannot be completed before its due date (${formattedDueDate})`,
+      reason: `Tasks cannot be completed before their due date (${taskDateStr})`,
     };
+  }
+
+  if (taskDateStr < todayStr) {
+    return {
+      canToggle: false,
+      reason: `Tasks can only be completed on their scheduled due date (${taskDateStr})`,
+    };
+  }
+
+  // Adults and Administrators can complete on behalf of any family member on scheduled date
+  if (isAdultOrAdmin) {
+    return { canToggle: true };
+  }
+
+  // For Assigned: Child can only complete if assigned to them
+  if (task.assignment_mode !== 'open') {
+    const assignedIds = getTaskAssignedMemberIds(task);
+    const isAssigned = currentMemberId ? assignedIds.includes(currentMemberId) : false;
+    if (!isAssigned) {
+      return { canToggle: false, reason: 'Only the assigned family member can complete this task' };
+    }
   }
 
   return { canToggle: true };
@@ -124,65 +160,5 @@ export function canMemberClaimTask(
   allTasks: Task[] = [],
   householdTimezone?: string | null
 ): { canClaim: boolean; reason?: string } {
-  if (isViewer) {
-    return { canClaim: false, reason: 'Viewers cannot claim tasks' };
-  }
-  if (!currentMemberId) {
-    return { canClaim: false, reason: 'Please select or log in as a family member to claim' };
-  }
-
-  // Before the task's due date: the task CANNOT be claimed.
-  // On the due date: the task CAN be claimed.
-  // After the due date: the task CAN still be claimed.
-  // This applies to both assigned tasks and Open Tasks.
-  // For recurring tasks, each occurrence must use its own due date.
-  if (task.due_date && !isTaskDateActionable(task.due_date, householdTimezone)) {
-    const formattedDueDate = task.due_date.trim().slice(0, 10);
-    return {
-      canClaim: false,
-      reason: `Task cannot be claimed before its due date (${formattedDueDate})`,
-    };
-  }
-
-  if (task.assignment_mode !== 'open') {
-    return { canClaim: false, reason: 'Task is not open for claiming' };
-  }
-
-  const groupId = task.task_group_id || task.id;
-  const targetDueDate = task.due_date ? task.due_date.trim().slice(0, 10) : undefined;
-  const relatedTasks = allTasks.filter(
-    (t) => (t.task_group_id === groupId || t.parent_task_id === task.id || t.id === task.id)
-  );
-
-  const alreadyClaimed = relatedTasks.some((t) => 
-    t.assigned_member_id === currentMemberId &&
-    (!targetDueDate || (t.due_date && t.due_date.trim().slice(0, 10) === targetDueDate))
-  );
-  if (alreadyClaimed) {
-    return { canClaim: false, reason: 'You have already claimed this task' };
-  }
-
-  const claimLimit = task.claim_limit !== undefined && task.claim_limit !== null ? Number(task.claim_limit) : 1;
-  if (claimLimit === 1) {
-    if (task.assigned_member_id) {
-      return { canClaim: false, reason: 'This task has already been claimed' };
-    }
-    const isClaimedByAnyoneOnThisDate = relatedTasks.some((t) => 
-      t.assigned_member_id !== null &&
-      (!targetDueDate || (t.due_date && t.due_date.trim().slice(0, 10) === targetDueDate))
-    );
-    if (isClaimedByAnyoneOnThisDate) {
-      return { canClaim: false, reason: 'This task has already been claimed' };
-    }
-  } else if (claimLimit > 1) {
-    const claimedCount = relatedTasks.filter((t) => 
-      t.assigned_member_id !== null &&
-      (!targetDueDate || (t.due_date && t.due_date.trim().slice(0, 10) === targetDueDate))
-    ).length;
-    if (claimedCount >= claimLimit) {
-      return { canClaim: false, reason: 'Claim limit reached for this task' };
-    }
-  }
-
-  return { canClaim: true };
+  return { canClaim: false, reason: 'Claiming is disabled. Open chores can be completed directly by any member.' };
 }

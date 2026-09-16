@@ -138,8 +138,8 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Automatic Device Reminder Scheduler: checks and fires real device notifications on due reminders
-  // only to members involved in the Event or Task
-  useTaskReminderScheduler(events, tasks, user, memberProfile, members);
+  // only to members involved in the Event or Task using the household's authoritative timezone
+  useTaskReminderScheduler(events, tasks, user, memberProfile, members, family?.timezone || 'Australia/Melbourne');
 
   // Deep-link handler: open event modal if ?eventId=... is in URL
   useEffect(() => {
