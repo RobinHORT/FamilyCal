@@ -2748,14 +2748,40 @@ router.delete('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response)
       'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
     ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
 
-    if (!isReqAdultOrAdmin(req, currentMember) && task.assigned_member_id !== currentMember?.id) {
-      return res.status(403).json({ error: 'You do not have permission to delete this task.' });
+    const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
+
+    // If not adult or admin, member can only delete tasks directly assigned to them
+    if (!isAdultAdmin) {
+      let assignedMemberIds: string[] = [];
+      try {
+        if (task.assigned_member_ids) {
+          assignedMemberIds = JSON.parse(task.assigned_member_ids);
+        }
+      } catch {}
+
+      const isAssigned =
+        (task.assigned_member_id && task.assigned_member_id === currentMember?.id) ||
+        (currentMember?.id && assignedMemberIds.includes(currentMember.id));
+
+      if (!isAssigned) {
+        return res.status(403).json({ error: 'You do not have permission to delete this task.' });
+      }
     }
 
-    if (allInGroup && task.task_group_id) {
+    // Only adults and admins can delete across the whole group
+    const allowGroupDelete = isAdultAdmin && allInGroup && Boolean(task.task_group_id);
+
+    if (allowGroupDelete && task.task_group_id) {
       const affectedTasks = db.prepare(
         'SELECT id, assigned_member_id FROM tasks WHERE task_group_id = ? AND family_id = ?'
       ).all(task.task_group_id, req.user!.family_id) as any[];
+
+      for (const t of affectedTasks) {
+        db.prepare('DELETE FROM task_points_records WHERE task_id = ? AND family_id = ?').run(
+          t.id,
+          req.user!.family_id
+        );
+      }
 
       db.prepare('DELETE FROM tasks WHERE task_group_id = ? AND family_id = ?').run(
         task.task_group_id,
@@ -2768,19 +2794,33 @@ router.delete('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response)
         }
       }
     } else {
-      // If this task has child participant tasks, clean them up and reconcile their points
+      // If this task has child participant tasks (multi-person / everyone tasks)
       const childTasks = db.prepare(
         'SELECT id, assigned_member_id FROM tasks WHERE parent_task_id = ? AND family_id = ?'
       ).all(id, req.user!.family_id) as any[];
 
       if (childTasks.length > 0) {
-        db.prepare('DELETE FROM tasks WHERE parent_task_id = ? AND family_id = ?').run(id, req.user!.family_id);
+        for (const ct of childTasks) {
+          db.prepare('DELETE FROM task_points_records WHERE task_id = ? AND family_id = ?').run(
+            ct.id,
+            req.user!.family_id
+          );
+        }
+        db.prepare('DELETE FROM tasks WHERE parent_task_id = ? AND family_id = ?').run(
+          id,
+          req.user!.family_id
+        );
         for (const ct of childTasks) {
           if (ct.assigned_member_id) {
             reconcileMemberPoints(req.user!.family_id, ct.assigned_member_id);
           }
         }
       }
+
+      db.prepare('DELETE FROM task_points_records WHERE task_id = ? AND family_id = ?').run(
+        id,
+        req.user!.family_id
+      );
 
       const memberId = task.assigned_member_id;
       db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(id, req.user!.family_id);

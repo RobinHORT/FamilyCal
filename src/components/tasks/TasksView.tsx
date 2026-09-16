@@ -23,6 +23,7 @@ import {
   Sparkles,
   UserPlus,
   Hand,
+  AlertCircle,
 } from 'lucide-react';
 import {
   format,
@@ -129,6 +130,11 @@ export const TasksView: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [claimingTaskIds, setClaimingTaskIds] = useState<Record<string, boolean>>({});
+
+  // Task deletion state
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const [isDeletingTask, setIsDeletingTask] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Active family members list
   const activeMembers = useMemo(() => {
@@ -329,22 +335,24 @@ export const TasksView: React.FC = () => {
     }
   };
 
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
+  const handleDelete = (e: React.MouseEvent, task: Task) => {
     e.stopPropagation();
-    const target = tasks.find((t) => t.id === id);
-    const isGrouped = Boolean(
-      target?.task_group_id &&
-      tasks.filter((t) => t.task_group_id === target.task_group_id).length > 1
-    );
-    const confirmMsg = isGrouped
-      ? 'Delete this task for all assigned family members?'
-      : 'Delete this task?';
-    if (window.confirm(confirmMsg)) {
-      try {
-        await deleteTask(id, { allInGroup: true });
-      } catch (err) {
-        console.error(err);
-      }
+    setTaskToDelete(task);
+    setDeleteError(null);
+  };
+
+  const confirmDeleteTask = async () => {
+    if (!taskToDelete) return;
+    setIsDeletingTask(true);
+    setDeleteError(null);
+    try {
+      await deleteTask(taskToDelete.id, { allInGroup: true });
+      setTaskToDelete(null);
+    } catch (err: any) {
+      console.error('Failed to delete task:', err);
+      setDeleteError(err?.message || 'Failed to delete task');
+    } finally {
+      setIsDeletingTask(false);
     }
   };
 
@@ -546,14 +554,16 @@ export const TasksView: React.FC = () => {
                 >
                   <Archive className="w-3.5 h-3.5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => handleDelete(e, task.id)}
-                  className="p-1 text-slate-700 hover:text-rose-700 hover:bg-rose-500/20 rounded-lg transition-colors cursor-pointer"
-                  title="Delete task"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {(!isViewer && (isAdultOrAdmin || (currentMemberId && getTaskAssignedMemberIds(task).includes(currentMemberId)))) && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleDelete(e, task)}
+                    className="p-1 text-slate-700 hover:text-rose-700 hover:bg-rose-500/20 rounded-lg transition-colors cursor-pointer"
+                    title="Delete task"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1181,6 +1191,81 @@ export const TasksView: React.FC = () => {
         >
           <Plus className="w-6 h-6 stroke-[2.5]" />
         </button>
+      )}
+
+      {/* Task Delete Confirmation Modal */}
+      {taskToDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+          onClick={() => {
+            if (!isDeletingTask) {
+              setTaskToDelete(null);
+              setDeleteError(null);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl border border-gray-100 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-gray-900">Delete Task</h3>
+                <p className="text-xs text-gray-500">This action cannot be undone.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Are you sure you want to delete <span className="font-semibold text-gray-900">"{taskToDelete.title}"</span>?
+              {taskToDelete.task_group_id && tasks.filter((t) => t.task_group_id === taskToDelete.task_group_id).length > 1
+                ? ' This will delete the task for all assigned family members.'
+                : ''}
+            </p>
+
+            {deleteError && (
+              <div className="p-3 bg-red-50 text-red-700 text-xs rounded-xl flex items-start gap-2 border border-red-100">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingTask}
+                onClick={() => {
+                  setTaskToDelete(null);
+                  setDeleteError(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-delete-task-btn"
+                disabled={isDeletingTask}
+                onClick={confirmDeleteTask}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                {isDeletingTask ? (
+                  <>
+                    <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Task</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -454,9 +454,24 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteTask = async (id: string, options?: { allInGroup?: boolean }) => {
-    await api.deleteTask(id, options);
-    await fetchTasks();
-    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
+    const targetTask = tasks.find((t) => t.id === id);
+    const taskGroupId = targetTask?.task_group_id;
+
+    // Optimistically remove immediately from local state for instant UI update
+    setTasks((prev) =>
+      prev.filter((t) => {
+        if (t.id === id || t.parent_task_id === id) return false;
+        if (options?.allInGroup && taskGroupId && t.task_group_id === taskGroupId) return false;
+        return true;
+      })
+    );
+
+    try {
+      await api.deleteTask(id, options);
+    } finally {
+      await fetchTasks();
+      await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
+    }
   };
 
   const triggerGoogleSync = async () => {

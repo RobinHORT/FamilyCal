@@ -30,6 +30,11 @@ export const TaskModal: React.FC = () => {
   const activeMembers = members.filter((m) => m.is_active === 1);
   const currentMemberId = memberProfile?.id || members.find((m) => m.user_id === user?.id || m.id === user?.id)?.id || user?.id;
   const isAdultOrAdmin = isAdultOrAdminRole(user, memberProfile);
+  const canDelete =
+    !isViewer &&
+    Boolean(editingTask) &&
+    (isAdultOrAdmin ||
+      (currentMemberId && editingTask && getTaskAssignedMemberIds(editingTask).includes(currentMemberId)));
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -49,10 +54,12 @@ export const TaskModal: React.FC = () => {
   const [isCompleted, setIsCompleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [permState, setPermState] = useState<NotificationPermissionState>('default');
 
   useEffect(() => {
     if (isTaskModalOpen) {
+      setShowDeleteConfirm(false);
       setPermState(getNotificationPermission());
       if (editingTask) {
         setTitle(editingTask.title);
@@ -205,22 +212,25 @@ export const TaskModal: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!editingTask) return;
-    const isGrouped = Boolean(editingTask.task_group_id && tasks.filter((t) => t.task_group_id === editingTask.task_group_id).length > 1);
-    const confirmMsg = isGrouped
-      ? 'Are you sure you want to delete this task for all assigned family members?'
-      : 'Are you sure you want to delete this task?';
-    if (window.confirm(confirmMsg)) {
-      setIsSubmitting(true);
-      try {
-        await deleteTask(editingTask.id, { allInGroup: true });
-        closeTaskModal();
-      } catch (err: any) {
-        setError(err.message || 'Failed to delete task');
-      } finally {
-        setIsSubmitting(false);
-      }
+    setError(null);
+    setShowDeleteConfirm(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!editingTask) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await deleteTask(editingTask.id, { allInGroup: true });
+      setShowDeleteConfirm(false);
+      closeTaskModal();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete task');
+      setShowDeleteConfirm(false);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -753,16 +763,18 @@ export const TaskModal: React.FC = () => {
           <div className="flex items-center justify-between pt-3 border-t border-gray-100">
             {editingTask ? (
               <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  id="task-delete-btn"
-                  onClick={handleDelete}
-                  disabled={isSubmitting}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>Delete</span>
-                </button>
+                {canDelete && (
+                  <button
+                    type="button"
+                    id="task-delete-btn"
+                    onClick={handleDelete}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleToggleArchive}
@@ -799,6 +811,75 @@ export const TaskModal: React.FC = () => {
           </div>
         </form>
       </div>
+
+      {/* Delete Confirmation Overlay */}
+      {showDeleteConfirm && editingTask && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+          onClick={() => {
+            if (!isSubmitting) setShowDeleteConfirm(false);
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl border border-gray-100 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-gray-900">Delete Task</h3>
+                <p className="text-xs text-gray-500">This action cannot be undone.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Are you sure you want to delete <span className="font-semibold text-gray-900">"{editingTask.title}"</span>?
+              {editingTask.task_group_id && tasks.filter((t) => t.task_group_id === editingTask.task_group_id).length > 1
+                ? ' This will delete the task for all assigned family members.'
+                : ''}
+            </p>
+
+            {error && (
+              <div className="p-3 bg-red-50 text-red-700 text-xs rounded-xl flex items-start gap-2 border border-red-100">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-delete-task-modal-btn"
+                disabled={isSubmitting}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                {isSubmitting ? (
+                  <>
+                    <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Task</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
