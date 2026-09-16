@@ -158,3 +158,49 @@ export function isEventMultiDay(evt: CalendarEvent): boolean {
   const e = new Date(evt.end_time);
   return !isSameDay(s, e) && e > s;
 }
+
+/**
+ * Adds a given number of minutes to a date (YYYY-MM-DD) and time (HH:mm) string.
+ * Automatically handles crossing midnight into the next day(s).
+ */
+export function addMinutesToDateTime(
+  dateStr: string,
+  timeStr: string,
+  minutes: number = 30
+): { date: string; time: string } {
+  const safeDate = dateStr || format(new Date(), 'yyyy-MM-dd');
+  const safeTime = timeStr || '09:00';
+
+  const [year, month, day] = safeDate.split('-').map(Number);
+  const [hours, mins] = safeTime.split(':').map(Number);
+
+  const dt = new Date(year, (month || 1) - 1, day || 1, hours || 0, (mins || 0) + minutes, 0);
+
+  return {
+    date: format(dt, 'yyyy-MM-dd'),
+    time: format(dt, 'HH:mm'),
+  };
+}
+
+/**
+ * Checks if the end datetime is strictly after the start datetime.
+ */
+export function isEndAfterStart(
+  startDate: string,
+  startTime: string,
+  endDate: string,
+  endTime: string
+): boolean {
+  if (!startDate || !startTime || !endDate || !endTime) return false;
+
+  const [sY, sM, sD] = startDate.split('-').map(Number);
+  const [sH, sMin] = startTime.split(':').map(Number);
+  const startDt = new Date(sY, (sM || 1) - 1, sD || 1, sH || 0, sMin || 0, 0);
+
+  const [eY, eM, eD] = endDate.split('-').map(Number);
+  const [eH, eMin] = endTime.split(':').map(Number);
+  const endDt = new Date(eY, (eM || 1) - 1, eD || 1, eH || 0, eMin || 0, 0);
+
+  return endDt.getTime() > startDt.getTime();
+}
+

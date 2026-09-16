@@ -34,6 +34,8 @@ import {
 import {
   getInclusiveAllDayDates,
   formatAllDayPayloadDates,
+  addMinutesToDateTime,
+  isEndAfterStart,
 } from '../../utils/calendarDateUtils';
 
 export const EventModal: React.FC = () => {
@@ -61,7 +63,8 @@ export const EventModal: React.FC = () => {
   const [startDate, setStartDate] = useState('');
   const [startTime, setStartTime] = useState('09:00');
   const [endDate, setEndDate] = useState('');
-  const [endTime, setEndTime] = useState('10:00');
+  const [endTime, setEndTime] = useState('09:30');
+  const [isEndTimeExplicit, setIsEndTimeExplicit] = useState(false);
   const [allDay, setAllDay] = useState(false);
   const [recurringRule, setRecurringRule] = useState<RecurrenceRule>('none');
   const [recurringUntil, setRecurringUntil] = useState('');
@@ -122,7 +125,8 @@ export const EventModal: React.FC = () => {
         setStartDate(sDateStr);
         setEndDate(eDateStr);
         setStartTime('09:00');
-        setEndTime('10:00');
+        setEndTime('09:30');
+        setIsEndTimeExplicit(false);
       } else {
         const sDate = new Date(selectedEvent.start_time);
         const eDate = new Date(selectedEvent.end_time);
@@ -130,20 +134,24 @@ export const EventModal: React.FC = () => {
         setStartTime(format(sDate, 'HH:mm'));
         setEndDate(format(eDate, 'yyyy-MM-dd'));
         setEndTime(format(eDate, 'HH:mm'));
+        setIsEndTimeExplicit(true);
       }
     } else {
       // New Event Defaults
       const baseDate = eventModalInitialDate || new Date();
       const sDateStr = format(baseDate, 'yyyy-MM-dd');
+      const sTimeStr = format(baseDate, 'HH:mm') === '00:00' ? '09:00' : format(baseDate, 'HH:mm');
+      const { date: eDateStr, time: eTimeStr } = addMinutesToDateTime(sDateStr, sTimeStr, 30);
 
       setTitle('');
       setDescription('');
       setLocation('');
       setEventType('Other');
       setStartDate(sDateStr);
-      setEndDate(sDateStr);
-      setStartTime(format(baseDate, 'HH:mm') === '00:00' ? '09:00' : format(baseDate, 'HH:mm'));
-      setEndTime('10:00');
+      setStartTime(sTimeStr);
+      setEndDate(eDateStr);
+      setEndTime(eTimeStr);
+      setIsEndTimeExplicit(false);
       setAllDay(false);
       setRecurringRule('none');
       setRecurringUntil('');
@@ -208,23 +216,69 @@ export const EventModal: React.FC = () => {
     });
   };
 
+  const handleStartTimeChange = (newStartTime: string) => {
+    setStartTime(newStartTime);
+    if (!allDay) {
+      if (!isEndTimeExplicit) {
+        const { date: newEndDate, time: newEndTime } = addMinutesToDateTime(startDate, newStartTime, 30);
+        setEndDate(newEndDate);
+        setEndTime(newEndTime);
+      } else {
+        // If changing start time makes existing end time earlier than or equal to start time,
+        // automatically reset end time to 30 minutes after start time.
+        if (!isEndAfterStart(startDate, newStartTime, endDate || startDate, endTime)) {
+          const { date: newEndDate, time: newEndTime } = addMinutesToDateTime(startDate, newStartTime, 30);
+          setEndDate(newEndDate);
+          setEndTime(newEndTime);
+          setIsEndTimeExplicit(false);
+        }
+      }
+    }
+  };
+
   const handleStartDateChange = (newStartDate: string) => {
     setStartDate(newStartDate);
     if (allDay) {
-      // 1. When the user selects a Start Date, automatically set the End Date to the exact same date
+      // When the user selects a Start Date in All-Day mode, automatically set the End Date to the exact same date
       setEndDate(newStartDate);
     } else {
-      // 5. Normal timed event behavior (if end date is before new start date, update end date)
-      if (endDate && endDate < newStartDate) {
-        setEndDate(newStartDate);
+      if (!isEndTimeExplicit) {
+        const { date: newEndDate, time: newEndTime } = addMinutesToDateTime(newStartDate, startTime, 30);
+        setEndDate(newEndDate);
+        setEndTime(newEndTime);
+      } else {
+        if (!isEndAfterStart(newStartDate, startTime, endDate || newStartDate, endTime)) {
+          const { date: newEndDate, time: newEndTime } = addMinutesToDateTime(newStartDate, startTime, 30);
+          setEndDate(newEndDate);
+          setEndTime(newEndTime);
+          setIsEndTimeExplicit(false);
+        }
       }
+    }
+  };
+
+  const handleEndTimeChange = (newEndTime: string) => {
+    setIsEndTimeExplicit(true);
+    setEndTime(newEndTime);
+    // If end date is currently same as start date and selected end time is earlier than start time (crossing midnight),
+    // automatically adjust end date to the following day
+    if ((!endDate || endDate === startDate) && newEndTime < startTime) {
+      const nextDay = addMinutesToDateTime(startDate, '00:00', 24 * 60).date;
+      setEndDate(nextDay);
     }
   };
 
   const handleEndDateChange = (newEndDate: string) => {
     setEndDate(newEndDate);
-    if (startDate && newEndDate < startDate) {
-      setStartDate(newEndDate);
+    if (allDay) {
+      if (startDate && newEndDate < startDate) {
+        setStartDate(newEndDate);
+      }
+    } else {
+      setIsEndTimeExplicit(true);
+      if (startDate && newEndDate < startDate) {
+        setStartDate(newEndDate);
+      }
     }
   };
 
@@ -233,6 +287,12 @@ export const EventModal: React.FC = () => {
     if (checked) {
       if (!endDate || endDate < startDate) {
         setEndDate(startDate);
+      }
+    } else {
+      if (!isEndTimeExplicit) {
+        const { date: newEndDate, time: newEndTime } = addMinutesToDateTime(startDate, startTime, 30);
+        setEndDate(newEndDate);
+        setEndTime(newEndTime);
       }
     }
   };
@@ -245,6 +305,11 @@ export const EventModal: React.FC = () => {
     }
     if (!title.trim()) {
       setError('Event title is required.');
+      return;
+    }
+
+    if (!allDay && !isEndAfterStart(startDate, startTime, endDate || startDate, endTime)) {
+      setError('End time must be after start time.');
       return;
     }
 
@@ -735,7 +800,7 @@ export const EventModal: React.FC = () => {
                       required
                       disabled={!canSave}
                       value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
+                      onChange={(e) => handleStartTimeChange(e.target.value)}
                       className="w-28 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs text-gray-900 focus:outline-none focus:border-gray-900 font-mono"
                     />
                   )}
@@ -760,7 +825,7 @@ export const EventModal: React.FC = () => {
                       required
                       disabled={!canSave}
                       value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
+                      onChange={(e) => handleEndTimeChange(e.target.value)}
                       className="w-28 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs text-gray-900 focus:outline-none focus:border-gray-900 font-mono"
                     />
                   )}
