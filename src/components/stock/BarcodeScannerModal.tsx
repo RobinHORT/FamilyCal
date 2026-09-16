@@ -377,9 +377,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         barcode: code,
         action: activeMode,
         quantity: quantityDelta,
-        expiryDate: matchedItem.earliest_expiry_date || '',
+        expiryDate: (activeMode === 'open' || activeMode === 'use') ? '' : (matchedItem.earliest_expiry_date || ''),
         expiresInDays: '7',
-        noExpiry: false,
+        noExpiry: (activeMode === 'open' || activeMode === 'use') ? true : false,
       });
       setScanResult(null);
     } catch (err: any) {
@@ -398,15 +398,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const handleConfirmAction = async () => {
     if (!pendingActionItem) return;
     setIsProcessing(true);
-    const { action, barcode, quantity, expiryDate, expiresInDays, noExpiry, stockItem } = pendingActionItem;
+    const { action, barcode, quantity, expiryDate, stockItem } = pendingActionItem;
 
     let targetExpiry: string | undefined = undefined;
     const isOpening = action === 'open' || action === 'use';
     if (isOpening) {
-      if (!noExpiry && expiresInDays && Number(expiresInDays) > 0) {
-        const d = new Date();
-        d.setDate(d.getDate() + Number(expiresInDays));
-        targetExpiry = d.toISOString().split('T')[0];
+      if (expiryDate) {
+        targetExpiry = expiryDate.trim() || undefined;
       }
     } else if (action === 'add') {
       targetExpiry = expiryDate.trim() || undefined;
@@ -429,8 +427,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           resultMsg = `Added +${quantity} ${updatedItem.unit} to "${updatedItem.name}" (Unopened: ${updatedItem.quantity} ${updatedItem.unit})`;
         } else if (isOpening) {
           resultMsg = targetExpiry
-            ? `Opened ${quantity} ${updatedItem.unit} of "${updatedItem.name}" (Unopened: ${updatedItem.quantity}, Opened: ${updatedItem.opened_quantity || 0}) • Expires in ${expiresInDays} days`
-            : `Consumed ${quantity} ${updatedItem.unit} from "${updatedItem.name}" (Unopened: ${updatedItem.quantity})`;
+            ? `Opened ${quantity} ${updatedItem.unit} of "${updatedItem.name}" (Unopened: ${updatedItem.quantity}, Opened: ${updatedItem.opened_quantity || 0}) • Expires on ${targetExpiry}`
+            : `Opened ${quantity} ${updatedItem.unit} of "${updatedItem.name}" (Unopened: ${updatedItem.quantity}, Opened: ${updatedItem.opened_quantity || 0}) with no expiry`;
         } else {
           resultMsg = `Finished ${quantity} ${updatedItem.unit} of "${updatedItem.name}" (Unopened: ${updatedItem.quantity}, Opened: ${updatedItem.opened_quantity || 0})`;
         }
@@ -485,7 +483,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           barcode: lastScannedBarcode,
           action: activeMode,
           quantity: quantityDelta,
-          expiryDate: targetStockItem.earliest_expiry_date || '',
+          expiryDate: (activeMode === 'open' || activeMode === 'use') ? '' : (targetStockItem.earliest_expiry_date || ''),
         });
         setScanResult(null);
         setSelectedStockItemIdForLink('');
@@ -808,43 +806,102 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 />
               </div>
             ) : pendingActionItem.action === 'open' || pendingActionItem.action === 'use' ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl p-2.5">
-                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                    <CalendarIcon className="w-3.5 h-3.5 text-amber-700" />
-                    <span>Expires in:</span>
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      min="1"
-                      disabled={pendingActionItem.noExpiry}
-                      value={pendingActionItem.expiresInDays ?? '7'}
-                      onChange={(e) =>
-                        setPendingActionItem({
-                          ...pendingActionItem,
-                          expiresInDays: e.target.value,
-                        })
-                      }
-                      className="w-16 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs text-center font-bold text-gray-900 focus:outline-none focus:border-amber-500 disabled:bg-gray-100 disabled:text-gray-400"
-                    />
-                    <span className="text-xs font-semibold text-gray-600">days</span>
-                  </div>
-                </div>
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-600 pl-1">
-                  <input
-                    type="checkbox"
-                    checked={pendingActionItem.noExpiry || false}
-                    onChange={(e) =>
+              <div className="space-y-3">
+                <label className="block text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                  <CalendarIcon className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Expiry Date (Optional)</span>
+                </label>
+                
+                <div className="grid grid-cols-3 gap-2">
+                  {/* No Expiry Button */}
+                  <button
+                    type="button"
+                    id="btn-scanner-no-expiry"
+                    onClick={() => {
                       setPendingActionItem({
                         ...pendingActionItem,
-                        noExpiry: e.target.checked,
-                      })
-                    }
-                    className="rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
-                  />
-                  <span>No expiry (immediately consumed)</span>
-                </label>
+                        expiryDate: '',
+                      });
+                    }}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                      !pendingActionItem.expiryDate
+                        ? 'bg-amber-100 border-amber-400 text-amber-900 shadow-2xs'
+                        : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    No Expiry
+                  </button>
+
+                  {/* 7 Days Button */}
+                  <button
+                    type="button"
+                    id="btn-scanner-7-days"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + 7);
+                      const dateStr = d.toISOString().split('T')[0];
+                      setPendingActionItem({
+                        ...pendingActionItem,
+                        expiryDate: dateStr,
+                      });
+                    }}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                      pendingActionItem.expiryDate === (() => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 7);
+                        return d.toISOString().split('T')[0];
+                      })()
+                        ? 'bg-amber-100 border-amber-400 text-amber-900 shadow-2xs'
+                        : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    7 Days
+                  </button>
+
+                  {/* Pick Date Button / Custom input */}
+                  <div className="relative">
+                    <input
+                      type="date"
+                      id="scanner-open-expiry-date-picker"
+                      value={pendingActionItem.expiryDate}
+                      onChange={(e) => {
+                        setPendingActionItem({
+                          ...pendingActionItem,
+                          expiryDate: e.target.value,
+                        });
+                      }}
+                      className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
+                    />
+                    <button
+                      type="button"
+                      id="btn-scanner-pick-date"
+                      className={`w-full px-3 py-2 rounded-xl text-xs font-bold border transition-all text-center flex items-center justify-center gap-1.5 ${
+                        pendingActionItem.expiryDate && pendingActionItem.expiryDate !== (() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() + 7);
+                          return d.toISOString().split('T')[0];
+                        })()
+                          ? 'bg-amber-100 border-amber-400 text-amber-900 shadow-2xs'
+                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      <CalendarIcon className="w-3.5 h-3.5 opacity-70" />
+                      <span>Pick Date</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Display Chosen Date or Status */}
+                <div className="text-center pt-1">
+                  {pendingActionItem.expiryDate ? (
+                    <p className="text-xs font-semibold text-amber-900 bg-amber-50 border border-amber-200 rounded-xl py-1.5 px-3 inline-flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Expires: <strong className="font-bold">{pendingActionItem.expiryDate}</strong></span>
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-gray-500 italic">No expiry set (batch remains persistent)</p>
+                  )}
+                </div>
               </div>
             ) : (
               <p className="text-xs text-rose-800 font-medium bg-white border border-rose-200 rounded-xl p-2.5">

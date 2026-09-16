@@ -383,8 +383,8 @@ export const TasksView: React.FC = () => {
     const isClaimedByMe = Boolean(currentMemberId && assignedIds.includes(currentMemberId));
     const claimCheck = canMemberClaimTask(task, currentMemberId, isViewer, tasks, householdTimezone);
     const isBeforeDueDate = Boolean(task.due_date && !isTaskDateActionable(task.due_date, householdTimezone));
-    const canShowClaimButton = isOpenTask && !isCompleted && !isClaimedByMe && !isViewer && (
-      claimCheck.canClaim || (isBeforeDueDate && (!isClaimed || (task.claim_limit !== undefined && task.claim_limit !== 1)))
+    const canShowClaimButton = isOpenTask && !isCompleted && !isClaimedByMe && !isViewer && !isBeforeDueDate && (
+      claimCheck.canClaim || (!isClaimed || (task.claim_limit !== undefined && task.claim_limit !== 1))
     );
 
     const assignmentInfo = getEventAssignmentInfo(task as any, members);

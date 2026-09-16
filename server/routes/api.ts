@@ -2337,10 +2337,7 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
 });
 
 function getEffectiveTodayDate(familyTimezone?: string, clientDate?: string): string {
-  // If client provides a valid YYYY-MM-DD date string, use it
-  if (clientDate && typeof clientDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clientDate.trim())) {
-    return clientDate.trim();
-  }
+  let realTodayStr = new Date().toISOString().split('T')[0];
 
   // Use the household's configured local timezone if available
   if (familyTimezone) {
@@ -2357,15 +2354,22 @@ function getEffectiveTodayDate(familyTimezone?: string, clientDate?: string): st
       const day = parts.find((p) => p.type === 'day')?.value;
 
       if (year && month && day) {
-        return `${year}-${month}-${day}`;
+        realTodayStr = `${year}-${month}-${day}`;
       }
     } catch {
-      // Fallback if invalid timezone string
+      // Fallback
     }
   }
 
-  // Fallback to UTC date string
-  return new Date().toISOString().split('T')[0];
+  // If client provides a valid YYYY-MM-DD date string, use it ONLY if it's not in the future compared to realTodayStr
+  if (clientDate && typeof clientDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clientDate.trim())) {
+    const trimmed = clientDate.trim();
+    if (trimmed <= realTodayStr) {
+      return trimmed;
+    }
+  }
+
+  return realTodayStr;
 }
 
 router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Response) => {
@@ -2476,7 +2480,7 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
         task.id,
         task.title,
         task.description || null,
-        task.due_date,
+        effectiveDueDateStr || task.due_date,
         task.due_time || null,
         task.reminder_minutes,
         currentMember.id,
@@ -3261,7 +3265,6 @@ router.post('/stock/scan', authenticateToken, (req: AuthRequest, res: Response) 
 
     const cleanBarcode = barcode.trim();
     const scanMode = mode || 'add';
-    const scanAmount = Number(amount) || 1;
 
     const lookup = findStockItemByBarcode(familyId, cleanBarcode);
 
@@ -3274,6 +3277,8 @@ router.post('/stock/scan', authenticateToken, (req: AuthRequest, res: Response) 
         message: 'Barcode is not yet linked to any household stock item',
       });
     }
+
+    const scanAmount = amount !== undefined ? Number(amount) : (lookup.mapping?.quantity_delta_per_scan || 1);
 
     // Barcode is mapped to a canonical stock item! Update quantity according to mode (add, open, finish)
     const updated = adjustStockItemQuantity(familyId, lookup.stockItem.id, {
