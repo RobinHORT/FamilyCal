@@ -2336,7 +2336,7 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
   }
 });
 
-function getEffectiveTodayDate(familyTimezone?: string, clientDate?: string): string {
+function getEffectiveTodayDate(familyTimezone?: string): string {
   let realTodayStr = new Date().toISOString().split('T')[0];
 
   // Use the household's configured local timezone if available
@@ -2358,14 +2358,6 @@ function getEffectiveTodayDate(familyTimezone?: string, clientDate?: string): st
       }
     } catch {
       // Fallback
-    }
-  }
-
-  // If client provides a valid YYYY-MM-DD date string, use it ONLY if it's not in the future compared to realTodayStr
-  if (clientDate && typeof clientDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clientDate.trim())) {
-    const trimmed = clientDate.trim();
-    if (trimmed <= realTodayStr) {
-      return trimmed;
     }
   }
 
@@ -2533,24 +2525,26 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
       WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?) AND family_id = ?
     `).all(groupId, task.id, task.id, req.user!.family_id) as any[];
 
-    // Check if this member has already claimed it
-    const alreadyClaimed = groupTasks.some((t) => t.assigned_member_id === currentMember.id);
+    // Check if this member has already claimed this specific occurrence
+    const alreadyClaimed = groupTasks.some((t) => 
+      t.assigned_member_id === currentMember.id && 
+      t.due_date && t.due_date.trim().slice(0, 10) === effectiveDueDateStr
+    );
     if (alreadyClaimed) {
-      return res.status(400).json({ error: 'You have already claimed this task.' });
+      return res.status(409).json({ error: 'You have already claimed this task.' });
     }
 
     const claimLimit = task.claim_limit !== undefined && task.claim_limit !== null ? Number(task.claim_limit) : 1;
 
-    if (claimLimit === 1) {
-      // Single person claim: first eligible member to claim becomes owner
-      if (task.assigned_member_id) {
-        return res.status(400).json({ error: 'This task has already been claimed.' });
-      }
-
-      db.prepare(`
+    // Direct UPDATE for non-recurring single-claim tasks.
+    // For all recurring tasks (even with claimLimit === 1) or multi-claim tasks, we MUST spawn a child task (INSERT).
+    if (!isRecurring && claimLimit === 1) {
+      // Single person claim for ONE-TIME task: first eligible member to claim becomes owner
+      // Use atomic conditional update to prevent double-claiming race conditions
+      const result = db.prepare(`
         UPDATE tasks
         SET assigned_member_id = ?, assigned_member_ids = ?, claimed_at = ?, claimed_by = ?, due_date = ?, updated_at = ?
-        WHERE id = ? AND family_id = ?
+        WHERE id = ? AND family_id = ? AND assigned_member_id IS NULL
       `).run(
         currentMember.id,
         JSON.stringify([currentMember.id]),
@@ -2562,6 +2556,10 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
         req.user!.family_id
       );
 
+      if (result.changes === 0) {
+        return res.status(409).json({ error: 'This task has already been claimed.' });
+      }
+
       const updated = db.prepare(`
         SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
         FROM tasks t
@@ -2571,22 +2569,91 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
 
       return res.json(formatTaskRow(updated));
     } else {
-      // Multiple people claim: create an individual participant entry for this claimant
-      const claimedCount = groupTasks.filter((t) => t.assigned_member_id !== null).length;
-      if (claimLimit > 1 && claimedCount >= claimLimit) {
-        return res.status(400).json({ error: 'Claim limit for this task has been reached.' });
-      }
-
+      // Recurring tasks OR multi-claim tasks: create an individual participant entry for this claimant
+      // Use atomic conditional insert to prevent double-claiming race conditions and enforce claim limit
       const newParticipantTaskId = 'tsk_' + uuidv4().slice(0, 8);
-      db.prepare(`
+      
+      // If single-claim (claimLimit === 1) on a recurring task, enforce that absolutely NO ONE has claimed this specific occurrence date yet
+      const insertQuery = claimLimit === 1 ? `
         INSERT INTO tasks (
           id, family_id, task_group_id, parent_task_id, title, description, due_date, due_time,
           reminder_minutes, completed, completed_at, is_archived, assigned_member_id, assigned_member_ids,
           priority, recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit,
           points, points_awarded, claimed_at, claimed_by, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 0, ?, ?, ?, ?)
-      `).run(
+        SELECT
+          ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, 0, NULL, 0, ?, ?,
+          ?, ?, ?, ?, 'open', 1,
+          ?, 0, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          -- Ensure NO ONE has claimed this specific occurrence date yet
+          SELECT 1 FROM tasks
+          WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
+            AND due_date = ?
+            AND assigned_member_id IS NOT NULL
+            AND family_id = ?
+        )
+      ` : `
+        INSERT INTO tasks (
+          id, family_id, task_group_id, parent_task_id, title, description, due_date, due_time,
+          reminder_minutes, completed, completed_at, is_archived, assigned_member_id, assigned_member_ids,
+          priority, recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit,
+          points, points_awarded, claimed_at, claimed_by, created_at, updated_at
+        )
+        SELECT
+          ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, 0, NULL, 0, ?, ?,
+          ?, ?, ?, ?, 'open', ?,
+          ?, 0, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          -- 1. Ensure this user hasn't already claimed this task occurrence
+          SELECT 1 FROM tasks
+          WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
+            AND assigned_member_id = ?
+            AND due_date = ?
+            AND family_id = ?
+        ) AND (
+          -- 2. Ensure we haven't reached the claim limit for this occurrence
+          SELECT COUNT(*) FROM tasks
+          WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
+            AND assigned_member_id IS NOT NULL
+            AND due_date = ?
+            AND family_id = ?
+        ) < ?
+      `;
+
+      const queryParams = claimLimit === 1 ? [
+        // SELECT values:
+        newParticipantTaskId,
+        req.user!.family_id,
+        groupId,
+        task.id,
+        task.title,
+        task.description || null,
+        effectiveDueDateStr,
+        task.due_time || null,
+        task.reminder_minutes,
+        currentMember.id,
+        JSON.stringify([currentMember.id]),
+        task.priority || 'medium',
+        task.recurring_rule || 'none',
+        task.recurring_interval || 1,
+        task.recurring_unit || 'day',
+        task.points || 0,
+        now,
+        currentMember.id,
+        now,
+        now,
+
+        // WHERE NOT EXISTS block:
+        groupId,
+        task.id,
+        task.id,
+        effectiveDueDateStr,
+        req.user!.family_id
+      ] : [
+        // SELECT values:
         newParticipantTaskId,
         req.user!.family_id,
         groupId,
@@ -2607,8 +2674,46 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
         now,
         currentMember.id,
         now,
-        now
-      );
+        now,
+
+        // First WHERE NOT EXISTS block:
+        groupId,
+        task.id,
+        task.id,
+        currentMember.id,
+        effectiveDueDateStr,
+        req.user!.family_id,
+
+        // Second AND block:
+        groupId,
+        task.id,
+        task.id,
+        effectiveDueDateStr,
+        req.user!.family_id,
+        claimLimit
+      ];
+
+      const result = db.prepare(insertQuery).run(...queryParams);
+
+      if (result.changes === 0) {
+        if (claimLimit === 1) {
+          return res.status(409).json({ error: 'This task has already been claimed.' });
+        }
+
+        const alreadyClaimedCheck = db.prepare(`
+          SELECT 1 FROM tasks
+          WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
+            AND assigned_member_id = ?
+            AND due_date = ?
+            AND family_id = ?
+        `).get(groupId, task.id, task.id, currentMember.id, effectiveDueDateStr, req.user!.family_id);
+
+        if (alreadyClaimedCheck) {
+          return res.status(409).json({ error: 'You have already claimed this task.' });
+        } else {
+          return res.status(409).json({ error: 'Claim limit for this task has been reached.' });
+        }
+      }
 
       const created = db.prepare(`
         SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
@@ -2617,7 +2722,7 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
         WHERE t.id = ?
       `).get(newParticipantTaskId) as any;
 
-      return res.status(201).json(formatTaskRow(created));
+      return res.status(200).json(formatTaskRow(created));
     }
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2723,7 +2828,7 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
     const newCompleted = willComplete ? 1 : 0;
     const now = new Date().toISOString();
     const family = db.prepare('SELECT timezone FROM families WHERE id = ?').get(req.user!.family_id) as any;
-    const todayStr = getEffectiveTodayDate(family?.timezone, req.body?.client_date);
+    const todayStr = getEffectiveTodayDate(family?.timezone);
 
     let assignedIds: string[] = [];
     try {

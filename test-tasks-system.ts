@@ -619,9 +619,9 @@ async function runTests() {
 
     recordTest(
       '24. Workflow: Duplicate claim attempt (Must reject)',
-      '400 Bad Request',
+      '409 Conflict',
       `Status: ${resWorkClaimDup.status}, Body: ${JSON.stringify(resWorkClaimDup.body)}`,
-      resWorkClaimDup.status === 400
+      resWorkClaimDup.status === 409
     );
 
     // Test 22: Unclaim / Release
@@ -823,6 +823,274 @@ async function runTests() {
       'CLAIM ACCEPTED (200 OK with claim assigned)',
       `Status: ${regressionRes3.status}, Assigned: ${regressionRes3.body.assigned_member_id}`,
       check3
+    );
+
+    // ----------------------------------------------------
+    // SPAM & CONCURRENT CLAIM SECURITY TESTS
+    // ----------------------------------------------------
+    console.log('\n--- Running SPAM & CONCURRENT CLAIM SECURITY TESTS ---');
+    mockSystemDate('2026-09-16T12:00:00Z');
+
+    // Test S1: Single claim on a single-claim task + second claim by same user → rejected (409)
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-spam-single', ?, 'Spam Single Task', '2026-09-16', 'open', 1, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const resS1_first = await request(app)
+      .post('/api/tasks/t-spam-single/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send();
+
+    recordTest(
+      'S1a. Single claim task first claim (Must succeed)',
+      '200 OK with claimed task details',
+      `Status: ${resS1_first.status}`,
+      resS1_first.status === 200 && resS1_first.body.assigned_member_id === TEST_ADMIN_MEMBER_ID
+    );
+
+    const resS1_second = await request(app)
+      .post('/api/tasks/t-spam-single/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send();
+
+    recordTest(
+      'S1b. Single claim task second claim by same user (Must reject with 409)',
+      '409 Conflict',
+      `Status: ${resS1_second.status}, Error: ${JSON.stringify(resS1_second.body)}`,
+      resS1_second.status === 409
+    );
+
+    // Test S2: 10 rapid sequential claims on a single task → only one succeeds, no multiple DB changes
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-spam-seq', ?, 'Seq Task', '2026-09-16', 'open', 1, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const sequentialResults: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const res = await request(app)
+        .post('/api/tasks/t-spam-seq/claim')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send();
+      sequentialResults.push(res.status);
+    }
+
+    const s2_succeeded = sequentialResults.filter(s => s === 200 || s === 201).length;
+    const s2_rejected = sequentialResults.filter(s => s === 409).length;
+
+    recordTest(
+      'S2. 10 rapid sequential claims (Only 1 succeeds)',
+      '1 success, 9 rejections with 409',
+      `Succeeded: ${s2_succeeded}, Rejected: ${s2_rejected}`,
+      s2_succeeded === 1 && s2_rejected === 9
+    );
+
+    // Test S3: 10 concurrent claim requests (Race conditions check)
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-spam-concur10', ?, 'Concur 10 Task', '2026-09-16', 'open', 1, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const concurrentPromises10 = Array.from({ length: 10 }).map(() =>
+      request(app)
+        .post('/api/tasks/t-spam-concur10/claim')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send()
+    );
+
+    const concurrentResults10 = await Promise.all(concurrentPromises10);
+    const s3_succeeded = concurrentResults10.filter(res => res.status === 200 || res.status === 201).length;
+    const s3_conflicts = concurrentResults10.filter(res => res.status === 409).length;
+
+    // Verify DB integrity
+    const dbS3State = db.prepare('SELECT assigned_member_id FROM tasks WHERE id = ?').get('t-spam-concur10') as any;
+    const s3_db_is_correct = dbS3State.assigned_member_id === TEST_ADMIN_MEMBER_ID;
+
+    recordTest(
+      'S3. 10 concurrent claim requests (Only 1 succeeds, DB correctly assigned)',
+      '1 success, 9 conflicts, DB has exactly 1 claim record',
+      `Succeeded: ${s3_succeeded}, Conflicts: ${s3_conflicts}, Assigned: ${dbS3State.assigned_member_id}`,
+      s3_succeeded === 1 && s3_conflicts === 9 && s3_db_is_correct
+    );
+
+    // Test S4: 20 concurrent claim requests
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-spam-concur20', ?, 'Concur 20 Task', '2026-09-16', 'open', 1, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const concurrentPromises20 = Array.from({ length: 20 }).map(() =>
+      request(app)
+        .post('/api/tasks/t-spam-concur20/claim')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send()
+    );
+
+    const concurrentResults20 = await Promise.all(concurrentPromises20);
+    const s4_succeeded = concurrentResults20.filter(res => res.status === 200 || res.status === 201).length;
+    const s4_conflicts = concurrentResults20.filter(res => res.status === 409).length;
+
+    // Verify DB integrity
+    const dbS4State = db.prepare('SELECT assigned_member_id FROM tasks WHERE id = ?').get('t-spam-concur20') as any;
+    const s4_db_is_correct = dbS4State.assigned_member_id === TEST_ADMIN_MEMBER_ID;
+
+    recordTest(
+      'S4. 20 concurrent claim requests (Only 1 succeeds, DB correctly assigned)',
+      '1 success, 19 conflicts, DB has exactly 1 claim record',
+      `Succeeded: ${s4_succeeded}, Conflicts: ${s4_conflicts}, Assigned: ${dbS4State.assigned_member_id}`,
+      s4_succeeded === 1 && s4_conflicts === 19 && s4_db_is_correct
+    );
+
+    // Test S5: Concurrent claims on multi-claim tasks (claimLimit > 1)
+    // Make a task with claim_limit: 3
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-spam-multi3', ?, 'Multi 3 Task', '2026-09-16', 'open', 3, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    // 10 concurrent requests from the same user (Admin)
+    const concurrentPromisesMulti = Array.from({ length: 10 }).map(() =>
+      request(app)
+        .post('/api/tasks/t-spam-multi3/claim')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send()
+    );
+
+    const concurrentResultsMulti = await Promise.all(concurrentPromisesMulti);
+    const s5_succeeded = concurrentResultsMulti.filter(res => res.status === 200 || res.status === 201).length;
+    const s5_conflicts = concurrentResultsMulti.filter(res => res.status === 409).length;
+
+    // Verify DB integrity: User admin must have exactly ONE row under t-spam-multi3 group
+    const s5_dbRows = db.prepare(`
+      SELECT COUNT(*) as count FROM tasks
+      WHERE (task_group_id = 't-spam-multi3' OR parent_task_id = 't-spam-multi3')
+        AND assigned_member_id = ?
+    `).get(TEST_ADMIN_MEMBER_ID) as any;
+
+    recordTest(
+      'S5. Multi-claim task spam protection (Same user claiming 10 times concurrently)',
+      'Exactly 1 success and exactly 1 DB record created for the user',
+      `Succeeded: ${s5_succeeded}, Conflicts: ${s5_conflicts}, DB records count: ${s5_dbRows.count}`,
+      s5_succeeded === 1 && s5_conflicts === 9 && s5_dbRows.count === 1
+    );
+
+    // Test S6: Recurring task occurrence A claimed -> succeeds, same claimed again -> rejected, different occurrence B can still be claimed
+    // Daily task starting on 2026-09-15 (yesterday)
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, recurring_rule, recurring_interval, recurring_unit, created_at, updated_at)
+      VALUES ('t-spam-rec', ?, 'Daily Spam Task', '2026-09-15', 'open', 2, 'daily', 1, 'day', ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    // Claim occurrence A (yesterday 2026-09-15)
+    const resS6a = await request(app)
+      .post('/api/tasks/t-spam-rec/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ occurrence_date: '2026-09-15' });
+
+    recordTest(
+      'S6a. Recurring occurrence A claimed (Must succeed)',
+      '200 or 201 OK',
+      `Status: ${resS6a.status}`,
+      resS6a.status === 200 || resS6a.status === 201
+    );
+
+    // Same occurrence A claimed again -> rejected
+    const resS6b = await request(app)
+      .post('/api/tasks/t-spam-rec/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ occurrence_date: '2026-09-15' });
+
+    recordTest(
+      'S6b. Same recurring occurrence A claimed again (Must reject with 409)',
+      '409 Conflict',
+      `Status: ${resS6b.status}`,
+      resS6b.status === 409
+    );
+
+    // Different occurrence B (today 2026-09-16) -> can still be claimed when due
+    const resS6c = await request(app)
+      .post('/api/tasks/t-spam-rec/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ occurrence_date: '2026-09-16' });
+
+    recordTest(
+      'S6c. Different recurring occurrence B can be claimed (Must succeed)',
+      '200 or 201 OK',
+      `Status: ${resS6c.status}`,
+      resS6c.status === 200 || resS6c.status === 201
+    );
+
+    // Test S7: Overdue one-off task (e.g. due 3 days ago on 2026-09-13) can be claimed
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-overdue-oneoff', ?, 'Overdue One-off', '2026-09-13', 'open', 1, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const resOverdueOneOff = await request(app)
+      .post('/api/tasks/t-overdue-oneoff/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send();
+
+    recordTest(
+      'S7. Overdue one-off task claiming (due 3 days ago)',
+      '200 OK',
+      `Status: ${resOverdueOneOff.status}`,
+      resOverdueOneOff.status === 200
+    );
+
+    // Test S8: Overdue recurring occurrence (e.g. 2 weeks ago on fortnightly task) can be claimed
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, recurring_rule, recurring_interval, recurring_unit, created_at, updated_at)
+      VALUES ('t-overdue-rec-fortnight', ?, 'Overdue Fortnightly', '2026-09-02', 'open', 1, 'fortnightly', 1, 'week', ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const resOverdueFortnight = await request(app)
+      .post('/api/tasks/t-overdue-rec-fortnight/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ occurrence_date: '2026-09-02' });
+
+    recordTest(
+      'S8. Overdue recurring occurrence claiming (due 2 weeks ago)',
+      '200 OK',
+      `Status: ${resOverdueFortnight.status}`,
+      resOverdueFortnight.status === 200
+    );
+
+    // Test S9: Fortnightly occurrence isolation: claiming 2026-09-16 does not claim 2026-09-30
+    const resFortnightCurrent = await request(app)
+      .post('/api/tasks/t-overdue-rec-fortnight/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ occurrence_date: '2026-09-16' });
+
+    const resFortnightFutureCheck = await request(app)
+      .post('/api/tasks/t-overdue-rec-fortnight/claim')
+      .set('Authorization', `Bearer ${adultToken}`)
+      .send({ occurrence_date: '2026-09-30' });
+
+    recordTest(
+      'S9. Fortnightly occurrence isolation (Current succeeds, Future 2026-09-30 rejected)',
+      'Current: 200, Future: 400',
+      `Current: ${resFortnightCurrent.status}, Future: ${resFortnightFutureCheck.status}`,
+      resFortnightCurrent.status === 200 && resFortnightFutureCheck.status === 400
+    );
+
+    // Test S10: One-off future task with client payload attempting to supply past occurrence_date or client_date
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-future-spoof', ?, 'Future Spoof Attempt', '2026-09-25', 'open', 1, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const resSpoofAttempt = await request(app)
+      .post('/api/tasks/t-future-spoof/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ occurrence_date: '2026-09-16', client_date: '2026-09-16', due_date: '2026-09-16' });
+
+    recordTest(
+      'S10. Client payload spoofing attempt on one-off future task',
+      '400 Bad Request with due date error',
+      `Status: ${resSpoofAttempt.status}, Body: ${JSON.stringify(resSpoofAttempt.body)}`,
+      resSpoofAttempt.status === 400 && resSpoofAttempt.body.error.includes('2026-09-25')
     );
 
   } catch (err: any) {

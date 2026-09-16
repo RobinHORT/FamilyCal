@@ -128,6 +128,7 @@ export const TasksView: React.FC = () => {
   // Status filter & search
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [claimingTaskIds, setClaimingTaskIds] = useState<Record<string, boolean>>({});
 
   // Active family members list
   const activeMembers = useMemo(() => {
@@ -188,7 +189,7 @@ export const TasksView: React.FC = () => {
   const getTasksForDay = (day: Date): Task[] => {
     const dayStr = format(day, 'yyyy-MM-dd');
 
-    return visibleTasks
+    const dayTasks = visibleTasks
       .filter((task) => {
         if (!task.due_date) return false;
         const taskDueStr = task.due_date.slice(0, 10);
@@ -244,6 +245,33 @@ export const TasksView: React.FC = () => {
         }
         return task;
       });
+
+    // Deduplicate: if there is a spawned child task for a parent task on this day,
+    // we should filter out the parent template card appropriately.
+    return dayTasks.filter((t) => {
+      const isParentTemplate = t.recurring_rule && t.recurring_rule !== 'none' && !t.parent_task_id;
+      if (isParentTemplate) {
+        // Find if there is any spawned child for this parent on this day
+        const childOnThisDay = dayTasks.find(
+          (c) => c.parent_task_id === t.id && c.due_date === dayStr
+        );
+        if (childOnThisDay) {
+          const claimLimit = t.claim_limit !== undefined && t.claim_limit !== null ? Number(t.claim_limit) : 1;
+          // If claimLimit is 1, hide parent template completely since it's fully claimed
+          if (claimLimit === 1) {
+            return false;
+          }
+          // If claimLimit > 1 or 0, hide if the current member has already claimed it
+          const currentMemberClaimed = dayTasks.some(
+            (c) => c.parent_task_id === t.id && c.assigned_member_id === currentMemberId && c.due_date === dayStr
+          );
+          if (currentMemberClaimed) {
+            return false;
+          }
+        }
+      }
+      return true;
+    });
   };
 
   // Navigation handlers using CalendarContext methods
@@ -290,6 +318,7 @@ export const TasksView: React.FC = () => {
 
   const handleClaim = async (e: React.MouseEvent, task: Task) => {
     e.stopPropagation();
+    if (claimingTaskIds[task.id]) return;
     const householdTimezone = family?.timezone;
     const check = canMemberClaimTask(task, currentMemberId, isViewer, tasks, householdTimezone);
     if (!check.canClaim) {
@@ -298,12 +327,15 @@ export const TasksView: React.FC = () => {
     }
 
     try {
+      setClaimingTaskIds(prev => ({ ...prev, [task.id]: true }));
       const occurrenceDueDate = task.due_date ? task.due_date.trim().slice(0, 10) : undefined;
       const todayDateStr = getHouseholdTodayDateString(householdTimezone);
       await claimTask(task.id, occurrenceDueDate, todayDateStr);
     } catch (err: any) {
       console.error(err);
       alert(err.message || 'Failed to claim task');
+    } finally {
+      setClaimingTaskIds(prev => ({ ...prev, [task.id]: false }));
     }
   };
 
@@ -528,17 +560,17 @@ export const TasksView: React.FC = () => {
             {canShowClaimButton && (
               <button
                 type="button"
-                disabled={!claimCheck.canClaim}
+                disabled={!claimCheck.canClaim || claimingTaskIds[task.id]}
                 onClick={(e) => handleClaim(e, task)}
                 className={`px-2.5 py-1 text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center gap-1 shrink-0 ${
-                  claimCheck.canClaim
+                  claimCheck.canClaim && !claimingTaskIds[task.id]
                     ? 'bg-sky-600 hover:bg-sky-700 active:scale-95 text-white cursor-pointer'
                     : 'bg-slate-200/80 text-slate-400 cursor-not-allowed border border-slate-300/50'
                 }`}
-                title={claimCheck.canClaim ? 'Claim this chore' : (claimCheck.reason || 'Cannot claim this task')}
+                title={claimingTaskIds[task.id] ? 'Claiming task...' : (claimCheck.canClaim ? 'Claim this chore' : (claimCheck.reason || 'Cannot claim this task'))}
               >
                 <Hand className="w-3 h-3" />
-                <span>Claim</span>
+                <span>{claimingTaskIds[task.id] ? 'Claiming...' : 'Claim'}</span>
               </button>
             )}
 
