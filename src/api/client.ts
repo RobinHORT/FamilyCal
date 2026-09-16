@@ -339,10 +339,11 @@ export const api = {
   adjustStockQuantity: (
     id: string,
     data: {
-      action: 'add' | 'use' | 'set' | 'shopping_purchase';
+      action: 'add' | 'open' | 'use' | 'finish' | 'used_up' | 'set' | 'shopping_purchase' | 'consume_opened';
       amount: number;
       barcode?: string;
       expiry_date?: string;
+      opened_item_id?: string;
       location?: string;
     }
   ) =>
@@ -353,7 +354,7 @@ export const api = {
 
   scanBarcode: (data: {
     barcode: string;
-    mode: 'add' | 'use';
+    mode: 'add' | 'open' | 'use' | 'finish' | 'used_up';
     amount?: number;
     expiry_date?: string;
     brand_or_label?: string;
@@ -362,7 +363,7 @@ export const api = {
       success: boolean;
       isMapped: boolean;
       barcode: string;
-      action?: 'add' | 'use';
+      action?: 'add' | 'open' | 'use' | 'finish' | 'used_up';
       delta?: number;
       stockItem?: StockItem;
       mapping?: StockBarcode;

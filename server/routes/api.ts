@@ -3221,15 +3221,15 @@ router.delete('/stock/:id', authenticateToken, (req: AuthRequest, res: Response)
   }
 });
 
-// Adjust stock quantity (Add Stock, Use Stock, Set Quantity)
+// Adjust stock quantity (Add Stock, Open Item, Use Stock, Finish/Used Up, Set Quantity, Consume Opened)
 router.post('/stock/:id/adjust', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     const familyId = req.user!.family_id;
     const memberId = getUserMemberId(req.user!.id, familyId);
-    const { action, amount, barcode, expiry_date, location } = req.body;
+    const { action, amount, barcode, expiry_date, opened_item_id, location } = req.body;
 
-    if (!action || !['add', 'use', 'set', 'shopping_purchase'].includes(action)) {
-      return res.status(400).json({ error: 'Valid action (add, use, set, shopping_purchase) is required' });
+    if (!action || !['add', 'open', 'use', 'finish', 'used_up', 'set', 'shopping_purchase', 'consume_opened'].includes(action)) {
+      return res.status(400).json({ error: 'Valid action (add, open, use, finish, used_up, set, shopping_purchase, consume_opened) is required' });
     }
 
     const updated = adjustStockItemQuantity(familyId, req.params.id, {
@@ -3237,16 +3237,18 @@ router.post('/stock/:id/adjust', authenticateToken, (req: AuthRequest, res: Resp
       amount: Number(amount) || 1,
       barcode,
       expiry_date,
+      opened_item_id,
       member_id: memberId,
     });
 
     res.json(updated);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const status = err.message && (err.message.includes('Cannot') || err.message.includes('stock')) ? 400 : 500;
+    res.status(status).json({ error: err.message });
   }
 });
 
-// Execute barcode scan action (Add Stock or Use Stock)
+// Execute barcode scan action (Add Stock, Open Item, Finish/Used Up)
 router.post('/stock/scan', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     const familyId = req.user!.family_id;
@@ -3258,7 +3260,7 @@ router.post('/stock/scan', authenticateToken, (req: AuthRequest, res: Response) 
     }
 
     const cleanBarcode = barcode.trim();
-    const scanMode = mode === 'use' ? 'use' : 'add';
+    const scanMode = mode || 'add';
     const scanAmount = Number(amount) || 1;
 
     const lookup = findStockItemByBarcode(familyId, cleanBarcode);
@@ -3273,7 +3275,7 @@ router.post('/stock/scan', authenticateToken, (req: AuthRequest, res: Response) 
       });
     }
 
-    // Barcode is mapped to a canonical stock item! Update quantity according to mode (add or use)
+    // Barcode is mapped to a canonical stock item! Update quantity according to mode (add, open, finish)
     const updated = adjustStockItemQuantity(familyId, lookup.stockItem.id, {
       action: scanMode,
       amount: scanAmount,
@@ -3287,12 +3289,13 @@ router.post('/stock/scan', authenticateToken, (req: AuthRequest, res: Response) 
       isMapped: true,
       barcode: cleanBarcode,
       action: scanMode,
-      delta: scanMode === 'use' ? -scanAmount : scanAmount,
+      delta: scanMode === 'add' ? scanAmount : -scanAmount,
       stockItem: updated,
       mapping: lookup.mapping,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const status = err.message && (err.message.includes('Cannot') || err.message.includes('stock')) ? 400 : 500;
+    res.status(status).json({ error: err.message });
   }
 });
 

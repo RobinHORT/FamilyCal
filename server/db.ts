@@ -639,6 +639,12 @@ export function initDatabase() {
         db.prepare(`ALTER TABLE stock_items ADD COLUMN auto_add_to_shopping INTEGER DEFAULT 1;`).run();
         console.log('Migration applied: added auto_add_to_shopping column to stock_items table.');
       }
+
+      const hasOpenedItems = stockCols.some((col) => col.name === 'opened_items');
+      if (!hasOpenedItems) {
+        db.prepare(`ALTER TABLE stock_items ADD COLUMN opened_items TEXT DEFAULT '[]';`).run();
+        console.log('Migration applied: added opened_items column to stock_items table.');
+      }
     } catch (stockMigErr) {
       console.warn('Stock table migration check warning:', stockMigErr);
     }
@@ -1352,21 +1358,42 @@ export function evaluateStockShoppingTriggers(familyId: string) {
         continue;
       }
 
-      // Condition 1: Low stock
-      const isLowStock = (triggerMode === 'low_stock' || triggerMode === 'low_stock_and_expiry') && currentQty <= lowThreshold;
+      // Condition 1 & 2: Stock replenishment
+      // Only active if targetStock > 0. If targetStock is 0, stock-level replenishment does not trigger.
+      const isLowStock = targetStock > 0 && (triggerMode === 'low_stock' || triggerMode === 'low_stock_and_expiry') && currentQty <= lowThreshold;
+      const isZeroStock = targetStock > 0 && triggerMode === 'zero_stock' && currentQty <= 0;
 
-      // Condition 2: Zero stock
-      const isZeroStock = triggerMode === 'zero_stock' && currentQty <= 0;
-
-      // Condition 3: Before expiry
+      // Condition 3: Before expiry (evaluating opened batches)
       let isExpiringSoon = false;
-      let daysUntilExpiry: number | null = null;
-      if ((triggerMode === 'before_expiry' || triggerMode === 'low_stock_and_expiry') && item.earliest_expiry_date) {
-        const expDate = new Date(item.earliest_expiry_date + 'T00:00:00Z');
-        const diffTime = expDate.getTime() - todayDate.getTime();
-        daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        if (daysUntilExpiry <= expiryDays) {
-          isExpiringSoon = true;
+      let earliestDaysUntilExpiry: number | null = null;
+      let earliestExpiringDateStr: string | null = null;
+
+      if (triggerMode === 'before_expiry' || triggerMode === 'low_stock_and_expiry') {
+        let openedList: any[] = [];
+        try {
+          if (item.opened_items) {
+            openedList = typeof item.opened_items === 'string' ? JSON.parse(item.opened_items) : item.opened_items;
+          }
+        } catch (e) {
+          openedList = [];
+        }
+
+        if (Array.isArray(openedList)) {
+          for (const opn of openedList) {
+            if (opn.expiry_date && typeof opn.expiry_date === 'string' && opn.expiry_date.trim()) {
+              const expDateStr = opn.expiry_date.trim();
+              const expDate = new Date(expDateStr + 'T00:00:00Z');
+              const diffTime = expDate.getTime() - todayDate.getTime();
+              const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              if (days <= expiryDays) {
+                isExpiringSoon = true;
+                if (earliestDaysUntilExpiry === null || days < earliestDaysUntilExpiry) {
+                  earliestDaysUntilExpiry = days;
+                  earliestExpiringDateStr = expDateStr;
+                }
+              }
+            }
+          }
         }
       }
 
@@ -1377,7 +1404,7 @@ export function evaluateStockShoppingTriggers(familyId: string) {
       let triggerReason = 'Auto added: stock replenishment';
       if (isLowStock && isExpiringSoon) {
         neededQty = Math.max(1, targetStock - currentQty);
-        triggerReason = `Auto added: low stock (${currentQty}/${targetStock} ${item.unit}) & expiring ${daysUntilExpiry! <= 0 ? 'today/expired' : 'in ' + daysUntilExpiry + 'd'}`;
+        triggerReason = `Auto added: low stock (${currentQty}/${targetStock} ${item.unit}) & expiring ${earliestDaysUntilExpiry! <= 0 ? 'today/expired' : 'in ' + earliestDaysUntilExpiry + 'd'}`;
       } else if (isLowStock) {
         neededQty = Math.max(1, targetStock - currentQty);
         triggerReason = `Auto added: low stock (${currentQty}/${targetStock} ${item.unit})`;
@@ -1386,7 +1413,7 @@ export function evaluateStockShoppingTriggers(familyId: string) {
         triggerReason = `Auto added: zero stock (${targetStock} ${item.unit} target)`;
       } else if (isExpiringSoon) {
         neededQty = Math.max(1, targetStock > currentQty ? targetStock - currentQty : (targetStock > 0 ? targetStock : 1));
-        triggerReason = `Auto added: expiring ${daysUntilExpiry! <= 0 ? 'today/expired' : 'in ' + daysUntilExpiry + 'd'} (${item.earliest_expiry_date})`;
+        triggerReason = `Auto added: expiring ${earliestDaysUntilExpiry! <= 0 ? 'today/expired' : 'in ' + earliestDaysUntilExpiry + 'd'} (${earliestExpiringDateStr})`;
       }
 
       const totalTickedQty = tickedItems.reduce((sum, t) => sum + Number(t.quantity || 0), 0);
@@ -1456,11 +1483,72 @@ export function evaluateStockShoppingTriggers(familyId: string) {
   }
 }
 
+export function processExpiredOpenedStock(familyId: string) {
+  try {
+    const stockItems = db.prepare(`SELECT * FROM stock_items WHERE family_id = ?`).all(familyId) as any[];
+    if (!stockItems || stockItems.length === 0) return;
+
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const isoNow = now.toISOString();
+
+    for (const item of stockItems) {
+      if (!item.opened_items) continue;
+      let openedList: any[] = [];
+      try {
+        openedList = JSON.parse(item.opened_items);
+      } catch (e) {
+        openedList = [];
+      }
+      if (!Array.isArray(openedList) || openedList.length === 0) continue;
+
+      let changed = false;
+      const remainingOpened: any[] = [];
+
+      for (const opn of openedList) {
+        if (opn.expiry_date && typeof opn.expiry_date === 'string' && opn.expiry_date.trim()) {
+          const expStr = opn.expiry_date.trim();
+          if (expStr <= todayStr) {
+            // Expired today or in the past! Remove it from opened stock.
+            changed = true;
+            const logId = 'stl_' + uuidv4().slice(0, 8);
+            db.prepare(`
+              INSERT INTO stock_logs (id, family_id, stock_item_id, action, quantity_changed, quantity_after, barcode, expiry_date, member_id, created_at)
+              VALUES (?, ?, ?, 'consume_opened', ?, ?, NULL, ?, NULL, ?)
+            `).run(
+              logId,
+              familyId,
+              item.id,
+              -(Number(opn.quantity) || 1),
+              item.quantity,
+              opn.expiry_date,
+              isoNow
+            );
+            continue; // Exclude from remainingOpened
+          }
+        }
+        remainingOpened.push(opn);
+      }
+
+      if (changed) {
+        db.prepare(`
+          UPDATE stock_items
+          SET opened_items = ?, updated_at = ?
+          WHERE id = ? AND family_id = ?
+        `).run(JSON.stringify(remainingOpened), isoNow, item.id, familyId);
+      }
+    }
+  } catch (err) {
+    console.warn('processExpiredOpenedStock error:', err);
+  }
+}
+
 /**
  * Get all stock items for a family.
  * MANDATORY REQUIREMENT: Stock items are ALWAYS sorted A–Z by the canonical stock item name.
  */
 export function getStockItems(familyId: string) {
+  processExpiredOpenedStock(familyId);
   evaluateStockShoppingTriggers(familyId);
 
   const items = db.prepare(`
@@ -1485,11 +1573,25 @@ export function getStockItems(familyId: string) {
     barcodeMap.get(b.stock_item_id)!.push(b);
   }
 
-  return items.map((item) => ({
-    ...item,
-    is_favorite: Boolean(item.is_favorite),
-    barcodes: barcodeMap.get(item.id) || [],
-  }));
+  return items.map((item) => {
+    let openedItems: any[] = [];
+    try {
+      if (item.opened_items) {
+        openedItems = JSON.parse(item.opened_items);
+      }
+    } catch (e) {
+      openedItems = [];
+    }
+    const openedQuantity = openedItems.reduce((acc: number, curr: any) => acc + (Number(curr.quantity) || 0), 0);
+
+    return {
+      ...item,
+      is_favorite: Boolean(item.is_favorite),
+      opened_items: openedItems,
+      opened_quantity: openedQuantity,
+      barcodes: barcodeMap.get(item.id) || [],
+    };
+  });
 }
 
 export function getStockItemById(familyId: string, id: string) {
@@ -1506,9 +1608,21 @@ export function getStockItemById(familyId: string, id: string) {
     ORDER BY created_at ASC
   `).all(familyId, id) as any[];
 
+  let openedItems: any[] = [];
+  try {
+    if (item.opened_items) {
+      openedItems = JSON.parse(item.opened_items);
+    }
+  } catch (e) {
+    openedItems = [];
+  }
+  const openedQuantity = openedItems.reduce((acc: number, curr: any) => acc + (Number(curr.quantity) || 0), 0);
+
   return {
     ...item,
     is_favorite: Boolean(item.is_favorite),
+    opened_items: openedItems,
+    opened_quantity: openedQuantity,
     barcodes,
   };
 }
@@ -1548,6 +1662,7 @@ export function createStockItem(familyId: string, data: {
   name: string;
   category?: string;
   quantity?: number;
+  opened_items?: any[];
   unit?: string;
   low_stock_threshold?: number;
   target_stock?: number;
@@ -1567,9 +1682,10 @@ export function createStockItem(familyId: string, data: {
   const name = data.name.trim();
   const category = data.category || 'Pantry Essentials';
   const quantity = Math.max(0, Number(data.quantity) || 0);
+  const openedItemsJson = JSON.stringify(data.opened_items || []);
   const unit = data.unit || 'packs';
   const lowThreshold = data.low_stock_threshold !== undefined ? Number(data.low_stock_threshold) : 1;
-  const targetStock = data.target_stock !== undefined ? Math.max(1, Number(data.target_stock)) : (data.restock_target !== undefined ? Math.max(1, Number(data.restock_target)) : Math.max(2, lowThreshold * 2));
+  const targetStock = data.target_stock !== undefined ? Math.max(0, Number(data.target_stock)) : (data.restock_target !== undefined ? Math.max(0, Number(data.restock_target)) : Math.max(2, lowThreshold * 2));
   const shoppingTrigger = data.shopping_trigger || (data.auto_add_to_shopping === 0 || data.auto_add_to_shopping === false ? 'none' : 'low_stock');
   const expiryDaysThreshold = data.expiry_days_threshold !== undefined ? Math.max(0, Number(data.expiry_days_threshold)) : 2;
   const autoAddToShopping = shoppingTrigger !== 'none' ? 1 : 0;
@@ -1579,9 +1695,9 @@ export function createStockItem(familyId: string, data: {
   const isFavorite = data.is_favorite ? 1 : 0;
 
   db.prepare(`
-    INSERT INTO stock_items (id, family_id, name, category, quantity, unit, low_stock_threshold, target_stock, restock_target, shopping_trigger, expiry_days_threshold, auto_add_to_shopping, earliest_expiry_date, location, notes, is_favorite, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, familyId, name, category, quantity, unit, lowThreshold, targetStock, targetStock, shoppingTrigger, expiryDaysThreshold, autoAddToShopping, expiry, location, notes, isFavorite, now, now);
+    INSERT INTO stock_items (id, family_id, name, category, quantity, opened_items, unit, low_stock_threshold, target_stock, restock_target, shopping_trigger, expiry_days_threshold, auto_add_to_shopping, earliest_expiry_date, location, notes, is_favorite, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, familyId, name, category, quantity, openedItemsJson, unit, lowThreshold, targetStock, targetStock, shoppingTrigger, expiryDaysThreshold, autoAddToShopping, expiry, location, notes, isFavorite, now, now);
 
   if (data.barcode && data.barcode.trim()) {
     addBarcodeToStockItem(familyId, id, data.barcode.trim(), data.brand_or_label);
@@ -1596,6 +1712,7 @@ export function updateStockItem(familyId: string, id: string, data: {
   name?: string;
   category?: string;
   quantity?: number;
+  opened_items?: any[];
   unit?: string;
   low_stock_threshold?: number;
   target_stock?: number;
@@ -1615,9 +1732,10 @@ export function updateStockItem(familyId: string, id: string, data: {
   const name = data.name !== undefined ? data.name.trim() : existing.name;
   const category = data.category !== undefined ? data.category : existing.category;
   const quantity = data.quantity !== undefined ? Math.max(0, Number(data.quantity)) : existing.quantity;
+  const openedItemsJson = data.opened_items !== undefined ? JSON.stringify(data.opened_items) : JSON.stringify(existing.opened_items || []);
   const unit = data.unit !== undefined ? data.unit : existing.unit;
   const lowThreshold = data.low_stock_threshold !== undefined ? Number(data.low_stock_threshold) : (existing.low_stock_threshold ?? 1);
-  const targetStock = data.target_stock !== undefined ? Math.max(1, Number(data.target_stock)) : (data.restock_target !== undefined ? Math.max(1, Number(data.restock_target)) : (existing.target_stock || existing.restock_target || Math.max(2, lowThreshold * 2)));
+  const targetStock = data.target_stock !== undefined ? Math.max(0, Number(data.target_stock)) : (data.restock_target !== undefined ? Math.max(0, Number(data.restock_target)) : (existing.target_stock !== undefined && existing.target_stock !== null ? existing.target_stock : (existing.restock_target !== undefined && existing.restock_target !== null ? existing.restock_target : Math.max(2, lowThreshold * 2))));
   const shoppingTrigger = data.shopping_trigger !== undefined ? data.shopping_trigger : (data.auto_add_to_shopping !== undefined ? (data.auto_add_to_shopping ? 'low_stock' : 'none') : (existing.shopping_trigger || 'low_stock'));
   const expiryDaysThreshold = data.expiry_days_threshold !== undefined ? Math.max(0, Number(data.expiry_days_threshold)) : (existing.expiry_days_threshold ?? 2);
   const autoAddToShopping = shoppingTrigger !== 'none' ? 1 : 0;
@@ -1628,9 +1746,9 @@ export function updateStockItem(familyId: string, id: string, data: {
 
   db.prepare(`
     UPDATE stock_items
-    SET name = ?, category = ?, quantity = ?, unit = ?, low_stock_threshold = ?, target_stock = ?, restock_target = ?, shopping_trigger = ?, expiry_days_threshold = ?, auto_add_to_shopping = ?, earliest_expiry_date = ?, location = ?, notes = ?, is_favorite = ?, updated_at = ?
+    SET name = ?, category = ?, quantity = ?, opened_items = ?, unit = ?, low_stock_threshold = ?, target_stock = ?, restock_target = ?, shopping_trigger = ?, expiry_days_threshold = ?, auto_add_to_shopping = ?, earliest_expiry_date = ?, location = ?, notes = ?, is_favorite = ?, updated_at = ?
     WHERE id = ? AND family_id = ?
-  `).run(name, category, quantity, unit, lowThreshold, targetStock, targetStock, shoppingTrigger, expiryDaysThreshold, autoAddToShopping, expiry, location, notes, isFavorite, now, id, familyId);
+  `).run(name, category, quantity, openedItemsJson, unit, lowThreshold, targetStock, targetStock, shoppingTrigger, expiryDaysThreshold, autoAddToShopping, expiry, location, notes, isFavorite, now, id, familyId);
 
   evaluateStockShoppingTriggers(familyId);
 
@@ -1646,44 +1764,95 @@ export function adjustStockItemQuantity(
   familyId: string,
   id: string,
   options: {
-    action: 'add' | 'use' | 'set' | 'shopping_purchase';
+    action: 'add' | 'open' | 'use' | 'finish' | 'used_up' | 'set' | 'shopping_purchase' | 'consume_opened';
     amount: number;
     barcode?: string;
     expiry_date?: string | null;
+    opened_item_id?: string | null;
     member_id?: string | null;
   }
 ) {
+  processExpiredOpenedStock(familyId);
+
   const item = getStockItemById(familyId, id);
   if (!item) throw new Error('Stock item not found');
 
   const now = new Date().toISOString();
   let newQuantity = item.quantity;
-  const amount = Number(options.amount) || 1;
+  const amount = Math.max(1, Number(options.amount) || 1);
+  let openedItems: any[] = item.opened_items || [];
+  const action = options.action;
 
-  if (options.action === 'add' || options.action === 'shopping_purchase') {
+  if (action === 'add' || action === 'shopping_purchase') {
     newQuantity = item.quantity + amount;
-  } else if (options.action === 'use') {
-    newQuantity = Math.max(0, item.quantity - amount);
-  } else if (options.action === 'set') {
-    newQuantity = Math.max(0, amount);
-  }
-
-  // If new expiry is supplied and is earlier than current (or current is null), update earliest_expiry_date
-  let newExpiry = item.earliest_expiry_date;
-  if (options.expiry_date) {
-    if (!newExpiry || options.expiry_date < newExpiry) {
-      newExpiry = options.expiry_date;
+  } else if (action === 'open' || action === 'use') {
+    if (item.quantity < amount) {
+      throw new Error(`Cannot open ${amount} ${item.unit || 'units'}. Only ${item.quantity} unopened ${item.unit || 'units'} available in stock.`);
     }
+    newQuantity = item.quantity - amount;
+
+    if (options.expiry_date && options.expiry_date.trim()) {
+      openedItems = [
+        ...openedItems,
+        {
+          id: 'opn_' + uuidv4().slice(0, 8),
+          quantity: amount,
+          expiry_date: options.expiry_date.trim(),
+          opened_at: now,
+        },
+      ];
+    }
+  } else if (action === 'finish' || action === 'used_up') {
+    if (openedItems.length > 0) {
+      let remainingToDeduct = amount;
+      const sortedOpened = [...openedItems].sort((a, b) => {
+        if (!a.expiry_date) return 1;
+        if (!b.expiry_date) return -1;
+        return a.expiry_date.localeCompare(b.expiry_date);
+      });
+
+      const updatedOpened: any[] = [];
+      for (const opn of sortedOpened) {
+        if (remainingToDeduct <= 0) {
+          updatedOpened.push(opn);
+        } else {
+          const opnQty = Number(opn.quantity) || 1;
+          if (opnQty <= remainingToDeduct) {
+            remainingToDeduct -= opnQty;
+          } else {
+            updatedOpened.push({
+              ...opn,
+              quantity: opnQty - remainingToDeduct,
+            });
+            remainingToDeduct = 0;
+          }
+        }
+      }
+      openedItems = updatedOpened;
+    } else {
+      if (item.quantity > 0) {
+        newQuantity = Math.max(0, item.quantity - amount);
+      }
+    }
+  } else if (action === 'consume_opened') {
+    if (options.opened_item_id) {
+      openedItems = openedItems.filter((opn) => opn.id !== options.opened_item_id);
+    } else if (openedItems.length > 0) {
+      openedItems = openedItems.slice(1);
+    }
+  } else if (action === 'set') {
+    newQuantity = Math.max(0, amount);
   }
 
   db.prepare(`
     UPDATE stock_items
-    SET quantity = ?, earliest_expiry_date = ?, updated_at = ?
+    SET quantity = ?, opened_items = ?, updated_at = ?
     WHERE id = ? AND family_id = ?
-  `).run(newQuantity, newExpiry, now, id, familyId);
+  `).run(newQuantity, JSON.stringify(openedItems), now, id, familyId);
 
   // Record log
   const logId = 'stl_' + uuidv4().slice(0, 8);
+  const logQtyDelta = (action === 'add' || action === 'set' || action === 'shopping_purchase') ? amount : -amount;
   db.prepare(`
     INSERT INTO stock_logs (id, family_id, stock_item_id, action, quantity_changed, quantity_after, barcode, expiry_date, member_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1691,8 +1860,8 @@ export function adjustStockItemQuantity(
     logId,
     familyId,
     id,
-    options.action,
-    options.action === 'use' ? -amount : amount,
+    action,
+    logQtyDelta,
     newQuantity,
     options.barcode || null,
     options.expiry_date || null,
@@ -1700,17 +1869,13 @@ export function adjustStockItemQuantity(
     now
   );
 
-  // ADD STOCK IS THE PHYSICAL CONFIRMATION:
-  // When Stock is replenished (Add Stock, Set, or Shopping Purchase):
-  // 1. Remove/resolve any matching ticked/purchased Shopping List items for this canonical stock item
-  if (options.action === 'add' || options.action === 'set' || options.action === 'shopping_purchase') {
+  if (action === 'add' || action === 'set' || action === 'shopping_purchase') {
     db.prepare(`
       DELETE FROM shopping_list_items
       WHERE family_id = ? AND is_completed = 1 AND (stock_item_id = ? OR LOWER(name) = LOWER(?))
     `).run(familyId, item.id, item.name);
   }
 
-  // 2. Synchronize triggers and recalculate remaining shopping list requirements
   evaluateStockShoppingTriggers(familyId);
 
   return getStockItemById(familyId, id);

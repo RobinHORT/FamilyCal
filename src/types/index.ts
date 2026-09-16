@@ -214,6 +214,13 @@ export interface GoogleConfigResponse {
 // Stock & Inventory Types
 export type ShoppingTriggerMode = 'low_stock' | 'zero_stock' | 'before_expiry' | 'low_stock_and_expiry' | 'none';
 
+export interface OpenedStockItem {
+  id: string;
+  quantity: number;
+  expiry_date?: string | null;
+  opened_at: string;
+}
+
 export interface StockBarcode {
   id: string;
   family_id: string;
@@ -230,7 +237,9 @@ export interface StockItem {
   family_id: string;
   name: string; // Canonical stock item name
   category: string;
-  quantity: number;
+  quantity: number; // Unopened / sealed stock
+  opened_quantity?: number; // Total count of currently opened stock
+  opened_items?: OpenedStockItem[]; // Array of opened item records with independent expiry dates
   unit: string;
   low_stock_threshold: number;
   target_stock?: number;

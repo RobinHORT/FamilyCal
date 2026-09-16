@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import {
   X,
@@ -16,6 +16,7 @@ import {
   Zap,
   Calendar as CalendarIcon,
   Package,
+  Clock,
 } from 'lucide-react';
 import { StockItem } from '../../types';
 import { api } from '../../api/client';
@@ -23,17 +24,20 @@ import { api } from '../../api/client';
 interface BarcodeScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialMode?: 'add' | 'use';
+  initialMode?: 'add' | 'open' | 'finish' | 'use';
   stockItems: StockItem[];
   onStockUpdated: () => void;
   onRequestCreateItemWithBarcode: (barcode: string) => void;
 }
 
-interface PendingUseItem {
+interface PendingActionItem {
   stockItem: StockItem;
   barcode: string;
+  action: 'add' | 'open' | 'finish' | 'use';
   quantity: number;
   expiryDate: string;
+  expiresInDays?: string;
+  noExpiry?: boolean;
 }
 
 export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
@@ -44,7 +48,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onStockUpdated,
   onRequestCreateItemWithBarcode,
 }) => {
-  const [mode, setMode] = useState<'add' | 'use'>(initialMode);
+  const [mode, setMode] = useState<'add' | 'open' | 'finish' | 'use'>(initialMode);
+  const modeRef = useRef<'add' | 'open' | 'finish' | 'use'>(initialMode);
   const [quantityDelta, setQuantityDelta] = useState<number>(1);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
@@ -66,14 +71,15 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     barcode?: string;
   } | null>(null);
 
-  // Pending Use Stock Confirmation Workflow state
-  const [pendingUseItem, setPendingUseItem] = useState<PendingUseItem | null>(null);
+  // Pending Action Item Confirmation Workflow state (supports both Add & Use)
+  const [pendingActionItem, setPendingActionItem] = useState<PendingActionItem | null>(null);
 
   // Manual fallback input
   const [manualCode, setManualCode] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  // Unmapped linking dropdown
+  // Unmapped linking search & selection state
+  const [linkSearchQuery, setLinkSearchQuery] = useState<string>('');
   const [selectedStockItemIdForLink, setSelectedStockItemIdForLink] = useState<string>('');
   const [linkBrandLabel, setLinkBrandLabel] = useState<string>('');
   const [isLinking, setIsLinking] = useState<boolean>(false);
@@ -82,18 +88,45 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const scannerContainerId = 'barcode-scanner-viewport';
   const isCooldownRef = useRef<boolean>(false);
 
+  // Keep modeRef strictly synchronized with mode state
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
   // Sync mode with initialMode prop when modal opens
   useEffect(() => {
     if (isOpen) {
       setMode(initialMode);
+      modeRef.current = initialMode;
       setScanResult(null);
       setLastScannedBarcode(null);
       setManualCode('');
       setCameraError(null);
-      setPendingUseItem(null);
+      setPendingActionItem(null);
+      setLinkSearchQuery('');
+      setSelectedStockItemIdForLink('');
+      setLinkBrandLabel('');
       setTorchOn(false);
     }
   }, [isOpen, initialMode]);
+
+  // Case-insensitive, whitespace-normalized stock items filter for unlinked barcode linking
+  const filteredStockItemsForLink = useMemo(() => {
+    // Sort A-Z by canonical name first
+    const sorted = [...stockItems].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    );
+
+    if (!linkSearchQuery.trim()) return sorted;
+
+    const query = linkSearchQuery.toLowerCase().trim().replace(/\s+/g, ' ');
+    return sorted.filter((item) => {
+      const normName = item.name.toLowerCase().replace(/\s+/g, ' ');
+      const normCat = (item.category || '').toLowerCase().replace(/\s+/g, ' ');
+      const normLoc = (item.location || '').toLowerCase().replace(/\s+/g, ' ');
+      return normName.includes(query) || normCat.includes(query) || normLoc.includes(query);
+    });
+  }, [stockItems, linkSearchQuery]);
 
   // Audio chime feedback using Web Audio API
   const playBeep = (type: 'success' | 'warning') => {
@@ -290,6 +323,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
   const processBarcodeScan = async (code: string) => {
     setIsProcessing(true);
+    const activeMode = modeRef.current; // ALWAYS read from modeRef.current!
     try {
       // First lookup if barcode is mapped to canonical stock item
       let matchedItem: StockItem | null = null;
@@ -318,7 +352,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         // Test with scanBarcode to see if unmapped
         const response = await api.scanBarcode({
           barcode: code,
-          mode,
+          mode: activeMode,
           amount: quantityDelta,
         });
 
@@ -329,46 +363,25 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             message: `Barcode "${code}" is not yet linked to any household stock item.`,
             barcode: code,
           });
-          setPendingUseItem(null);
+          setPendingActionItem(null);
           return;
         }
 
         matchedItem = response.stockItem;
       }
 
-      // If we are in USE STOCK mode:
-      // Prompt user for Quantity and optional Expiry Date before completing the stock-use action!
-      if (mode === 'use') {
-        playBeep('success');
-        setPendingUseItem({
-          stockItem: matchedItem,
-          barcode: code,
-          quantity: quantityDelta,
-          expiryDate: matchedItem.earliest_expiry_date || '',
-        });
-        setScanResult(null);
-        return;
-      }
-
-      // If we are in ADD STOCK mode:
-      // Directly execute stock addition
-      const response = await api.scanBarcode({
+      // Prompt user with Action confirmation dialog (Quantity & optional Expiry Date / Days)
+      playBeep('success');
+      setPendingActionItem({
+        stockItem: matchedItem,
         barcode: code,
-        mode: 'add',
-        amount: quantityDelta,
+        action: activeMode,
+        quantity: quantityDelta,
+        expiryDate: matchedItem.earliest_expiry_date || '',
+        expiresInDays: '7',
+        noExpiry: false,
       });
-
-      if (response.success && response.stockItem) {
-        playBeep('success');
-        setScanResult({
-          status: 'success',
-          message: `Added +${quantityDelta} to "${response.stockItem.name}" (Now: ${response.stockItem.quantity} ${response.stockItem.unit})`,
-          stockItem: response.stockItem,
-          delta: response.delta,
-          barcode: code,
-        });
-        onStockUpdated();
-      }
+      setScanResult(null);
     } catch (err: any) {
       playBeep('warning');
       setScanResult({
@@ -381,38 +394,63 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     }
   };
 
-  // Confirm Use Stock action with quantity and optional expiry date
-  const handleConfirmUseStock = async () => {
-    if (!pendingUseItem) return;
+  // Confirm Pending Action (Add Stock, Open Item, or Finish/Used Up)
+  const handleConfirmAction = async () => {
+    if (!pendingActionItem) return;
     setIsProcessing(true);
+    const { action, barcode, quantity, expiryDate, expiresInDays, noExpiry, stockItem } = pendingActionItem;
+
+    let targetExpiry: string | undefined = undefined;
+    const isOpening = action === 'open' || action === 'use';
+    if (isOpening) {
+      if (!noExpiry && expiresInDays && Number(expiresInDays) > 0) {
+        const d = new Date();
+        d.setDate(d.getDate() + Number(expiresInDays));
+        targetExpiry = d.toISOString().split('T')[0];
+      }
+    } else if (action === 'add') {
+      targetExpiry = expiryDate.trim() || undefined;
+    }
+
     try {
+      const scanApiMode = isOpening ? 'open' : action === 'finish' ? 'finish' : 'add';
       const response = await api.scanBarcode({
-        barcode: pendingUseItem.barcode,
-        mode: 'use',
-        amount: pendingUseItem.quantity,
-        expiry_date: pendingUseItem.expiryDate.trim() || undefined,
+        barcode,
+        mode: scanApiMode,
+        amount: quantity,
+        expiry_date: targetExpiry,
       });
 
       if (response.success && response.stockItem) {
         playBeep('success');
+        const updatedItem = response.stockItem;
+        let resultMsg = '';
+        if (action === 'add') {
+          resultMsg = `Added +${quantity} ${updatedItem.unit} to "${updatedItem.name}" (Unopened: ${updatedItem.quantity} ${updatedItem.unit})`;
+        } else if (isOpening) {
+          resultMsg = targetExpiry
+            ? `Opened ${quantity} ${updatedItem.unit} of "${updatedItem.name}" (Unopened: ${updatedItem.quantity}, Opened: ${updatedItem.opened_quantity || 0}) • Expires in ${expiresInDays} days`
+            : `Consumed ${quantity} ${updatedItem.unit} from "${updatedItem.name}" (Unopened: ${updatedItem.quantity})`;
+        } else {
+          resultMsg = `Finished ${quantity} ${updatedItem.unit} of "${updatedItem.name}" (Unopened: ${updatedItem.quantity}, Opened: ${updatedItem.opened_quantity || 0})`;
+        }
+
         setScanResult({
           status: 'success',
-          message: `Used ${pendingUseItem.quantity} ${response.stockItem.unit} from "${response.stockItem.name}" (Now: ${response.stockItem.quantity} ${response.stockItem.unit})${
-            pendingUseItem.expiryDate ? ` • Expiry: ${pendingUseItem.expiryDate}` : ''
-          }`,
-          stockItem: response.stockItem,
-          delta: response.delta,
-          barcode: pendingUseItem.barcode,
+          message: resultMsg,
+          stockItem: updatedItem,
+          delta: action === 'add' ? quantity : -quantity,
+          barcode,
         });
-        setPendingUseItem(null);
+        setPendingActionItem(null);
         onStockUpdated();
       }
     } catch (err: any) {
       playBeep('warning');
       setScanResult({
         status: 'error',
-        message: err.message || 'Failed to use stock',
-        barcode: pendingUseItem.barcode,
+        message: err.message || `Failed to ${action} stock`,
+        barcode,
       });
     } finally {
       setIsProcessing(false);
@@ -429,6 +467,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const handleLinkBarcodeToStockItem = async () => {
     if (!selectedStockItemIdForLink || !lastScannedBarcode) return;
     setIsLinking(true);
+    const activeMode = modeRef.current;
     try {
       await api.addBarcodeMapping(
         selectedStockItemIdForLink,
@@ -439,38 +478,22 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
       const targetStockItem = stockItems.find((s) => s.id === selectedStockItemIdForLink);
 
-      if (mode === 'use' && targetStockItem) {
+      if (targetStockItem) {
         playBeep('success');
-        setPendingUseItem({
+        setPendingActionItem({
           stockItem: targetStockItem,
           barcode: lastScannedBarcode,
+          action: activeMode,
           quantity: quantityDelta,
           expiryDate: targetStockItem.earliest_expiry_date || '',
         });
         setScanResult(null);
         setSelectedStockItemIdForLink('');
+        setLinkSearchQuery('');
         setLinkBrandLabel('');
         onStockUpdated();
         return;
       }
-
-      // If in Add mode, apply addition immediately
-      const adjustRes = await api.adjustStockQuantity(selectedStockItemIdForLink, {
-        action: 'add',
-        amount: quantityDelta,
-        barcode: lastScannedBarcode,
-      });
-
-      playBeep('success');
-      setScanResult({
-        status: 'success',
-        message: `Linked barcode "${lastScannedBarcode}" to "${adjustRes.name}" and added ${quantityDelta} ${adjustRes.unit}!`,
-        stockItem: adjustRes,
-        barcode: lastScannedBarcode,
-      });
-      setSelectedStockItemIdForLink('');
-      setLinkBrandLabel('');
-      onStockUpdated();
     } catch (err: any) {
       alert(`Error linking barcode: ${err.message}`);
     } finally {
@@ -567,15 +590,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         </div>
 
         {/* Mode Switcher & Quantity Delta Controls */}
-        <div className="bg-gray-50 border border-gray-200/80 rounded-2xl p-2 mb-3 flex items-center justify-between gap-2">
-          <div className="flex items-center bg-gray-200/70 p-0.5 rounded-xl">
+        <div className="bg-gray-50 border border-gray-200/80 rounded-2xl p-2 mb-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+          <div className="flex items-center bg-gray-200/70 p-0.5 rounded-xl overflow-x-auto">
             <button
               type="button"
               onClick={() => {
                 setMode('add');
-                setPendingUseItem(null);
+                modeRef.current = 'add';
+                setPendingActionItem(null);
               }}
-              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                 mode === 'add'
                   ? 'bg-emerald-600 text-white shadow-xs'
                   : 'text-gray-600 hover:text-gray-900'
@@ -586,21 +610,37 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                setMode('use');
-                setPendingUseItem(null);
+                setMode('open');
+                modeRef.current = 'open';
+                setPendingActionItem(null);
               }}
-              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                mode === 'use'
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                mode === 'open' || mode === 'use'
                   ? 'bg-amber-600 text-white shadow-xs'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              <Minus className="w-3.5 h-3.5 stroke-[3]" /> Use Stock
+              <Clock className="w-3.5 h-3.5" /> Open Item
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('finish');
+                modeRef.current = 'finish';
+                setPendingActionItem(null);
+              }}
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                mode === 'finish'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <Minus className="w-3.5 h-3.5 stroke-[3]" /> Finish / Used Up
             </button>
           </div>
 
           {/* Amount per scan */}
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+          <div className="flex items-center justify-end gap-1.5 text-xs font-semibold text-gray-700">
             <span className="text-[11px] text-gray-500">Qty:</span>
             <div className="flex items-center bg-white border border-gray-200 rounded-lg overflow-hidden shadow-2xs">
               <button
@@ -661,43 +701,58 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           )}
         </div>
 
-        {/* USE STOCK CONFIRMATION DIALOG: Ask for Expiry Date & Quantity */}
-        {pendingUseItem && (
+        {/* STOCK ACTION CONFIRMATION DIALOG */}
+        {pendingActionItem && (
           <div
-            id="use-stock-confirmation-card"
-            className="p-4 rounded-2xl bg-amber-50/90 border border-amber-300/80 mb-3.5 space-y-3.5 animate-in fade-in zoom-in-95 shadow-xs"
+            id="stock-action-confirmation-card"
+            className={`p-4 rounded-2xl border mb-3.5 space-y-3.5 animate-in fade-in zoom-in-95 shadow-xs ${
+              pendingActionItem.action === 'add'
+                ? 'bg-emerald-50/90 border-emerald-300/80'
+                : pendingActionItem.action === 'open' || pendingActionItem.action === 'use'
+                ? 'bg-amber-50/90 border-amber-300/80'
+                : 'bg-rose-50/90 border-rose-300/80'
+            }`}
           >
-            <div className="flex items-center justify-between pb-2 border-b border-amber-200">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-200/80">
               <div className="flex items-center gap-2">
-                <Package className="w-4 h-4 text-amber-700" />
-                <span className="text-xs font-bold text-amber-950 font-serif">
-                  Confirm Stock Usage
+                <Package className={`w-4 h-4 ${
+                  pendingActionItem.action === 'add' ? 'text-emerald-700' : pendingActionItem.action === 'open' || pendingActionItem.action === 'use' ? 'text-amber-700' : 'text-rose-700'
+                }`} />
+                <span className={`text-xs font-bold font-serif ${
+                  pendingActionItem.action === 'add' ? 'text-emerald-950' : pendingActionItem.action === 'open' || pendingActionItem.action === 'use' ? 'text-amber-950' : 'text-rose-950'
+                }`}>
+                  {pendingActionItem.action === 'add' ? 'Confirm Add Stock' : pendingActionItem.action === 'open' || pendingActionItem.action === 'use' ? 'Confirm Open Item' : 'Confirm Finish / Used Up'}
                 </span>
               </div>
-              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
-                {pendingUseItem.barcode}
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-white text-gray-800 border border-gray-200">
+                {pendingActionItem.barcode}
               </span>
             </div>
 
             <div>
               <h4 className="text-sm font-bold text-gray-900">
-                {pendingUseItem.stockItem.name}
+                {pendingActionItem.stockItem.name}
               </h4>
               <p className="text-xs text-gray-600 mt-0.5">
-                Current inventory: <span className="font-bold text-gray-900">{pendingUseItem.stockItem.quantity} {pendingUseItem.stockItem.unit}</span> ({pendingUseItem.stockItem.category})
+                Current inventory: <span className="font-bold text-gray-900">{pendingActionItem.stockItem.quantity} unopened</span>
+                {pendingActionItem.stockItem.opened_quantity ? (
+                  <span className="text-amber-700 font-semibold ml-1.5">• {pendingActionItem.stockItem.opened_quantity} opened</span>
+                ) : null}
               </p>
             </div>
 
-            {/* Quantity to Use */}
-            <div className="flex items-center justify-between bg-white border border-amber-200 rounded-xl p-2.5">
-              <span className="text-xs font-bold text-gray-700">Quantity to Use:</span>
+            {/* Quantity control */}
+            <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl p-2.5">
+              <span className="text-xs font-bold text-gray-700">
+                Quantity to {pendingActionItem.action === 'add' ? 'Add' : pendingActionItem.action === 'open' || pendingActionItem.action === 'use' ? 'Open' : 'Finish'}:
+              </span>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() =>
-                    setPendingUseItem({
-                      ...pendingUseItem,
-                      quantity: Math.max(1, pendingUseItem.quantity - 1),
+                    setPendingActionItem({
+                      ...pendingActionItem,
+                      quantity: Math.max(1, pendingActionItem.quantity - 1),
                     })
                   }
                   className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold flex items-center justify-center cursor-pointer text-xs"
@@ -705,14 +760,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                   -
                 </button>
                 <span className="w-8 text-center font-bold text-gray-900 text-xs">
-                  {pendingUseItem.quantity}
+                  {pendingActionItem.quantity}
                 </span>
                 <button
                   type="button"
                   onClick={() =>
-                    setPendingUseItem({
-                      ...pendingUseItem,
-                      quantity: pendingUseItem.quantity + 1,
+                    setPendingActionItem({
+                      ...pendingActionItem,
+                      quantity: pendingActionItem.quantity + 1,
                     })
                   }
                   className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold flex items-center justify-center cursor-pointer text-xs"
@@ -720,64 +775,124 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                   +
                 </button>
                 <span className="text-xs font-semibold text-gray-500 ml-1">
-                  {pendingUseItem.stockItem.unit}
+                  {pendingActionItem.stockItem.unit}
                 </span>
               </div>
             </div>
 
-            {/* Expiry Date input (Optional) */}
-            <div className="space-y-1">
-              <label className="block text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                <CalendarIcon className="w-3.5 h-3.5 text-amber-700" />
-                <span>Expiry Date (Optional)</span>
-              </label>
-              <input
-                type="date"
-                id="use-stock-expiry-date-input"
-                value={pendingUseItem.expiryDate}
-                onChange={(e) =>
-                  setPendingUseItem({
-                    ...pendingUseItem,
-                    expiryDate: e.target.value,
-                  })
-                }
-                className="w-full bg-white border border-amber-200 rounded-xl px-3 py-1.5 text-xs text-gray-900 font-medium focus:outline-none focus:border-amber-600 shadow-2xs"
-              />
-              <p className="text-[10px] text-gray-500">
-                {pendingUseItem.stockItem.earliest_expiry_date ? (
-                  <span>
-                    Existing recorded expiry: <strong>{pendingUseItem.stockItem.earliest_expiry_date}</strong> (preserved unless changed).
-                  </span>
-                ) : (
-                  'Leave blank if expiry does not apply to this opened item.'
-                )}
+            {/* Validation Message if attempting to open more than available unopened stock */}
+            {(pendingActionItem.action === 'open' || pendingActionItem.action === 'use') && pendingActionItem.quantity > pendingActionItem.stockItem.quantity && (
+              <div className="p-2.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                <span>Cannot open {pendingActionItem.quantity} {pendingActionItem.stockItem.unit}. Only {pendingActionItem.stockItem.quantity} unopened available in stock.</span>
+              </div>
+            )}
+
+            {/* Expiry Input / Notes depending on action */}
+            {pendingActionItem.action === 'add' ? (
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                  <CalendarIcon className="w-3.5 h-3.5 text-gray-600" />
+                  <span>Expiry Date (Optional)</span>
+                </label>
+                <input
+                  type="date"
+                  id="stock-action-expiry-date-input"
+                  value={pendingActionItem.expiryDate}
+                  onChange={(e) =>
+                    setPendingActionItem({
+                      ...pendingActionItem,
+                      expiryDate: e.target.value,
+                    })
+                  }
+                  className="w-full bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs text-gray-900 font-medium focus:outline-none focus:border-gray-600 shadow-2xs"
+                />
+              </div>
+            ) : pendingActionItem.action === 'open' || pendingActionItem.action === 'use' ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl p-2.5">
+                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                    <CalendarIcon className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Expires in:</span>
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="1"
+                      disabled={pendingActionItem.noExpiry}
+                      value={pendingActionItem.expiresInDays ?? '7'}
+                      onChange={(e) =>
+                        setPendingActionItem({
+                          ...pendingActionItem,
+                          expiresInDays: e.target.value,
+                        })
+                      }
+                      className="w-16 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs text-center font-bold text-gray-900 focus:outline-none focus:border-amber-500 disabled:bg-gray-100 disabled:text-gray-400"
+                    />
+                    <span className="text-xs font-semibold text-gray-600">days</span>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-600 pl-1">
+                  <input
+                    type="checkbox"
+                    checked={pendingActionItem.noExpiry || false}
+                    onChange={(e) =>
+                      setPendingActionItem({
+                        ...pendingActionItem,
+                        noExpiry: e.target.checked,
+                      })
+                    }
+                    className="rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <span>No expiry (immediately consumed)</span>
+                </label>
+              </div>
+            ) : (
+              <p className="text-xs text-rose-800 font-medium bg-white border border-rose-200 rounded-xl p-2.5">
+                Item will be removed from active stock and checked for replenishment against target level ({pendingActionItem.stockItem.target_stock || pendingActionItem.stockItem.restock_target || 2} {pendingActionItem.stockItem.unit}).
               </p>
-            </div>
+            )}
 
             {/* Confirmation actions */}
             <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setPendingUseItem(null)}
+                onClick={() => setPendingActionItem(null)}
                 className="px-3.5 py-1.5 rounded-xl bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 text-xs font-semibold transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleConfirmUseStock}
-                disabled={isProcessing}
-                className="px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                onClick={handleConfirmAction}
+                disabled={
+                  isProcessing ||
+                  ((pendingActionItem.action === 'open' || pendingActionItem.action === 'use') && pendingActionItem.quantity > pendingActionItem.stockItem.quantity)
+                }
+                className={`px-4 py-1.5 rounded-xl text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50 ${
+                  pendingActionItem.action === 'add'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : pendingActionItem.action === 'open' || pendingActionItem.action === 'use'
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
               >
-                <Minus className="w-3.5 h-3.5 stroke-[3]" />
-                <span>{isProcessing ? 'Updating...' : `Confirm Use ${pendingUseItem.quantity} ${pendingUseItem.stockItem.unit}`}</span>
+                {pendingActionItem.action === 'add' ? (
+                  <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                ) : (
+                  <Minus className="w-3.5 h-3.5 stroke-[3]" />
+                )}
+                <span>
+                  {isProcessing
+                    ? 'Updating...'
+                    : `Confirm ${pendingActionItem.action === 'add' ? 'Add' : pendingActionItem.action === 'open' || pendingActionItem.action === 'use' ? 'Open' : 'Finish'} ${pendingActionItem.quantity} ${pendingActionItem.stockItem.unit}`}
+                </span>
               </button>
             </div>
           </div>
         )}
 
         {/* Real-time Scan Result Card */}
-        {scanResult && !pendingUseItem && (
+        {scanResult && !pendingActionItem && (
           <div
             className={`p-3 rounded-2xl border mb-3.5 animate-in fade-in zoom-in-95 ${
               scanResult.status === 'success'
@@ -812,15 +927,29 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
                 <div className="bg-white/90 border border-amber-200 rounded-xl p-2.5 space-y-2">
                   <label className="block text-[11px] font-bold text-gray-700 flex items-center gap-1">
-                    <Link className="w-3.5 h-3.5 text-blue-600" /> Link to Existing Household Stock Item
+                    <Link className="w-3.5 h-3.5 text-blue-600" /> Search & Link to Existing Household Stock Item
                   </label>
+
+                  {/* Search Filter for Stock Items */}
+                  <input
+                    type="text"
+                    placeholder="Search existing items (e.g. Milk, Eggs)..."
+                    value={linkSearchQuery}
+                    onChange={(e) => setLinkSearchQuery(e.target.value)}
+                    className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1 text-xs text-gray-900 focus:outline-none focus:border-blue-500 placeholder-gray-400"
+                  />
+
                   <select
                     value={selectedStockItemIdForLink}
                     onChange={(e) => setSelectedStockItemIdForLink(e.target.value)}
                     className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-800 font-medium focus:outline-none focus:border-blue-500"
                   >
-                    <option value="">Select stock item (A-Z sorted)...</option>
-                    {stockItems.map((item) => (
+                    <option value="">
+                      {filteredStockItemsForLink.length > 0
+                        ? `Select stock item (${filteredStockItemsForLink.length} matched)...`
+                        : 'No matching stock items found'}
+                    </option>
+                    {filteredStockItemsForLink.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name} ({item.quantity} {item.unit} in {item.category})
                       </option>
@@ -842,7 +971,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
                   >
                     <Link className="w-3.5 h-3.5" />
-                    <span>{isLinking ? 'Linking...' : `Link Barcode & ${mode === 'add' ? 'Add' : 'Use'}`}</span>
+                    <span>{isLinking ? 'Linking...' : `Link Barcode & ${mode === 'add' ? 'Add Stock' : 'Use Stock'}`}</span>
                   </button>
                 </div>
 

@@ -57,7 +57,7 @@ export const StockScreen: React.FC = () => {
 
   // Modals state
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
-  const [scannerMode, setScannerMode] = useState<'add' | 'use'>('add');
+  const [scannerMode, setScannerMode] = useState<'add' | 'open' | 'finish' | 'use'>('add');
 
   const [isStockModalOpen, setIsStockModalOpen] = useState<boolean>(false);
   const [editingStockItem, setEditingStockItem] = useState<StockItem | null>(null);
@@ -97,6 +97,48 @@ export const StockScreen: React.FC = () => {
   const sortedStockItems = useMemo(() => {
     return [...stockItems].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   }, [stockItems]);
+
+  // Minimalist Item Emoji Helper
+  const getItemEmojiIcon = (item: StockItem) => {
+    // Check if item name already starts with an emoji
+    const hasEmojiAtStart = /^(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u.test(item.name);
+    if (hasEmojiAtStart) return null;
+
+    const lower = item.name.toLowerCase();
+    if (lower.includes('egg')) return '🥚';
+    if (lower.includes('milk')) return '🥛';
+    if (lower.includes('bread')) return '🍞';
+    if (lower.includes('cheese') || lower.includes('butter')) return '🧀';
+    if (lower.includes('apple') || lower.includes('fruit')) return '🍎';
+    if (lower.includes('banana')) return '🍌';
+    if (lower.includes('water') || lower.includes('juice') || lower.includes('soda')) return '🥤';
+    if (lower.includes('meat') || lower.includes('beef') || lower.includes('chicken')) return '🥩';
+
+    switch (item.category) {
+      case 'Dairy & Fridge':
+        return '🥛';
+      case 'Fresh Produce':
+        return '🥦';
+      case 'Bakery':
+        return '🍞';
+      case 'Meat & Seafood':
+        return '🥩';
+      case 'Frozen':
+        return '🧊';
+      case 'Beverages':
+        return '🥤';
+      case 'Snacks & Sweets':
+        return '🍿';
+      case 'Pantry Essentials':
+        return '🥫';
+      case 'Household & Cleaning':
+        return '🧹';
+      case 'Personal Care':
+        return '🧴';
+      default:
+        return '📦';
+    }
+  };
 
   // Filtered Stock Items (still strictly preserves A-Z sorting)
   const filteredStockItems = useMemo(() => {
@@ -190,7 +232,7 @@ export const StockScreen: React.FC = () => {
   }, [shoppingList]);
 
   // Quick Action Handlers
-  const handleOpenScanner = (mode: 'add' | 'use') => {
+  const handleOpenScanner = (mode: 'add' | 'open' | 'finish' | 'use') => {
     setScannerMode(mode);
     setIsScannerOpen(true);
   };
@@ -452,59 +494,78 @@ export const StockScreen: React.FC = () => {
       </div>
 
       {/* 2. PROMINENT ACTIONS BANNER */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {/* Prominent Action 1: Add Stock (Camera / Barcode Scanner) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Action 1: Add Stock (Scan unopened stock) */}
         <button
           type="button"
           id="btn-add-stock-scan"
           onClick={() => handleOpenScanner('add')}
-          className="group relative overflow-hidden bg-gradient-to-br from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white p-4 rounded-2xl shadow-xs transition-all flex items-center justify-between cursor-pointer border border-emerald-500/30"
+          className="group relative overflow-hidden bg-gradient-to-br from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white p-3.5 rounded-2xl shadow-xs transition-all flex items-center justify-between cursor-pointer border border-emerald-500/30"
         >
-          <div className="flex items-center gap-3 z-10">
-            <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shadow-2xs group-hover:scale-105 transition-transform">
-              <Camera className="w-5 h-5" />
+          <div className="flex items-center gap-2.5 z-10">
+            <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shadow-2xs group-hover:scale-105 transition-transform">
+              <Camera className="w-4 h-4" />
             </div>
             <div className="text-left">
-              <div className="text-sm font-bold tracking-tight">Add Stock</div>
-              <div className="text-[11px] text-emerald-100 font-medium">Scan barcode to replenish</div>
+              <div className="text-xs sm:text-sm font-bold tracking-tight">Add Stock</div>
+              <div className="text-[10px] text-emerald-100 font-medium">Scan unopened reserve</div>
             </div>
           </div>
-          <Plus className="w-5 h-5 text-emerald-200 group-hover:translate-x-0.5 transition-transform z-10" />
+          <Plus className="w-4 h-4 text-emerald-200 group-hover:translate-x-0.5 transition-transform z-10" />
         </button>
 
-        {/* Prominent Action 2: Use Stock (Camera / Barcode Scanner) */}
+        {/* Action 2: Open Item (Scan item being opened) */}
         <button
           type="button"
-          id="btn-use-stock-scan"
-          onClick={() => handleOpenScanner('use')}
-          className="group relative overflow-hidden bg-gradient-to-br from-amber-600 to-orange-700 hover:from-amber-500 hover:to-orange-600 text-white p-4 rounded-2xl shadow-xs transition-all flex items-center justify-between cursor-pointer border border-amber-500/30"
+          id="btn-open-stock-scan"
+          onClick={() => handleOpenScanner('open')}
+          className="group relative overflow-hidden bg-gradient-to-br from-amber-600 to-orange-700 hover:from-amber-500 hover:to-orange-600 text-white p-3.5 rounded-2xl shadow-xs transition-all flex items-center justify-between cursor-pointer border border-amber-500/30"
         >
-          <div className="flex items-center gap-3 z-10">
-            <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shadow-2xs group-hover:scale-105 transition-transform">
-              <Camera className="w-5 h-5" />
+          <div className="flex items-center gap-2.5 z-10">
+            <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shadow-2xs group-hover:scale-105 transition-transform">
+              <Camera className="w-4 h-4" />
             </div>
             <div className="text-left">
-              <div className="text-sm font-bold tracking-tight">Use Stock</div>
-              <div className="text-[11px] text-amber-100 font-medium">Scan barcode to deduct</div>
+              <div className="text-xs sm:text-sm font-bold tracking-tight">Open Item</div>
+              <div className="text-[10px] text-amber-100 font-medium">Scan item in use</div>
             </div>
           </div>
-          <Minus className="w-5 h-5 text-amber-200 group-hover:translate-x-0.5 transition-transform z-10" />
+          <Clock className="w-4 h-4 text-amber-200 group-hover:translate-x-0.5 transition-transform z-10" />
         </button>
 
-        {/* Action 3: New Item Manual Add */}
+        {/* Action 3: Finish / Used Up */}
+        <button
+          type="button"
+          id="btn-finish-stock-scan"
+          onClick={() => handleOpenScanner('finish')}
+          className="group relative overflow-hidden bg-gradient-to-br from-rose-600 to-pink-700 hover:from-rose-500 hover:to-pink-600 text-white p-3.5 rounded-2xl shadow-xs transition-all flex items-center justify-between cursor-pointer border border-rose-500/30"
+        >
+          <div className="flex items-center gap-2.5 z-10">
+            <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shadow-2xs group-hover:scale-105 transition-transform">
+              <Camera className="w-4 h-4" />
+            </div>
+            <div className="text-left">
+              <div className="text-xs sm:text-sm font-bold tracking-tight">Finish / Used Up</div>
+              <div className="text-[10px] text-rose-100 font-medium">Scan item consumed</div>
+            </div>
+          </div>
+          <Minus className="w-4 h-4 text-rose-200 group-hover:translate-x-0.5 transition-transform z-10" />
+        </button>
+
+        {/* Action 4: New Item Manual Add */}
         <button
           type="button"
           id="btn-new-stock-item-manual"
           onClick={() => handleCreateNewStockItem()}
-          className="group relative overflow-hidden bg-white hover:bg-gray-50 text-gray-900 p-4 rounded-2xl border border-gray-200 shadow-2xs transition-all flex items-center justify-between cursor-pointer"
+          className="group relative overflow-hidden bg-white hover:bg-gray-50 text-gray-900 p-3.5 rounded-2xl border border-gray-200 shadow-2xs transition-all flex items-center justify-between cursor-pointer"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600 shadow-2xs group-hover:scale-105 transition-transform">
-              <PlusCircle className="w-5 h-5" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600 shadow-2xs group-hover:scale-105 transition-transform">
+              <PlusCircle className="w-4 h-4" />
             </div>
             <div className="text-left">
-              <div className="text-sm font-bold tracking-tight">New Stock Item</div>
-              <div className="text-[11px] text-gray-500 font-medium">Add canonical item manually</div>
+              <div className="text-xs sm:text-sm font-bold tracking-tight">New Stock Item</div>
+              <div className="text-[10px] text-gray-500 font-medium">Add item manually</div>
             </div>
           </div>
           <ArrowRight className="w-4 h-4 text-gray-400 group-hover:translate-x-0.5 transition-transform" />
@@ -641,7 +702,7 @@ export const StockScreen: React.FC = () => {
 
           {/* Stock Items Grid / List (MANDATORY REQUIREMENT: ALWAYS A-Z SORTED) */}
           {filteredStockItems.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {filteredStockItems.map((item) => {
                 const trigger = item.shopping_trigger || 'low_stock';
                 const isZeroTrigger = trigger === 'zero_stock';
@@ -650,196 +711,60 @@ export const StockScreen: React.FC = () => {
                   : trigger === 'none'
                   ? false
                   : item.quantity <= (item.low_stock_threshold ?? 1);
-                const targetStockVal = item.target_stock ?? item.restock_target ?? 2;
-                const isExpanded = expandedBarcodesItemId === item.id;
-                const barcodeCount = item.barcodes?.length || 0;
+                const isExpired = item.earliest_expiry_date
+                  ? isPast(new Date(item.earliest_expiry_date)) && !isToday(new Date(item.earliest_expiry_date))
+                  : false;
+                const isExpiringSoon = item.earliest_expiry_date
+                  ? differenceInDays(new Date(item.earliest_expiry_date), new Date()) <= 3
+                  : false;
+                const emojiIcon = getItemEmojiIcon(item);
 
                 return (
                   <div
                     key={item.id}
                     id={`stock-card-${item.id}`}
-                    className={`bg-white rounded-2xl border transition-all shadow-2xs flex flex-col justify-between overflow-hidden relative group hover:border-gray-300 ${
-                      isLow ? 'border-amber-300/80 bg-amber-50/10' : 'border-gray-200/90'
-                    }`}
+                    className="bg-white rounded-xl border border-gray-200/90 px-4 py-3 shadow-2xs hover:border-gray-300 transition-all flex flex-col justify-between gap-1"
                   >
-                    {/* Top Section */}
-                    <div className="p-4 space-y-2.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="space-y-0.5 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            {item.is_favorite && (
-                              <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400 shrink-0" />
-                            )}
-                            <h3 className="text-sm sm:text-base font-bold text-gray-900 tracking-tight leading-snug">
-                              {item.name}
-                            </h3>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                            <span
-                              className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-md border ${getCategoryColor(
-                                item.category || ''
-                              )}`}
-                            >
-                              {item.category}
-                            </span>
-                            {item.location && (
-                              <span className="inline-flex items-center gap-0.5 text-[10px] text-gray-500 font-medium bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded-md">
-                                <MapPin className="w-2.5 h-2.5 text-gray-400" />
-                                {item.location}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Edit Button */}
-                        <button
-                          type="button"
-                          onClick={() => handleEditStockItem(item)}
-                          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
-                          title="Edit stock item"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      {/* Stock Level & Status Display */}
-                      <div className="flex items-baseline justify-between pt-1">
-                        <div className="flex items-baseline gap-1.5">
-                          <span
-                            className={`text-2xl font-black tracking-tight ${
-                              item.quantity === 0
-                                ? 'text-red-600'
-                                : isLow
-                                ? 'text-amber-600'
-                                : 'text-gray-900'
-                            }`}
-                          >
-                            {item.quantity}
+                    {/* Top Row: Icon + Name (Left), Quantity (Right) */}
+                    <div className="flex items-center justify-between gap-3 min-w-0">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {emojiIcon && (
+                          <span className="text-base sm:text-lg shrink-0 select-none">
+                            {emojiIcon}
                           </span>
-                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            {item.unit}
-                          </span>
-                        </div>
-
-                        {/* Status Badges */}
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {item.quantity === 0 && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-red-100 text-red-900 border border-red-200">
-                              <AlertTriangle className="w-3 h-3 text-red-700" /> Out of Stock
-                            </span>
-                          )}
-                          {isLow && item.quantity > 0 && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
-                              <AlertTriangle className="w-3 h-3 text-amber-700" /> Low Stock
-                            </span>
-                          )}
-                          {getExpiryBadge(item.earliest_expiry_date)}
-                        </div>
-                      </div>
-
-                      {/* Target Stock & Shopping Trigger Summary */}
-                      <div className="flex items-center justify-between text-[11px] text-gray-500 bg-gray-50/80 border border-gray-100 rounded-xl px-2.5 py-1.5">
-                        <span className="font-medium text-gray-700">
-                          Target: <span className="font-bold text-gray-900">{targetStockVal} {item.unit}</span>
-                        </span>
-                        <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200/80 px-1.5 py-0.5 rounded-md">
-                          {trigger === 'low_stock' && `Auto: ≤ ${item.low_stock_threshold ?? 1}`}
-                          {trigger === 'zero_stock' && 'Auto: Zero Stock'}
-                          {trigger === 'before_expiry' && `Auto: Exp (${item.expiry_days_threshold ?? 2}d)`}
-                          {trigger === 'low_stock_and_expiry' && `Auto: Low + Exp (${item.expiry_days_threshold ?? 2}d)`}
-                          {trigger === 'none' && 'Manual'}
-                        </span>
-                      </div>
-
-                      {/* Notes snippet if present */}
-                      {item.notes && (
-                        <p className="text-[11px] text-gray-500 line-clamp-1 italic">
-                          {item.notes}
-                        </p>
-                      )}
-
-                      {/* Barcode mapping summary toggle */}
-                      <div className="pt-0.5">
-                        <button
-                          type="button"
-                          onClick={() => setExpandedBarcodesItemId(isExpanded ? null : item.id)}
-                          className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors cursor-pointer"
-                        >
-                          <BarcodeIcon className="w-3 h-3" />
-                          <span>
-                            {barcodeCount > 0
-                              ? `${barcodeCount} barcode${barcodeCount === 1 ? '' : 's'} linked`
-                              : 'No barcodes linked'}
-                          </span>
-                          {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                        </button>
-
-                        {/* Expanded Barcodes list */}
-                        {isExpanded && (
-                          <div className="mt-2 p-2 bg-gray-50 border border-gray-200 rounded-xl space-y-1 text-[11px] animate-in fade-in">
-                            {barcodeCount > 0 ? (
-                              item.barcodes?.map((bc) => (
-                                <div
-                                  key={bc.id}
-                                  className="flex items-center justify-between text-gray-700 font-mono"
-                                >
-                                  <span>{bc.barcode}</span>
-                                  {bc.brand_or_label && (
-                                    <span className="text-[10px] text-gray-500 font-sans font-medium">
-                                      {bc.brand_or_label}
-                                    </span>
-                                  )}
-                                </div>
-                              ))
-                            ) : (
-                              <p className="text-[10px] text-gray-400 italic">
-                                Scan barcodes with camera to link brands to this item.
-                              </p>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleEditStockItem(item)}
-                              className="text-[10px] font-bold text-blue-600 hover:underline pt-1 block"
-                            >
-                              + Manage Barcodes
-                            </button>
-                          </div>
                         )}
+                        <h3 className="text-sm sm:text-base font-bold text-gray-900 truncate tracking-tight">
+                          {item.name}
+                        </h3>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-base sm:text-lg font-bold tracking-tight text-gray-900">
+                          {item.quantity}
+                        </span>
                       </div>
                     </div>
 
-                    {/* Quick Card Controls Footer */}
-                    <div className="px-3 py-2.5 bg-gray-50/80 border-t border-gray-100 flex items-center justify-between gap-2">
-                      {/* 1-Click Quantity Adjusters */}
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={(e) => handleQuickUseStock(item, e)}
-                          className="w-8 h-8 rounded-lg bg-white hover:bg-amber-50 hover:text-amber-700 hover:border-amber-300 text-gray-700 border border-gray-200 flex items-center justify-center font-bold text-sm transition-all shadow-2xs cursor-pointer active:scale-95"
-                          title={`Use 1 ${item.unit}`}
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => handleQuickAddStock(item, e)}
-                          className="w-8 h-8 rounded-lg bg-white hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-gray-700 border border-gray-200 flex items-center justify-center font-bold text-sm transition-all shadow-2xs cursor-pointer active:scale-95"
-                          title={`Add 1 ${item.unit}`}
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
+                    {/* Opened stock information: Only shown when item actually has opened stock */}
+                    {item.opened_quantity && item.opened_quantity > 0 ? (
+                      <div className="text-xs text-amber-800 font-medium pl-8">
+                        • {item.opened_quantity} opened
+                        {item.opened_items && item.opened_items.length > 0 && item.opened_items[0].expiry_date ? (
+                          <span> (expires {format(new Date(item.opened_items[0].expiry_date), 'dd MMM yyyy')})</span>
+                        ) : null}
                       </div>
+                    ) : null}
 
-                      {/* Add to Shopping list 1-click */}
+                    {/* Bottom Row: Item's own Edit button right aligned */}
+                    <div className="flex items-center justify-end">
                       <button
                         type="button"
-                        onClick={(e) => handleAddStockItemToShoppingList(item, e)}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-purple-50 text-purple-700 hover:border-purple-300 border border-gray-200 text-xs font-bold transition-all shadow-2xs cursor-pointer"
-                        title="Add to Shopping List"
+                        onClick={() => handleEditStockItem(item)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-gray-900 transition-colors cursor-pointer px-1.5 py-0.5 rounded-md hover:bg-gray-100"
+                        title={`Edit ${item.name}`}
                       >
-                        <ShoppingCart className="w-3.5 h-3.5" />
-                        <span>Add to List</span>
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>Edit</span>
                       </button>
                     </div>
                   </div>
