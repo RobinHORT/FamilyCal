@@ -11,6 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useCalendarSwipe } from '../../hooks/useCalendarSwipe';
 import { Plus } from 'lucide-react';
 import { EventCard } from './EventCard';
+import { isEventOnDay } from '../../utils/calendarDateUtils';
 
 interface DayViewProps {
   currentDate?: Date;
@@ -57,39 +58,7 @@ export const DayView: React.FC<DayViewProps> = ({
     preventScrollToleranceRatio: 1.3,
   });
 
-  const dayEvents = filteredEvents.filter((evt) => {
-    const evtStart = new Date(evt.start_time);
-    const evtEnd = new Date(evt.end_time);
-
-    if (isSameDay(evtStart, activeDate) || (activeDate >= evtStart && activeDate <= evtEnd)) return true;
-
-    if (evt.recurring_rule === 'daily' && activeDate >= evtStart) {
-      if (!evt.recurring_until || activeDate <= new Date(evt.recurring_until)) return true;
-    }
-    if (evt.recurring_rule === 'weekly' && activeDate >= evtStart) {
-      if (activeDate.getDay() === evtStart.getDay()) {
-        if (!evt.recurring_until || activeDate <= new Date(evt.recurring_until)) return true;
-      }
-    }
-    if (evt.recurring_rule === 'biweekly' && activeDate >= evtStart) {
-      const diffDays = differenceInCalendarDays(activeDate, evtStart);
-      if (diffDays >= 0 && diffDays % 14 === 0) {
-        if (!evt.recurring_until || activeDate <= new Date(evt.recurring_until)) return true;
-      }
-    }
-    if (evt.recurring_rule === 'monthly' && activeDate >= evtStart) {
-      if (activeDate.getDate() === evtStart.getDate()) {
-        if (!evt.recurring_until || activeDate <= new Date(evt.recurring_until)) return true;
-      }
-    }
-    if (evt.recurring_rule === 'yearly' && activeDate >= evtStart) {
-      if (activeDate.getMonth() === evtStart.getMonth() && activeDate.getDate() === evtStart.getDate()) {
-        if (!evt.recurring_until || activeDate <= new Date(evt.recurring_until)) return true;
-      }
-    }
-
-    return false;
-  });
+  const dayEvents = filteredEvents.filter((evt) => isEventOnDay(evt, activeDate));
 
   const dayKey = format(activeDate, 'yyyy-MM-dd');
   const canCreate = !isViewer && (isAdmin || hasPermission('event_create'));

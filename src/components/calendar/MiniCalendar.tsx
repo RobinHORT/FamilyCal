@@ -14,6 +14,7 @@ import {
 } from 'date-fns';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useCalendar } from '../../context/CalendarContext';
+import { isEventOnDay } from '../../utils/calendarDateUtils';
 
 export const MiniCalendar: React.FC = () => {
   const { currentDate, setCurrentDate, events } = useCalendar();
@@ -68,10 +69,7 @@ export const MiniCalendar: React.FC = () => {
           const isCurrentMonth = isSameMonth(day, monthStart);
           const isCurrentToday = isToday(day);
           
-          const hasEvents = events.some((evt) => {
-            const evtDate = new Date(evt.start_time);
-            return isSameDay(evtDate, day);
-          });
+          const hasEvents = events.some((evt) => isEventOnDay(evt, day));
 
           return (
             <button

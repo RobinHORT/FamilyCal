@@ -434,8 +434,23 @@ export async function syncTwoWay(familyId: string, accountId: string) {
         }
 
         const isAllDay = Boolean(item.start?.date && !item.start?.dateTime);
-        const startTime = item.start?.dateTime || item.start?.date || new Date().toISOString();
-        const endTime = item.end?.dateTime || item.end?.date || startTime;
+        let startTime = item.start?.dateTime || item.start?.date || new Date().toISOString();
+        let endTime = item.end?.dateTime || item.end?.date || startTime;
+
+        if (isAllDay && item.start?.date) {
+          const sStr = item.start.date.slice(0, 10);
+          startTime = `${sStr}T00:00:00Z`;
+          if (item.end?.date) {
+            // Google all-day end.date is exclusive. Convert to inclusive end date for FamilyCal
+            const eD = new Date(item.end.date.slice(0, 10) + 'T00:00:00Z');
+            eD.setUTCDate(eD.getUTCDate() - 1);
+            const inclusiveEndStr = eD.toISOString().slice(0, 10);
+            const finalEndStr = inclusiveEndStr >= sStr ? inclusiveEndStr : sStr;
+            endTime = `${finalEndStr}T23:59:59Z`;
+          } else {
+            endTime = `${sStr}T23:59:59Z`;
+          }
+        }
         const color = (item.colorId && GOOGLE_COLOR_MAP[item.colorId]) || cal.color || '#4285F4';
 
         const existing = db.prepare('SELECT id FROM events WHERE family_id = ? AND google_event_id = ?').get(

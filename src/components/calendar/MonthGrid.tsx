@@ -14,6 +14,7 @@ import {
 } from 'date-fns';
 import { CalendarEvent, FamilyMember, EventType, Task } from '../../types';
 import { MultiDayEventBar, MultiDayTaskBar } from './EventCard';
+import { isEventOnDay, isEventMultiDay } from '../../utils/calendarDateUtils';
 
 interface MonthGridProps {
   currentDate: Date;
@@ -77,39 +78,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
   }
 
   const getEventsForDay = (dayDate: Date) => {
-    return filteredEvents.filter((evt) => {
-      const evtStart = new Date(evt.start_time);
-      const evtEnd = new Date(evt.end_time);
-
-      if (isSameDay(evtStart, dayDate) || (dayDate >= evtStart && dayDate <= evtEnd)) return true;
-
-      if (evt.recurring_rule === 'daily' && dayDate >= evtStart) {
-        if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-      }
-      if (evt.recurring_rule === 'weekly' && dayDate >= evtStart) {
-        if (dayDate.getDay() === evtStart.getDay()) {
-          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'biweekly' && dayDate >= evtStart) {
-        const diffDays = differenceInCalendarDays(dayDate, evtStart);
-        if (diffDays >= 0 && diffDays % 14 === 0) {
-          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'monthly' && dayDate >= evtStart) {
-        if (dayDate.getDate() === evtStart.getDate()) {
-          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'yearly' && dayDate >= evtStart) {
-        if (dayDate.getMonth() === evtStart.getMonth() && dayDate.getDate() === evtStart.getDate()) {
-          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-        }
-      }
-
-      return false;
-    });
+    return filteredEvents.filter((evt) => isEventOnDay(evt, dayDate));
   };
 
   const getTasksForDay = (dayDate: Date) => {
@@ -219,22 +188,27 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                 if (multi) {
                   for (let c = 0; c < 7; c++) {
                     const d = weekDays[c];
-                    if (isSameDay(evtStart, d) || (d >= evtStart && d <= evtEnd)) {
+                    if (isEventOnDay(evt, d)) {
                       startCol = c;
                       break;
                     }
                   }
                   for (let c = 6; c >= 0; c--) {
                     const d = weekDays[c];
-                    if (isSameDay(evtEnd, d) || (d >= evtStart && d <= evtEnd)) {
+                    if (isEventOnDay(evt, d)) {
                       endCol = c;
                       break;
                     }
                   }
                 }
 
-                const isStartOfWeek = multi && startCol === 0 && evtStart < weekDays[0];
-                const isEndOfWeek = multi && endCol === 6 && evtEnd >= addDays(weekDays[6], 1);
+                const sDateComp = evt.all_day ? evt.start_time.slice(0, 10) : format(evtStart, 'yyyy-MM-dd');
+                const eDateComp = evt.all_day ? (evt.end_time ? evt.end_time.slice(0, 10) : sDateComp) : format(evtEnd, 'yyyy-MM-dd');
+                const weekStartComp = format(weekDays[0], 'yyyy-MM-dd');
+                const weekEndComp = format(weekDays[6], 'yyyy-MM-dd');
+
+                const isStartOfWeek = multi && startCol === 0 && sDateComp < weekStartComp;
+                const isEndOfWeek = multi && endCol === 6 && eDateComp > weekEndComp;
 
                 weekItemsMap.set(key, {
                   type: 'event',

@@ -14,6 +14,7 @@ import { useCalendarSwipe } from '../../hooks/useCalendarSwipe';
 import { EventCard } from './EventCard';
 import { MonthGrid } from './MonthGrid';
 import { DayView } from './DayView';
+import { isEventOnDay } from '../../utils/calendarDateUtils';
 
 interface MonthViewProps {
   isViewer?: boolean;
@@ -71,39 +72,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
   });
 
   const getEventsForDay = (dayDate: Date) => {
-    return filteredEvents.filter((evt) => {
-      const evtStart = new Date(evt.start_time);
-      const evtEnd = new Date(evt.end_time);
-
-      if (isSameDay(evtStart, dayDate) || (dayDate >= evtStart && dayDate <= evtEnd)) return true;
-
-      if (evt.recurring_rule === 'daily' && dayDate >= evtStart) {
-        if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-      }
-      if (evt.recurring_rule === 'weekly' && dayDate >= evtStart) {
-        if (dayDate.getDay() === evtStart.getDay()) {
-          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'biweekly' && dayDate >= evtStart) {
-        const diffDays = differenceInCalendarDays(dayDate, evtStart);
-        if (diffDays >= 0 && diffDays % 14 === 0) {
-          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'monthly' && dayDate >= evtStart) {
-        if (dayDate.getDate() === evtStart.getDate()) {
-          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'yearly' && dayDate >= evtStart) {
-        if (dayDate.getMonth() === evtStart.getMonth() && dayDate.getDate() === evtStart.getDate()) {
-          if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
-        }
-      }
-
-      return false;
-    });
+    return filteredEvents.filter((evt) => isEventOnDay(evt, dayDate));
   };
 
   const selectedDayEvents = getEventsForDay(selectedDay);

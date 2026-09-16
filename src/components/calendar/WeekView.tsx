@@ -15,6 +15,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Plus } from 'lucide-react';
 import { EventCard } from './EventCard';
 import { CalendarEvent } from '../../types';
+import { isEventOnDay } from '../../utils/calendarDateUtils';
 
 interface WeekViewProps {
   isViewer?: boolean;
@@ -88,39 +89,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(start, i));
 
   const getEventsForDay = (day: Date): CalendarEvent[] => {
-    return filteredEvents.filter((evt) => {
-      const evtStart = new Date(evt.start_time);
-      const evtEnd = new Date(evt.end_time);
-
-      if (isSameDay(evtStart, day) || (day >= evtStart && day <= evtEnd)) return true;
-
-      if (evt.recurring_rule === 'daily' && day >= evtStart) {
-        if (!evt.recurring_until || day <= new Date(evt.recurring_until)) return true;
-      }
-      if (evt.recurring_rule === 'weekly' && day >= evtStart) {
-        if (day.getDay() === evtStart.getDay()) {
-          if (!evt.recurring_until || day <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'biweekly' && day >= evtStart) {
-        const diffDays = differenceInCalendarDays(day, evtStart);
-        if (diffDays >= 0 && diffDays % 14 === 0) {
-          if (!evt.recurring_until || day <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'monthly' && day >= evtStart) {
-        if (day.getDate() === evtStart.getDate()) {
-          if (!evt.recurring_until || day <= new Date(evt.recurring_until)) return true;
-        }
-      }
-      if (evt.recurring_rule === 'yearly' && day >= evtStart) {
-        if (day.getMonth() === evtStart.getMonth() && day.getDate() === evtStart.getDate()) {
-          if (!evt.recurring_until || day <= new Date(evt.recurring_until)) return true;
-        }
-      }
-
-      return false;
-    });
+    return filteredEvents.filter((evt) => isEventOnDay(evt, day));
   };
 
   const weekKey = format(start, 'yyyy-MM-dd');

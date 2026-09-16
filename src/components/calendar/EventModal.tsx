@@ -31,6 +31,10 @@ import {
   requestNotificationPermission,
   NotificationPermissionState,
 } from '../../utils/taskNotifications';
+import {
+  getInclusiveAllDayDates,
+  formatAllDayPayloadDates,
+} from '../../utils/calendarDateUtils';
 
 export const EventModal: React.FC = () => {
   const {
@@ -93,7 +97,8 @@ export const EventModal: React.FC = () => {
       setDescription(selectedEvent.description || '');
       setLocation(selectedEvent.location || '');
       setEventType(selectedEvent.event_type || 'Other');
-      setAllDay(Boolean(selectedEvent.all_day));
+      const isEventAllDay = Boolean(selectedEvent.all_day);
+      setAllDay(isEventAllDay);
       setRecurringRule(selectedEvent.recurring_rule || 'none');
       setRecurringUntil(selectedEvent.recurring_until ? selectedEvent.recurring_until.slice(0, 10) : '');
       setReminderMinutes(
@@ -112,12 +117,20 @@ export const EventModal: React.FC = () => {
       }
       setAssignedMemberIds(selectedEvent.assigned_member_ids || []);
 
-      const sDate = new Date(selectedEvent.start_time);
-      const eDate = new Date(selectedEvent.end_time);
-      setStartDate(format(sDate, 'yyyy-MM-dd'));
-      setStartTime(format(sDate, 'HH:mm'));
-      setEndDate(format(eDate, 'yyyy-MM-dd'));
-      setEndTime(format(eDate, 'HH:mm'));
+      if (isEventAllDay) {
+        const { startDate: sDateStr, endDate: eDateStr } = getInclusiveAllDayDates(selectedEvent);
+        setStartDate(sDateStr);
+        setEndDate(eDateStr);
+        setStartTime('09:00');
+        setEndTime('10:00');
+      } else {
+        const sDate = new Date(selectedEvent.start_time);
+        const eDate = new Date(selectedEvent.end_time);
+        setStartDate(format(sDate, 'yyyy-MM-dd'));
+        setStartTime(format(sDate, 'HH:mm'));
+        setEndDate(format(eDate, 'yyyy-MM-dd'));
+        setEndTime(format(eDate, 'HH:mm'));
+      }
     } else {
       // New Event Defaults
       const baseDate = eventModalInitialDate || new Date();
@@ -195,6 +208,35 @@ export const EventModal: React.FC = () => {
     });
   };
 
+  const handleStartDateChange = (newStartDate: string) => {
+    setStartDate(newStartDate);
+    if (allDay) {
+      // 1. When the user selects a Start Date, automatically set the End Date to the exact same date
+      setEndDate(newStartDate);
+    } else {
+      // 5. Normal timed event behavior (if end date is before new start date, update end date)
+      if (endDate && endDate < newStartDate) {
+        setEndDate(newStartDate);
+      }
+    }
+  };
+
+  const handleEndDateChange = (newEndDate: string) => {
+    setEndDate(newEndDate);
+    if (startDate && newEndDate < startDate) {
+      setStartDate(newEndDate);
+    }
+  };
+
+  const handleAllDayToggle = (checked: boolean) => {
+    setAllDay(checked);
+    if (checked) {
+      if (!endDate || endDate < startDate) {
+        setEndDate(startDate);
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSave) {
@@ -214,8 +256,9 @@ export const EventModal: React.FC = () => {
       let endIso: string;
 
       if (allDay) {
-        startIso = `${startDate}T00:00:00Z`;
-        endIso = `${endDate || startDate}T23:59:59Z`;
+        const payloadDates = formatAllDayPayloadDates(startDate, endDate);
+        startIso = payloadDates.start_time;
+        endIso = payloadDates.end_time;
       } else {
         startIso = new Date(`${startDate}T${startTime}:00`).toISOString();
         endIso = new Date(`${endDate || startDate}T${endTime}:00`).toISOString();
@@ -667,7 +710,7 @@ export const EventModal: React.FC = () => {
                   type="checkbox"
                   disabled={!canSave}
                   checked={allDay}
-                  onChange={(e) => setAllDay(e.target.checked)}
+                  onChange={(e) => handleAllDayToggle(e.target.checked)}
                   className="rounded border-gray-300 text-gray-900 focus:ring-gray-900"
                 />
                 <span>All Day</span>
@@ -683,7 +726,7 @@ export const EventModal: React.FC = () => {
                     required
                     disabled={!canSave}
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={(e) => handleStartDateChange(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs text-gray-900 focus:outline-none focus:border-gray-900"
                   />
                   {!allDay && (
@@ -707,7 +750,8 @@ export const EventModal: React.FC = () => {
                     required
                     disabled={!canSave}
                     value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
+                    min={allDay ? startDate : undefined}
+                    onChange={(e) => handleEndDateChange(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs text-gray-900 focus:outline-none focus:border-gray-900"
                   />
                   {!allDay && (
