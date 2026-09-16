@@ -448,6 +448,86 @@ async function runTests() {
       resSecRecManip.status === 400
     );
 
+    // Test 16a: One-time future task + fake earlier occurrence_date in request body
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-fake-occ', ?, 'Fake Occ Task', '2026-09-17', 'open', 1, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const resFakeOcc = await request(app)
+      .post('/api/tasks/t-fake-occ/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ occurrence_date: '2026-09-15' }); // Fake earlier date
+
+    recordTest(
+      '16a. Future task + fake earlier occurrence_date bypass (Must reject)',
+      '400 Bad Request',
+      `Status: ${resFakeOcc.status}`,
+      resFakeOcc.status === 400
+    );
+
+    // Test 16b: One-time future task + fake due_date in request body
+    const resFakeDue = await request(app)
+      .post('/api/tasks/t-fake-occ/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ due_date: '2026-09-15' }); // Fake earlier due_date
+
+    recordTest(
+      '16b. Future task + fake earlier due_date bypass (Must reject)',
+      '400 Bad Request',
+      `Status: ${resFakeDue.status}`,
+      resFakeDue.status === 400
+    );
+
+    // Test 16c: Recurring task with invalid/non-occurring date
+    // Weekly task starting on 2026-09-15 (Tuesday). Checking on 2026-09-16 (Wednesday).
+    // Wednesday is not a valid occurrence day for a weekly starting on Tuesday!
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, recurring_rule, recurring_interval, recurring_unit, created_at, updated_at)
+      VALUES ('t-weekly-test', ?, 'Weekly Test', '2026-09-15', 'open', 1, 'weekly', 1, 'week', ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const resWeeklyInvalid = await request(app)
+      .post('/api/tasks/t-weekly-test/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ occurrence_date: '2026-09-16' }); // Wednesday (not Tuesday)
+
+    recordTest(
+      '16c. Recurring weekly task + non-occurring day of week (Must reject)',
+      '400 Bad Request',
+      `Status: ${resWeeklyInvalid.status}, Body: ${JSON.stringify(resWeeklyInvalid.body)}`,
+      resWeeklyInvalid.status === 400
+    );
+
+    // Test 16d: Normal member (non-admin child) attempting future claim
+    const resChildFuture = await request(app)
+      .post('/api/tasks/t-fake-occ/claim')
+      .set('Authorization', `Bearer ${childToken}`)
+      .send();
+
+    recordTest(
+      '16d. Child member claiming future task (Must reject)',
+      '400 Bad Request',
+      `Status: ${resChildFuture.status}`,
+      resChildFuture.status === 400
+    );
+
+    // Test 16e: Verify that a rejected claim created NO database record or state change
+    const dbTaskState = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t-fake-occ') as any;
+    const recordsCountBefore = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE parent_task_id = ?').get('t-fake-occ') as any;
+    
+    const checkNoDbChanges = 
+      dbTaskState.assigned_member_id === null &&
+      dbTaskState.completed === 0 &&
+      recordsCountBefore.count === 0;
+
+    recordTest(
+      '16e. Rejected future claim database invariant check',
+      'Task remains unassigned/uncompleted and no children created',
+      `assigned: ${dbTaskState.assigned_member_id}, completed: ${dbTaskState.completed}, children: ${recordsCountBefore.count}`,
+      checkNoDbChanges
+    );
+
 
     // ----------------------------------------------------
     // PERMISSIONS TESTS
