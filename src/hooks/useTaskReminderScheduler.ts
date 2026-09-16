@@ -177,12 +177,15 @@ export function useTaskReminderScheduler(
 
           // Rule 2: ONLY MEMBERS INVOLVED RECEIVE THE NOTIFICATION
           let isAssigned = false;
-          if (!task.assigned_member_id) {
+          const assignedIds: string[] = Array.isArray(task.assigned_member_ids)
+            ? task.assigned_member_ids
+            : [];
+          if (!task.assigned_member_id && assignedIds.length === 0) {
             // Task assigned to Whole Family -> all family members receive it
             isAssigned = true;
           } else {
-            // Specific member assigned -> only that member receives it
-            if (currentMemberId && currentMemberId === task.assigned_member_id) {
+            // Specific member(s) assigned -> only those members receive it
+            if (currentMemberId && (currentMemberId === task.assigned_member_id || assignedIds.includes(currentMemberId))) {
               isAssigned = true;
             } else {
               isAssigned = false;

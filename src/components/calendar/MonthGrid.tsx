@@ -131,8 +131,13 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
       }
 
       if (!t.due_date) return false;
+      // Spawned child tasks are tied to a single occurrence date and never project recurrence
+      if (t.parent_task_id) return false;
+
       const due = parseISO(t.due_date.slice(0, 10));
       if (dayDate < due) return false;
+      // Completed recurring tasks should not project forward into future dates
+      if (t.completed && dayDate > due) return false;
 
       const rule = t.recurring_rule;
       if (!rule || rule === 'none') return false;
@@ -147,7 +152,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
         return dayDate.getDay() === due.getDay() && Math.floor(diffDays / 7) % interval === 0;
       }
       if (rule === 'fortnightly') {
-        return dayDate.getDay() === due.getDay() && Math.floor(diffDays / 14) % interval === 0;
+        return diffDays >= 0 && diffDays % 14 === 0;
       }
       if (rule === 'monthly') {
         return dayDate.getDate() === due.getDate();

@@ -1770,6 +1770,11 @@ function advanceRecurringTaskIfApplicable(
   overrideUnit?: string,
   nowIso?: string
 ) {
+  // Child occurrence tasks (spawned participant rows) must NEVER advance the series
+  if (task.parent_task_id) {
+    return null;
+  }
+
   const rule = overrideRule !== undefined ? overrideRule : (task.recurring_rule || 'none');
   const interval = overrideInterval !== undefined ? overrideInterval : (task.recurring_interval || 1);
   const unit = overrideUnit !== undefined ? overrideUnit : (task.recurring_unit || 'day');
@@ -1821,6 +1826,14 @@ function advanceRecurringTaskIfApplicable(
     now,
     now
   );
+
+  // Clear recurring_rule on the completed task so it remains as the historical completion record
+  // for its due date without projecting duplicate ghost occurrences into future dates
+  db.prepare(`
+    UPDATE tasks
+    SET recurring_rule = 'none', updated_at = ?
+    WHERE id = ? AND family_id = ?
+  `).run(now, task.id, familyId);
 
   return db.prepare(`
     SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
@@ -2573,125 +2586,178 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
       // Use atomic conditional insert to prevent double-claiming race conditions and enforce claim limit
       const newParticipantTaskId = 'tsk_' + uuidv4().slice(0, 8);
       
-      // If single-claim (claimLimit === 1) on a recurring task, enforce that absolutely NO ONE has claimed this specific occurrence date yet
-      const insertQuery = claimLimit === 1 ? `
-        INSERT INTO tasks (
-          id, family_id, task_group_id, parent_task_id, title, description, due_date, due_time,
-          reminder_minutes, completed, completed_at, is_archived, assigned_member_id, assigned_member_ids,
-          priority, recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit,
-          points, points_awarded, claimed_at, claimed_by, created_at, updated_at
-        )
-        SELECT
-          ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, 0, NULL, 0, ?, ?,
-          ?, ?, ?, ?, 'open', 1,
-          ?, 0, ?, ?, ?, ?
-        WHERE NOT EXISTS (
-          -- Ensure NO ONE has claimed this specific occurrence date yet
-          SELECT 1 FROM tasks
-          WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
-            AND due_date = ?
-            AND assigned_member_id IS NOT NULL
-            AND family_id = ?
-        )
-      ` : `
-        INSERT INTO tasks (
-          id, family_id, task_group_id, parent_task_id, title, description, due_date, due_time,
-          reminder_minutes, completed, completed_at, is_archived, assigned_member_id, assigned_member_ids,
-          priority, recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit,
-          points, points_awarded, claimed_at, claimed_by, created_at, updated_at
-        )
-        SELECT
-          ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, 0, NULL, 0, ?, ?,
-          ?, ?, ?, ?, 'open', ?,
-          ?, 0, ?, ?, ?, ?
-        WHERE NOT EXISTS (
-          -- 1. Ensure this user hasn't already claimed this task occurrence
-          SELECT 1 FROM tasks
-          WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
-            AND assigned_member_id = ?
-            AND due_date = ?
-            AND family_id = ?
-        ) AND (
-          -- 2. Ensure we haven't reached the claim limit for this occurrence
-          SELECT COUNT(*) FROM tasks
-          WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
-            AND assigned_member_id IS NOT NULL
-            AND due_date = ?
-            AND family_id = ?
-        ) < ?
-      `;
+      let insertQuery = '';
+      let queryParams: any[] = [];
 
-      const queryParams = claimLimit === 1 ? [
-        // SELECT values:
-        newParticipantTaskId,
-        req.user!.family_id,
-        groupId,
-        task.id,
-        task.title,
-        task.description || null,
-        effectiveDueDateStr,
-        task.due_time || null,
-        task.reminder_minutes,
-        currentMember.id,
-        JSON.stringify([currentMember.id]),
-        task.priority || 'medium',
-        task.recurring_rule || 'none',
-        task.recurring_interval || 1,
-        task.recurring_unit || 'day',
-        task.points || 0,
-        now,
-        currentMember.id,
-        now,
-        now,
+      if (claimLimit === 1) {
+        // Single-claim: enforce that absolutely NO ONE has claimed this specific occurrence date yet
+        insertQuery = `
+          INSERT INTO tasks (
+            id, family_id, task_group_id, parent_task_id, title, description, due_date, due_time,
+            reminder_minutes, completed, completed_at, is_archived, assigned_member_id, assigned_member_ids,
+            priority, recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit,
+            points, points_awarded, claimed_at, claimed_by, created_at, updated_at
+          )
+          SELECT
+            ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, 0, NULL, 0, ?, ?,
+            ?, 'none', 1, 'day', 'open', 1,
+            ?, 0, ?, ?, ?, ?
+          WHERE NOT EXISTS (
+            -- Ensure NO ONE has claimed this specific occurrence date yet
+            SELECT 1 FROM tasks
+            WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
+              AND due_date = ?
+              AND assigned_member_id IS NOT NULL
+              AND family_id = ?
+          )
+        `;
 
-        // WHERE NOT EXISTS block:
-        groupId,
-        task.id,
-        task.id,
-        effectiveDueDateStr,
-        req.user!.family_id
-      ] : [
-        // SELECT values:
-        newParticipantTaskId,
-        req.user!.family_id,
-        groupId,
-        task.id,
-        task.title,
-        task.description || null,
-        effectiveDueDateStr,
-        task.due_time || null,
-        task.reminder_minutes,
-        currentMember.id,
-        JSON.stringify([currentMember.id]),
-        task.priority || 'medium',
-        task.recurring_rule || 'none',
-        task.recurring_interval || 1,
-        task.recurring_unit || 'day',
-        claimLimit,
-        task.points || 0,
-        now,
-        currentMember.id,
-        now,
-        now,
+        queryParams = [
+          newParticipantTaskId,
+          req.user!.family_id,
+          groupId,
+          task.id,
+          task.title,
+          task.description || null,
+          effectiveDueDateStr,
+          task.due_time || null,
+          task.reminder_minutes,
+          currentMember.id,
+          JSON.stringify([currentMember.id]),
+          task.priority || 'medium',
+          task.points || 0,
+          now,
+          currentMember.id,
+          now,
+          now,
 
-        // First WHERE NOT EXISTS block:
-        groupId,
-        task.id,
-        task.id,
-        currentMember.id,
-        effectiveDueDateStr,
-        req.user!.family_id,
+          // WHERE NOT EXISTS block:
+          groupId,
+          task.id,
+          task.id,
+          effectiveDueDateStr,
+          req.user!.family_id
+        ];
+      } else if (claimLimit <= 0) {
+        // Multiple People mode (unlimited claims): any member can claim their own copy once
+        insertQuery = `
+          INSERT INTO tasks (
+            id, family_id, task_group_id, parent_task_id, title, description, due_date, due_time,
+            reminder_minutes, completed, completed_at, is_archived, assigned_member_id, assigned_member_ids,
+            priority, recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit,
+            points, points_awarded, claimed_at, claimed_by, created_at, updated_at
+          )
+          SELECT
+            ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, 0, NULL, 0, ?, ?,
+            ?, 'none', 1, 'day', 'open', 0,
+            ?, 0, ?, ?, ?, ?
+          WHERE NOT EXISTS (
+            -- Ensure this user hasn't already claimed this task occurrence
+            SELECT 1 FROM tasks
+            WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
+              AND assigned_member_id = ?
+              AND due_date = ?
+              AND family_id = ?
+          )
+        `;
 
-        // Second AND block:
-        groupId,
-        task.id,
-        task.id,
-        effectiveDueDateStr,
-        req.user!.family_id,
-        claimLimit
-      ];
+        queryParams = [
+          newParticipantTaskId,
+          req.user!.family_id,
+          groupId,
+          task.id,
+          task.title,
+          task.description || null,
+          effectiveDueDateStr,
+          task.due_time || null,
+          task.reminder_minutes,
+          currentMember.id,
+          JSON.stringify([currentMember.id]),
+          task.priority || 'medium',
+          task.points || 0,
+          now,
+          currentMember.id,
+          now,
+          now,
+
+          // WHERE NOT EXISTS block:
+          groupId,
+          task.id,
+          task.id,
+          currentMember.id,
+          effectiveDueDateStr,
+          req.user!.family_id
+        ];
+      } else {
+        // Capped multi-claim (claimLimit > 1): up to N members can claim
+        insertQuery = `
+          INSERT INTO tasks (
+            id, family_id, task_group_id, parent_task_id, title, description, due_date, due_time,
+            reminder_minutes, completed, completed_at, is_archived, assigned_member_id, assigned_member_ids,
+            priority, recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit,
+            points, points_awarded, claimed_at, claimed_by, created_at, updated_at
+          )
+          SELECT
+            ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, 0, NULL, 0, ?, ?,
+            ?, 'none', 1, 'day', 'open', ?,
+            ?, 0, ?, ?, ?, ?
+          WHERE NOT EXISTS (
+            -- 1. Ensure this user hasn't already claimed this task occurrence
+            SELECT 1 FROM tasks
+            WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
+              AND assigned_member_id = ?
+              AND due_date = ?
+              AND family_id = ?
+          ) AND (
+            -- 2. Ensure we haven't reached the claim limit for this occurrence
+            SELECT COUNT(*) FROM tasks
+            WHERE (task_group_id = ? OR parent_task_id = ? OR id = ?)
+              AND assigned_member_id IS NOT NULL
+              AND due_date = ?
+              AND family_id = ?
+          ) < ?
+        `;
+
+        queryParams = [
+          newParticipantTaskId,
+          req.user!.family_id,
+          groupId,
+          task.id,
+          task.title,
+          task.description || null,
+          effectiveDueDateStr,
+          task.due_time || null,
+          task.reminder_minutes,
+          currentMember.id,
+          JSON.stringify([currentMember.id]),
+          task.priority || 'medium',
+          claimLimit,
+          task.points || 0,
+          now,
+          currentMember.id,
+          now,
+          now,
+
+          // First WHERE NOT EXISTS block:
+          groupId,
+          task.id,
+          task.id,
+          currentMember.id,
+          effectiveDueDateStr,
+          req.user!.family_id,
+
+          // Second AND block:
+          groupId,
+          task.id,
+          task.id,
+          effectiveDueDateStr,
+          req.user!.family_id,
+          claimLimit
+        ];
+      }
 
       const result = db.prepare(insertQuery).run(...queryParams);
 
@@ -2708,7 +2774,7 @@ router.post('/tasks/:id/claim', authenticateToken, (req: AuthRequest, res: Respo
             AND family_id = ?
         `).get(groupId, task.id, task.id, currentMember.id, effectiveDueDateStr, req.user!.family_id);
 
-        if (alreadyClaimedCheck) {
+        if (alreadyClaimedCheck || claimLimit <= 0) {
           return res.status(409).json({ error: 'You have already claimed this task.' });
         } else {
           return res.status(409).json({ error: 'Claim limit for this task has been reached.' });
@@ -3048,6 +3114,20 @@ router.delete('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response)
         }
       }
     } else {
+      // If this task has child participant tasks, clean them up and reconcile their points
+      const childTasks = db.prepare(
+        'SELECT id, assigned_member_id FROM tasks WHERE parent_task_id = ? AND family_id = ?'
+      ).all(id, req.user!.family_id) as any[];
+
+      if (childTasks.length > 0) {
+        db.prepare('DELETE FROM tasks WHERE parent_task_id = ? AND family_id = ?').run(id, req.user!.family_id);
+        for (const ct of childTasks) {
+          if (ct.assigned_member_id) {
+            reconcileMemberPoints(req.user!.family_id, ct.assigned_member_id);
+          }
+        }
+      }
+
       const memberId = task.assigned_member_id;
       db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(id, req.user!.family_id);
       if (memberId) {

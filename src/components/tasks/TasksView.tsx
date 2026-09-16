@@ -197,8 +197,14 @@ export const TasksView: React.FC = () => {
 
         // Check recurring rule
         try {
+          // Spawned child participant tasks are tied to their specific occurrence date and never project recurrence
+          if (task.parent_task_id) return false;
+
           const dueDate = parseISO(taskDueStr);
           if (isNaN(dueDate.getTime()) || day < dueDate) return false;
+
+          // Completed recurring tasks should not project forward into future dates
+          if (task.completed && day > dueDate) return false;
 
           const rule = task.recurring_rule;
           if (!rule || rule === 'none') return false;

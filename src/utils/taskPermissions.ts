@@ -149,11 +149,15 @@ export function canMemberClaimTask(
   }
 
   const groupId = task.task_group_id || task.id;
+  const targetDueDate = task.due_date ? task.due_date.trim().slice(0, 10) : undefined;
   const relatedTasks = allTasks.filter(
     (t) => (t.task_group_id === groupId || t.parent_task_id === task.id || t.id === task.id)
   );
 
-  const alreadyClaimed = relatedTasks.some((t) => t.assigned_member_id === currentMemberId);
+  const alreadyClaimed = relatedTasks.some((t) => 
+    t.assigned_member_id === currentMemberId &&
+    (!targetDueDate || (t.due_date && t.due_date.trim().slice(0, 10) === targetDueDate))
+  );
   if (alreadyClaimed) {
     return { canClaim: false, reason: 'You have already claimed this task' };
   }
@@ -163,8 +167,18 @@ export function canMemberClaimTask(
     if (task.assigned_member_id) {
       return { canClaim: false, reason: 'This task has already been claimed' };
     }
+    const isClaimedByAnyoneOnThisDate = relatedTasks.some((t) => 
+      t.assigned_member_id !== null &&
+      (!targetDueDate || (t.due_date && t.due_date.trim().slice(0, 10) === targetDueDate))
+    );
+    if (isClaimedByAnyoneOnThisDate) {
+      return { canClaim: false, reason: 'This task has already been claimed' };
+    }
   } else if (claimLimit > 1) {
-    const claimedCount = relatedTasks.filter((t) => t.assigned_member_id !== null).length;
+    const claimedCount = relatedTasks.filter((t) => 
+      t.assigned_member_id !== null &&
+      (!targetDueDate || (t.due_date && t.due_date.trim().slice(0, 10) === targetDueDate))
+    ).length;
     if (claimedCount >= claimLimit) {
       return { canClaim: false, reason: 'Claim limit reached for this task' };
     }

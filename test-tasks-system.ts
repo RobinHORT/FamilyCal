@@ -975,6 +975,43 @@ async function runTests() {
       s5_succeeded === 1 && s5_conflicts === 9 && s5_dbRows.count === 1
     );
 
+    // Test S5b: Multiple People mode (claim_limit: 0 - unlimited claims)
+    db.prepare(`
+      INSERT INTO tasks (id, family_id, title, due_date, assignment_mode, claim_limit, created_at, updated_at)
+      VALUES ('t-spam-multi0', ?, 'Multi 0 Task', '2026-09-16', 'open', 0, ?, ?)
+    `).run(TEST_FAMILY_ID, new Date().toISOString(), new Date().toISOString());
+
+    const resS5b_1 = await request(app)
+      .post('/api/tasks/t-spam-multi0/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send();
+
+    const resS5b_dup = await request(app)
+      .post('/api/tasks/t-spam-multi0/claim')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send();
+
+    const resS5b_child = await request(app)
+      .post('/api/tasks/t-spam-multi0/claim')
+      .set('Authorization', `Bearer ${childToken}`)
+      .send();
+
+    const s5b_dbRows = db.prepare(`
+      SELECT COUNT(*) as count FROM tasks
+      WHERE (task_group_id = 't-spam-multi0' OR parent_task_id = 't-spam-multi0')
+        AND assigned_member_id IS NOT NULL
+    `).get() as any;
+
+    recordTest(
+      'S5b. Multiple People mode (claim_limit: 0 unlimited claims, distinct members succeed, same member rejects duplicate)',
+      'Admin: 200, Admin dup: 409, Child: 200, DB rows: 2',
+      `Admin: ${resS5b_1.status}, Admin dup: ${resS5b_dup.status}, Child: ${resS5b_child.status}, DB rows: ${s5b_dbRows.count}`,
+      (resS5b_1.status === 200 || resS5b_1.status === 201) &&
+      resS5b_dup.status === 409 &&
+      (resS5b_child.status === 200 || resS5b_child.status === 201) &&
+      s5b_dbRows.count === 2
+    );
+
     // Test S6: Recurring task occurrence A claimed -> succeeds, same claimed again -> rejected, different occurrence B can still be claimed
     // Daily task starting on 2026-09-15 (yesterday)
     db.prepare(`
