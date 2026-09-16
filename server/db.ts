@@ -1360,8 +1360,8 @@ export function evaluateStockShoppingTriggers(familyId: string) {
 
       // Condition 1 & 2: Stock replenishment
       // Only active if targetStock > 0. If targetStock is 0, stock-level replenishment does not trigger.
-      const isLowStock = targetStock > 0 && (triggerMode === 'low_stock' || triggerMode === 'low_stock_and_expiry') && currentQty <= lowThreshold;
-      const isZeroStock = targetStock > 0 && triggerMode === 'zero_stock' && currentQty <= 0;
+      const isLowStock = targetStock > 0 && currentQty < targetStock && (triggerMode === 'low_stock' || triggerMode === 'low_stock_and_expiry') && currentQty <= lowThreshold;
+      const isZeroStock = targetStock > 0 && currentQty < targetStock && triggerMode === 'zero_stock' && currentQty <= 0;
 
       // Condition 3: Before expiry (evaluating opened batches)
       let isExpiringSoon = false;
@@ -1803,8 +1803,8 @@ export function adjustStockItemQuantity(
       ];
     }
   } else if (action === 'finish' || action === 'used_up') {
+    let remainingToDeduct = amount;
     if (openedItems.length > 0) {
-      let remainingToDeduct = amount;
       const sortedOpened = [...openedItems].sort((a, b) => {
         if (!a.expiry_date) return 1;
         if (!b.expiry_date) return -1;
@@ -1829,10 +1829,9 @@ export function adjustStockItemQuantity(
         }
       }
       openedItems = updatedOpened;
-    } else {
-      if (item.quantity > 0) {
-        newQuantity = Math.max(0, item.quantity - amount);
-      }
+    }
+    if (remainingToDeduct > 0) {
+      newQuantity = Math.max(0, item.quantity - remainingToDeduct);
     }
   } else if (action === 'consume_opened') {
     if (options.opened_item_id) {
