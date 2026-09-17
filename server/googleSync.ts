@@ -5,6 +5,7 @@ interface GoogleAccountRow {
   id: string;
   user_id: string;
   family_id: string;
+  member_id?: string;
   google_email: string;
   google_user_id?: string;
   access_token: string;
@@ -78,16 +79,16 @@ export function getGoogleConfig() {
   };
 }
 
-export function generateAuthUrl(userId: string, familyId: string): { url: string; state: string } {
+export function generateAuthUrl(userId: string, familyId: string, memberId?: string | null): { url: string; state: string } {
   const { clientId, redirectUri, isConfigured } = getGoogleConfig();
   
   const state = uuidv4();
   const expiresAt = Date.now() + 15 * 60 * 1000; // 15 mins
 
   db.prepare(`
-    INSERT INTO oauth_states (id, state_token, user_id, family_id, created_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(uuidv4(), state, userId, familyId, new Date().toISOString(), expiresAt);
+    INSERT INTO oauth_states (id, state_token, user_id, family_id, member_id, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(uuidv4(), state, userId, familyId, memberId || null, new Date().toISOString(), expiresAt);
 
   const scope = [
     'https://www.googleapis.com/auth/calendar',
@@ -115,6 +116,7 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
   const stateRow = db.prepare('SELECT * FROM oauth_states WHERE state_token = ?').get(stateToken) as {
     user_id: string;
     family_id: string;
+    member_id?: string | null;
     expires_at: number;
   } | undefined;
 
@@ -128,6 +130,15 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
   }
 
   db.prepare('DELETE FROM oauth_states WHERE state_token = ?').run(stateToken);
+
+  let memberId = stateRow.member_id;
+  if (!memberId) {
+    const mem = db.prepare('SELECT id FROM family_members WHERE user_id = ? AND family_id = ? LIMIT 1').get(
+      stateRow.user_id,
+      stateRow.family_id
+    ) as { id: string } | undefined;
+    memberId = mem?.id || null;
+  }
 
   const { clientId, clientSecret, redirectUri } = getGoogleConfig();
   if (!clientId || !clientSecret) {
@@ -175,10 +186,19 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
   }
 
   // 3. Save or update Google Account
-  const existingAccount = db.prepare('SELECT * FROM google_accounts WHERE family_id = ? AND google_email = ?').get(
-    stateRow.family_id,
-    googleEmail
-  ) as unknown as GoogleAccountRow | undefined;
+  let existingAccount: GoogleAccountRow | undefined;
+  if (memberId) {
+    existingAccount = db.prepare('SELECT * FROM google_accounts WHERE family_id = ? AND (google_email = ? OR member_id = ?)').get(
+      stateRow.family_id,
+      googleEmail,
+      memberId
+    ) as unknown as GoogleAccountRow | undefined;
+  } else {
+    existingAccount = db.prepare('SELECT * FROM google_accounts WHERE family_id = ? AND google_email = ?').get(
+      stateRow.family_id,
+      googleEmail
+    ) as unknown as GoogleAccountRow | undefined;
+  }
 
   let accountId: string;
   const now = new Date().toISOString();
@@ -188,18 +208,29 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
     const refreshToken = tokenData.refresh_token || existingAccount.refresh_token;
     db.prepare(`
       UPDATE google_accounts
-      SET access_token = ?, refresh_token = ?, token_expiry = ?, scope = ?, sync_status = 'connected', sync_error = NULL, updated_at = ?
+      SET user_id = ?, member_id = ?, google_email = ?, access_token = ?, refresh_token = ?, token_expiry = ?, scope = ?, sync_status = 'connected', sync_error = NULL, updated_at = ?
       WHERE id = ?
-    `).run(tokenData.access_token, refreshToken || null, tokenExpiry, tokenData.scope || null, now, accountId);
+    `).run(
+      stateRow.user_id,
+      memberId || existingAccount.member_id || null,
+      googleEmail,
+      tokenData.access_token,
+      refreshToken || null,
+      tokenExpiry,
+      tokenData.scope || null,
+      now,
+      accountId
+    );
   } else {
     accountId = 'gacc_' + uuidv4().slice(0, 8);
     db.prepare(`
-      INSERT INTO google_accounts (id, user_id, family_id, google_email, google_user_id, access_token, refresh_token, token_expiry, scope, sync_status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?, ?)
+      INSERT INTO google_accounts (id, user_id, family_id, member_id, google_email, google_user_id, access_token, refresh_token, token_expiry, scope, sync_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?, ?)
     `).run(
       accountId,
       stateRow.user_id,
       stateRow.family_id,
+      memberId || null,
       googleEmail,
       googleUserId,
       tokenData.access_token,
@@ -213,7 +244,7 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
 
   // 4. Initial Discovery of Google Calendars
   try {
-    await discoverGoogleCalendars(stateRow.family_id, accountId);
+    await discoverGoogleCalendars(stateRow.family_id, accountId, memberId);
   } catch (err) {
     console.error('Initial calendar discovery warning:', err);
   }
@@ -273,7 +304,12 @@ export async function getValidAccessToken(accountId: string): Promise<string> {
   return refreshData.access_token;
 }
 
-export async function discoverGoogleCalendars(familyId: string, accountId: string) {
+export async function discoverGoogleCalendars(familyId: string, accountId: string, memberId?: string | null) {
+  if (!memberId) {
+    const acc = db.prepare('SELECT member_id FROM google_accounts WHERE id = ?').get(accountId) as { member_id?: string } | undefined;
+    if (acc?.member_id) memberId = acc.member_id;
+  }
+
   const accessToken = await getValidAccessToken(accountId);
 
   const response = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
@@ -289,32 +325,36 @@ export async function discoverGoogleCalendars(familyId: string, accountId: strin
   const now = new Date().toISOString();
 
   const insertCal = db.prepare(`
-    INSERT INTO calendars (id, family_id, name, color, description, is_default, source, google_calendar_id, is_read_only, sync_enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 0, 'google', ?, ?, 1, ?, ?)
-  `);
-
-  const updateCal = db.prepare(`
-    UPDATE calendars
-    SET is_read_only = ?, updated_at = ?
-    WHERE family_id = ? AND google_calendar_id = ?
+    INSERT INTO calendars (id, family_id, member_id, name, color, description, is_default, source, google_calendar_id, is_read_only, sync_enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 'google', ?, ?, 1, ?, ?)
   `);
 
   for (const item of items) {
-    const existing = db.prepare('SELECT id FROM calendars WHERE family_id = ? AND google_calendar_id = ?').get(
+    const existing = db.prepare('SELECT id, member_id FROM calendars WHERE family_id = ? AND google_calendar_id = ?').get(
       familyId,
       item.id
-    ) as { id: string } | undefined;
+    ) as { id: string; member_id?: string | null } | undefined;
 
     const isReadOnly = item.accessRole === 'reader' || item.accessRole === 'freeBusyReader' ? 1 : 0;
     const color = item.backgroundColor || '#4285F4';
 
     if (existing) {
-      updateCal.run(isReadOnly, now, familyId, item.id);
+      if (memberId && !existing.member_id) {
+        db.prepare('UPDATE calendars SET member_id = ?, is_read_only = ?, updated_at = ? WHERE id = ?').run(
+          memberId,
+          isReadOnly,
+          now,
+          existing.id
+        );
+      } else {
+        db.prepare('UPDATE calendars SET is_read_only = ?, updated_at = ? WHERE id = ?').run(isReadOnly, now, existing.id);
+      }
     } else {
       const calId = 'gcal_' + uuidv4().slice(0, 8);
       insertCal.run(
         calId,
         familyId,
+        memberId || null,
         item.summary || 'Google Calendar',
         color,
         item.description || 'Imported from Google Calendar',
@@ -630,22 +670,36 @@ export async function syncTwoWay(familyId: string, accountId: string) {
   }
 }
 
-export function disconnectGoogle(familyId: string, accountId?: string) {
+export function disconnectGoogle(familyId: string, accountId?: string, memberId?: string) {
   if (accountId) {
     db.prepare('DELETE FROM google_accounts WHERE family_id = ? AND id = ?').run(familyId, accountId);
+  } else if (memberId) {
+    db.prepare('DELETE FROM google_accounts WHERE family_id = ? AND member_id = ?').run(familyId, memberId);
   } else {
     db.prepare('DELETE FROM google_accounts WHERE family_id = ?').run(familyId);
   }
 
   // Optionally keep the imported events or mark them as local_only
-  db.prepare(`
-    UPDATE events
-    SET sync_status = 'local_only', google_event_id = NULL
-    WHERE family_id = ? AND calendar_id IN (SELECT id FROM calendars WHERE family_id = ? AND source = 'google')
-  `).run(familyId, familyId);
+  if (memberId) {
+    db.prepare(`
+      UPDATE events
+      SET sync_status = 'local_only', google_event_id = NULL
+      WHERE family_id = ? AND calendar_id IN (SELECT id FROM calendars WHERE family_id = ? AND member_id = ? AND source = 'google')
+    `).run(familyId, familyId, memberId);
 
-  // Set calendars to local or remove them
-  db.prepare(`UPDATE calendars SET sync_enabled = 0 WHERE family_id = ? AND source = 'google'`).run(familyId);
+    db.prepare(`UPDATE calendars SET sync_enabled = 0 WHERE family_id = ? AND member_id = ? AND source = 'google'`).run(
+      familyId,
+      memberId
+    );
+  } else {
+    db.prepare(`
+      UPDATE events
+      SET sync_status = 'local_only', google_event_id = NULL
+      WHERE family_id = ? AND calendar_id IN (SELECT id FROM calendars WHERE family_id = ? AND source = 'google')
+    `).run(familyId, familyId);
+
+    db.prepare(`UPDATE calendars SET sync_enabled = 0 WHERE family_id = ? AND source = 'google'`).run(familyId);
+  }
 
   return { success: true };
 }

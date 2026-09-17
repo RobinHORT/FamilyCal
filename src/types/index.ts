@@ -196,6 +196,8 @@ export interface BirthdayItem {
 
 export interface GoogleAccount {
   id: string;
+  user_id?: string;
+  member_id?: string | null;
   google_email: string;
   sync_status: string;
   sync_error?: string | null;
@@ -378,6 +380,23 @@ export interface RewardExchange {
   updated_at?: string;
   member_name?: string;
   member_color?: string;
+}
+
+export interface RewardRedemptionToken {
+  id: string;
+  token: string;
+  family_id: string;
+  member_id: string;
+  exchange_id: string;
+  reward_id?: string | null;
+  reward_name: string;
+  reward_description?: string | null;
+  quantity: number;
+  status: 'active' | 'used' | 'cancelled' | 'expired';
+  created_at: string;
+  expires_at: string;
+  used_at?: string | null;
+  used_by_user_id?: string | null;
 }
 
 export const DEFAULT_MEMBER_PERMISSIONS: UserPermissions = {

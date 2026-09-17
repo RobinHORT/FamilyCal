@@ -2900,7 +2900,7 @@ router.get('/calendar/google/config', authenticateToken, (req: AuthRequest, res:
   try {
     const config = getGoogleConfig();
     const accounts = db.prepare(`
-      SELECT id, google_email, sync_status, sync_error, last_synced_at, created_at
+      SELECT id, user_id, family_id, member_id, google_email, sync_status, sync_error, last_synced_at, created_at
       FROM google_accounts
       WHERE family_id = ?
     `).all(req.user!.family_id);
@@ -2918,11 +2918,18 @@ router.get('/calendar/google/config', authenticateToken, (req: AuthRequest, res:
 
 router.get(['/calendar/google/auth-url', '/calendar/google/auth'], authenticateToken, (req: AuthRequest, res: Response) => {
   try {
-    if (!hasPermission(req.user, 'google_calendar_manage')) {
-      return res.status(403).json({ error: 'You do not have permission to manage Google Calendar integrations.' });
+    const requestedMemberId = (req.query.member_id as string) || null;
+    const myMemberId = getUserMemberId(req.user!.id, req.user!.family_id);
+
+    let targetMemberId = myMemberId;
+    if (requestedMemberId) {
+      if (requestedMemberId !== myMemberId && !hasPermission(req.user, 'google_calendar_manage')) {
+        return res.status(403).json({ error: 'You can only connect your own Google Calendar account.' });
+      }
+      targetMemberId = requestedMemberId;
     }
 
-    const { url, state } = generateAuthUrl(req.user!.id, req.user!.family_id);
+    const { url, state } = generateAuthUrl(req.user!.id, req.user!.family_id, targetMemberId);
     
     // If request accepts json
     if (req.headers.accept?.includes('application/json') || req.query.json === 'true') {
@@ -2955,12 +2962,22 @@ router.get('/calendar/google/callback', async (req: Request, res: Response) => {
 
 router.get('/calendar/google/accounts', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
-    const accounts = db.prepare(`
-      SELECT id, google_email, sync_status, sync_error, last_synced_at, created_at
+    const requestedMemberId = (req.query.member_id as string) || null;
+    const myMemberId = getUserMemberId(req.user!.id, req.user!.family_id);
+
+    let query = `
+      SELECT id, user_id, family_id, member_id, google_email, sync_status, sync_error, last_synced_at, created_at
       FROM google_accounts
       WHERE family_id = ?
-    `).all(req.user!.family_id);
+    `;
+    const params: any[] = [req.user!.family_id];
 
+    if (requestedMemberId) {
+      query += ` AND member_id = ?`;
+      params.push(requestedMemberId);
+    }
+
+    const accounts = db.prepare(query).all(...params);
     res.json(accounts);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2969,22 +2986,37 @@ router.get('/calendar/google/accounts', authenticateToken, (req: AuthRequest, re
 
 router.post('/calendar/google/discover', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    if (!hasPermission(req.user, 'google_calendar_manage')) {
-      return res.status(403).json({ error: 'You do not have permission to manage Google Calendar integrations.' });
-    }
+    const { account_id, member_id } = req.body;
+    const myMemberId = getUserMemberId(req.user!.id, req.user!.family_id);
 
-    const { account_id } = req.body;
-    const account = db.prepare('SELECT id FROM google_accounts WHERE family_id = ? AND (id = ? OR ? IS NULL) LIMIT 1').get(
-      req.user!.family_id,
-      account_id || null,
-      account_id || null
-    ) as { id: string } | undefined;
+    let account: { id: string; member_id?: string; user_id?: string } | undefined;
+    if (account_id) {
+      account = db.prepare('SELECT id, member_id, user_id FROM google_accounts WHERE family_id = ? AND id = ?').get(
+        req.user!.family_id,
+        account_id
+      ) as any;
+    } else if (member_id) {
+      account = db.prepare('SELECT id, member_id, user_id FROM google_accounts WHERE family_id = ? AND member_id = ?').get(
+        req.user!.family_id,
+        member_id
+      ) as any;
+    } else {
+      account = db.prepare('SELECT id, member_id, user_id FROM google_accounts WHERE family_id = ? AND (member_id = ? OR user_id = ?) LIMIT 1').get(
+        req.user!.family_id,
+        myMemberId,
+        req.user!.id
+      ) as any;
+    }
 
     if (!account) {
       return res.status(404).json({ error: 'No connected Google account found.' });
     }
 
-    const calendars = await discoverGoogleCalendars(req.user!.family_id, account.id);
+    if (account.member_id && account.member_id !== myMemberId && account.user_id !== req.user!.id && !hasPermission(req.user, 'google_calendar_manage')) {
+      return res.status(403).json({ error: 'You do not have permission to manage this Google account.' });
+    }
+
+    const calendars = await discoverGoogleCalendars(req.user!.family_id, account.id, account.member_id || member_id);
     res.json({ success: true, count: calendars.length, calendars });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2993,19 +3025,34 @@ router.post('/calendar/google/discover', authenticateToken, async (req: AuthRequ
 
 router.post('/calendar/google/sync', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    if (!hasPermission(req.user, 'google_calendar_manage')) {
-      return res.status(403).json({ error: 'You do not have permission to manage Google Calendar integrations.' });
-    }
+    const { account_id, member_id } = req.body;
+    const myMemberId = getUserMemberId(req.user!.id, req.user!.family_id);
 
-    const { account_id } = req.body;
-    const account = db.prepare('SELECT id FROM google_accounts WHERE family_id = ? AND (id = ? OR ? IS NULL) LIMIT 1').get(
-      req.user!.family_id,
-      account_id || null,
-      account_id || null
-    ) as { id: string } | undefined;
+    let account: { id: string; member_id?: string; user_id?: string } | undefined;
+    if (account_id) {
+      account = db.prepare('SELECT id, member_id, user_id FROM google_accounts WHERE family_id = ? AND id = ?').get(
+        req.user!.family_id,
+        account_id
+      ) as any;
+    } else if (member_id) {
+      account = db.prepare('SELECT id, member_id, user_id FROM google_accounts WHERE family_id = ? AND member_id = ?').get(
+        req.user!.family_id,
+        member_id
+      ) as any;
+    } else {
+      account = db.prepare('SELECT id, member_id, user_id FROM google_accounts WHERE family_id = ? AND (member_id = ? OR user_id = ?) LIMIT 1').get(
+        req.user!.family_id,
+        myMemberId,
+        req.user!.id
+      ) as any;
+    }
 
     if (!account) {
       return res.status(404).json({ error: 'No connected Google account found. Please connect Google Calendar first.' });
+    }
+
+    if (account.member_id && account.member_id !== myMemberId && account.user_id !== req.user!.id && !hasPermission(req.user, 'google_calendar_manage')) {
+      return res.status(403).json({ error: 'You do not have permission to sync this Google account.' });
     }
 
     const outcome = await syncTwoWay(req.user!.family_id, account.id);
@@ -3017,12 +3064,31 @@ router.post('/calendar/google/sync', authenticateToken, async (req: AuthRequest,
 
 router.post('/calendar/google/disconnect', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
-    if (!hasPermission(req.user, 'google_calendar_manage')) {
-      return res.status(403).json({ error: 'You do not have permission to manage Google Calendar integrations.' });
+    const { account_id, member_id } = req.body;
+    const myMemberId = getUserMemberId(req.user!.id, req.user!.family_id);
+
+    let targetAcc: { id: string; member_id?: string; user_id?: string } | undefined;
+    if (account_id) {
+      targetAcc = db.prepare('SELECT id, member_id, user_id FROM google_accounts WHERE family_id = ? AND id = ?').get(
+        req.user!.family_id,
+        account_id
+      ) as any;
+    } else if (member_id) {
+      targetAcc = db.prepare('SELECT id, member_id, user_id FROM google_accounts WHERE family_id = ? AND member_id = ?').get(
+        req.user!.family_id,
+        member_id
+      ) as any;
     }
 
-    const { account_id } = req.body;
-    const result = disconnectGoogle(req.user!.family_id, account_id);
+    if (targetAcc) {
+      if (targetAcc.member_id && targetAcc.member_id !== myMemberId && targetAcc.user_id !== req.user!.id && !hasPermission(req.user, 'google_calendar_manage')) {
+        return res.status(403).json({ error: 'You can only disconnect your own Google Calendar account.' });
+      }
+    } else if (!hasPermission(req.user, 'google_calendar_manage')) {
+      return res.status(403).json({ error: 'You can only disconnect your own Google Calendar account.' });
+    }
+
+    const result = disconnectGoogle(req.user!.family_id, account_id || targetAcc?.id, member_id || targetAcc?.member_id);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -3649,43 +3715,249 @@ router.post('/rewards/exchange', authenticateToken, (req: AuthRequest, res: Resp
   }
 });
 
-// Fulfill/Remove an outstanding IOU instance (Adult/Admin only)
+// Fulfill/Remove an outstanding IOU instance (Disabled direct bypass)
 router.post('/rewards/exchanges/:id/fulfill', authenticateToken, (req: AuthRequest, res: Response) => {
+  return res.status(400).json({ error: 'Direct fulfillment is disabled. Rewards must be fulfilled by scanning the member\'s redemption QR code.' });
+});
+
+// Create single-use QR redemption token
+router.post('/rewards/redemption-token', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
-    if (!isAdultOrAdminUser(req)) {
-      return res.status(403).json({ error: 'Only adults or admins can fulfill rewards.' });
-    }
-
     const familyId = req.user!.family_id;
-    const exchangeId = req.params.id;
     const currentMemberId = getUserMemberId(req.user!.id, familyId);
-
-    const exchange = db.prepare('SELECT * FROM reward_exchanges WHERE id = ? AND family_id = ?').get(exchangeId, familyId) as any;
-    if (!exchange) {
-      return res.status(404).json({ error: 'Outstanding reward IOU not found.' });
+    if (!currentMemberId) {
+      return res.status(400).json({ error: 'No member profile found.' });
     }
 
-    const now = new Date().toISOString();
-    if (exchange.quantity > 1) {
-      db.prepare(`
-        UPDATE reward_exchanges
-        SET quantity = quantity - 1, updated_at = ?
-        WHERE id = ?
-      `).run(now, exchange.id);
-    } else {
-      db.prepare(`
-        UPDATE reward_exchanges
-        SET status = 'fulfilled', quantity = 0, fulfilled_at = ?, fulfilled_by = ?, updated_at = ?
-        WHERE id = ?
-      `).run(now, currentMemberId || req.user!.id, now, exchange.id);
+    const { exchange_id, quantity } = req.body;
+    if (!exchange_id) {
+      return res.status(400).json({ error: 'exchange_id is required.' });
     }
 
-    // Reconcile points (points remain spent, history preserved)
-    reconcileMemberPoints(familyId, exchange.member_id);
+    const reqQty = parseInt(quantity, 10);
+    if (isNaN(reqQty) || reqQty < 1) {
+      return res.status(400).json({ error: 'Redemption quantity must be at least 1.' });
+    }
+
+    const exchange = db.prepare('SELECT * FROM reward_exchanges WHERE id = ? AND family_id = ?').get(exchange_id, familyId) as any;
+    if (!exchange || exchange.status !== 'pending' || exchange.quantity < 1) {
+      return res.status(404).json({ error: 'Outstanding reward IOU not found or already fulfilled.' });
+    }
+
+    if (exchange.member_id !== currentMemberId && !isAdultOrAdminUser(req)) {
+      return res.status(403).json({ error: 'You can only redeem your own rewards.' });
+    }
+
+    if (reqQty > exchange.quantity) {
+      return res.status(400).json({ error: `Cannot redeem ${reqQty}. You only have ${exchange.quantity} available.` });
+    }
+
+    const now = new Date();
+    const createdAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString(); // 15 mins expiry
+    const tokenStr = 'rrm_' + uuidv4().replace(/-/g, '');
+    const tokenId = 'tok_' + uuidv4().slice(0, 8);
+
+    // Cancel any existing active tokens for this exchange
+    db.prepare(`
+      UPDATE reward_redemption_tokens
+      SET status = 'cancelled'
+      WHERE family_id = ? AND exchange_id = ? AND status = 'active'
+    `).run(familyId, exchange.id);
+
+    db.prepare(`
+      INSERT INTO reward_redemption_tokens (id, token, family_id, member_id, exchange_id, reward_id, reward_name, quantity, status, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    `).run(
+      tokenId,
+      tokenStr,
+      familyId,
+      exchange.member_id,
+      exchange.id,
+      exchange.reward_id || null,
+      exchange.reward_name,
+      reqQty,
+      createdAt,
+      expiresAt
+    );
+
+    res.json({
+      success: true,
+      token: tokenStr,
+      expires_at: expiresAt,
+      quantity: reqQty,
+      reward_name: exchange.reward_name,
+      reward_description: exchange.reward_description || null,
+      exchange_id: exchange.id,
+      available_quantity: exchange.quantity,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cancel QR redemption token
+router.post('/rewards/redemption-token/cancel', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'token is required.' });
+    }
+
+    db.prepare(`
+      UPDATE reward_redemption_tokens
+      SET status = 'cancelled'
+      WHERE token = ? AND family_id = ? AND status = 'active'
+    `).run(token, familyId);
 
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Check status of QR redemption token (polled by member)
+router.get('/rewards/redemption-token/status/:token', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const { token } = req.params;
+
+    const row = db.prepare(`
+      SELECT * FROM reward_redemption_tokens WHERE token = ? AND family_id = ?
+    `).get(token, familyId) as any;
+
+    if (!row) {
+      return res.status(404).json({ error: 'Redemption token not found.' });
+    }
+
+    const now = new Date().toISOString();
+    if (row.status === 'active' && now > row.expires_at) {
+      db.prepare(`UPDATE reward_redemption_tokens SET status = 'expired' WHERE id = ?`).run(row.id);
+      row.status = 'expired';
+    }
+
+    res.json({
+      token: row.token,
+      status: row.status,
+      quantity: row.quantity,
+      reward_name: row.reward_name,
+      used_at: row.used_at,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Fulfill reward by scanning QR code token (Adult/Admin ONLY)
+router.post('/rewards/redemption-token/fulfill', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (!isAdultOrAdminUser(req)) {
+      return res.status(403).json({ error: 'Only adults or admins can scan and fulfill rewards.' });
+    }
+
+    const familyId = req.user!.family_id;
+    const scannerUserId = req.user!.id;
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ error: 'Redemption token is required.' });
+    }
+
+    const now = new Date().toISOString();
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const tokenRow = db.prepare(`
+        SELECT * FROM reward_redemption_tokens WHERE token = ? AND family_id = ?
+      `).get(token, familyId) as any;
+
+      if (!tokenRow) {
+        throw new Error('Invalid redemption QR code.');
+      }
+
+      if (tokenRow.status === 'used') {
+        throw new Error('This QR code has already been used.');
+      }
+      if (tokenRow.status === 'cancelled') {
+        throw new Error('This redemption request was cancelled.');
+      }
+      if (tokenRow.status === 'expired' || now > tokenRow.expires_at) {
+        db.prepare(`UPDATE reward_redemption_tokens SET status = 'expired' WHERE id = ?`).run(tokenRow.id);
+        throw new Error('This QR code has expired.');
+      }
+      if (tokenRow.status !== 'active') {
+        throw new Error('This QR code is no longer active.');
+      }
+
+      const exchange = db.prepare(`
+        SELECT * FROM reward_exchanges WHERE id = ? AND family_id = ?
+      `).get(tokenRow.exchange_id, familyId) as any;
+
+      if (!exchange || exchange.status !== 'pending' || exchange.quantity < 1) {
+        throw new Error('The associated reward IOU is no longer active.');
+      }
+
+      if (tokenRow.quantity > exchange.quantity) {
+        throw new Error(`Requested quantity (${tokenRow.quantity}) exceeds current available quantity (${exchange.quantity}).`);
+      }
+
+      // 1. Mark token as used
+      db.prepare(`
+        UPDATE reward_redemption_tokens
+        SET status = 'used', used_at = ?, used_by_user_id = ?
+        WHERE id = ?
+      `).run(now, scannerUserId, tokenRow.id);
+
+      // 2. Fulfill exchange
+      const remainingQty = exchange.quantity - tokenRow.quantity;
+      if (remainingQty > 0) {
+        db.prepare(`
+          UPDATE reward_exchanges
+          SET quantity = ?, updated_at = ?
+          WHERE id = ?
+        `).run(remainingQty, now, exchange.id);
+      } else {
+        db.prepare(`
+          UPDATE reward_exchanges
+          SET quantity = 0, status = 'fulfilled', fulfilled_at = ?, fulfilled_by = ?, updated_at = ?
+          WHERE id = ?
+        `).run(now, scannerUserId, now, exchange.id);
+      }
+
+      // 3. Record fulfilment log in history
+      const logId = 'log_' + uuidv4().slice(0, 8);
+      db.prepare(`
+        INSERT INTO reward_fulfilment_logs (id, family_id, member_id, exchange_id, reward_id, reward_name, quantity, fulfilled_by_user_id, token_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        logId,
+        familyId,
+        exchange.member_id,
+        exchange.id,
+        exchange.reward_id || null,
+        exchange.reward_name,
+        tokenRow.quantity,
+        scannerUserId,
+        tokenRow.id,
+        now
+      );
+
+      db.exec('COMMIT');
+
+      res.json({
+        success: true,
+        redeemed_quantity: tokenRow.quantity,
+        remaining_quantity: remainingQty,
+        reward_name: exchange.reward_name,
+        member_id: exchange.member_id,
+      });
+    } catch (txErr: any) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to fulfill reward redemption.' });
   }
 });
 

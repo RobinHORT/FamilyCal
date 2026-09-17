@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
+import { MemberGoogleCalendarSection } from './MemberGoogleCalendarSection';
 import {
   FamilyMember,
   UserRole,
@@ -69,7 +70,7 @@ export const FamilyView: React.FC = () => {
     updateHousehold,
     updateMemberPermissions,
   } = useFamily();
-  const { user, hasPermission } = useAuth();
+  const { user, memberProfile, hasPermission } = useAuth();
 
   // Household settings edit state
   const [isEditingHousehold, setIsEditingHousehold] = useState(false);
@@ -877,6 +878,15 @@ export const FamilyView: React.FC = () => {
                       </div>
                     )}
                   </div>
+                )}
+
+                {/* Per-member Google Calendar connection */}
+                {editingMember && (
+                  <MemberGoogleCalendarSection
+                    member={editingMember}
+                    currentMember={memberProfile}
+                    isAdmin={isAdmin}
+                  />
                 )}
               </div>
 

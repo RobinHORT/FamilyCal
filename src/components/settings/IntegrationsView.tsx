@@ -383,44 +383,63 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab =
               Connected Accounts
             </h4>
             <div className="space-y-2">
-              {connectedAccounts.map((acc) => (
-                <div
-                  key={acc.id}
-                  className="p-3.5 rounded-2xl bg-gray-50 border border-gray-200 flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <div>
-                      <span className="text-xs font-bold text-gray-900 font-mono">{acc.google_email}</span>
-                      <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5">
-                        <Clock className="w-3 h-3 text-gray-400" />
-                        <span>
-                          Last Synced:{' '}
-                          {acc.last_synced_at
-                            ? format(new Date(acc.last_synced_at), 'MMM d, yyyy HH:mm')
-                            : 'Never'}
-                        </span>
+              {connectedAccounts.map((acc) => {
+                const linkedMember = members.find(
+                  (m) => m.id === acc.member_id || (m.user_id && m.user_id === acc.user_id)
+                );
+                return (
+                  <div
+                    key={acc.id}
+                    className="p-3.5 rounded-2xl bg-gray-50 border border-gray-200 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-gray-900 font-mono">{acc.google_email}</span>
+                          {linkedMember && (
+                            <span
+                              className="px-2 py-0.5 rounded-md text-[10px] font-bold border"
+                              style={{
+                                backgroundColor: linkedMember.color + '20',
+                                borderColor: linkedMember.color + '40',
+                                color: '#111827',
+                              }}
+                            >
+                              {linkedMember.name}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5">
+                          <Clock className="w-3 h-3 text-gray-400" />
+                          <span>
+                            Last Synced:{' '}
+                            {acc.last_synced_at
+                              ? format(new Date(acc.last_synced_at), 'MMM d, yyyy HH:mm')
+                              : 'Never'}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleDiscoverCalendars(acc.id)}
-                      className="px-3 py-1.5 rounded-xl bg-white hover:bg-gray-100 text-gray-700 text-xs font-semibold border border-gray-200 shadow-2xs transition-colors cursor-pointer"
-                    >
-                      Discover Calendars
-                    </button>
-                    <button
-                      onClick={() => handleDisconnect(acc.id)}
-                      className="p-1.5 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors cursor-pointer"
-                      title="Disconnect Account"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleDiscoverCalendars(acc.id)}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-gray-100 text-gray-700 text-xs font-semibold border border-gray-200 shadow-2xs transition-colors cursor-pointer"
+                      >
+                        Discover Calendars
+                      </button>
+                      <button
+                        onClick={() => handleDisconnect(acc.id)}
+                        className="p-1.5 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors cursor-pointer"
+                        title="Disconnect Account"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

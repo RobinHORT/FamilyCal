@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Star, Gift, Check, AlertCircle, Edit3, Trash2 } from 'lucide-react';
+import { Plus, Star, Gift, Check, AlertCircle, Edit3, Camera, QrCode } from 'lucide-react';
 import { Reward, RewardExchange, FamilyMember } from '../../types';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useFamily } from '../../context/FamilyContext';
 import { isAdultOrAdminRole } from '../../utils/taskPermissions';
 import { RewardModal } from './RewardModal';
+import { RedemptionModal } from './RedemptionModal';
+import { RewardScannerModal } from './RewardScannerModal';
 
 function formatOwedDetail(description: string | null | undefined, quantity: number, rewardName: string): string {
   const text = (description || rewardName || '').trim();
@@ -56,11 +58,15 @@ export const RewardsView: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exchangingId, setExchangingId] = useState<string | null>(null);
-  const [fulfillingId, setFulfillingId] = useState<string | null>(null);
 
   // Modal state
   const [isRewardModalOpen, setIsRewardModalOpen] = useState(false);
   const [editingReward, setEditingReward] = useState<Reward | null>(null);
+
+  // Redemption & Scanner Modal state
+  const [isRedeemModalOpen, setIsRedeemModalOpen] = useState(false);
+  const [selectedRedeemExchange, setSelectedRedeemExchange] = useState<RewardExchange | null>(null);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
 
   const loadRewardsData = useCallback(async () => {
     setIsLoading(true);
@@ -104,21 +110,6 @@ export const RewardsView: React.FC = () => {
     }
   };
 
-  // Handle Fulfill / Remove IOU (Adult/Admin only)
-  const handleFulfill = async (exchangeId: string) => {
-    setFulfillingId(exchangeId);
-    setError(null);
-    try {
-      await api.fulfillRewardExchange(exchangeId);
-      await Promise.all([loadRewardsData(), fetchFamilyData()]);
-    } catch (err: any) {
-      console.error('Failed to fulfill reward:', err);
-      setError(err.message || 'Failed to fulfill reward.');
-    } finally {
-      setFulfillingId(null);
-    }
-  };
-
   // Group exchanges by member for Adults/Admins view
   const exchangesByMember = useMemo(() => {
     const map = new Map<string, { memberName: string; memberColor?: string; items: RewardExchange[] }>();
@@ -140,26 +131,37 @@ export const RewardsView: React.FC = () => {
   return (
     <div id="rewards-view-container" className="max-w-4xl mx-auto px-3 sm:px-6 py-4 space-y-5 pb-24 md:pb-12">
       {/* 1. TOP HEADER & COMPACT POINTS BAR */}
-      <div className="flex items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-gray-200/90 shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-gray-200/90 shadow-2xs">
         <div>
           <h1 className="text-xl font-bold text-gray-900 tracking-tight font-serif">Rewards</h1>
           <p className="text-xs text-gray-500 font-medium">Earn points from tasks and exchange them for rewards</p>
         </div>
 
-        {/* Adult/Admin "+" Button for Rewards */}
+        {/* Adult/Admin Actions: Scan Reward & Create Reward */}
         {isAdultOrAdmin && (
-          <button
-            type="button"
-            id="btn-add-reward"
-            onClick={() => {
-              setEditingReward(null);
-              setIsRewardModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Create Reward</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              id="btn-scan-reward"
+              onClick={() => setIsScannerOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+            >
+              <Camera className="w-4 h-4" />
+              <span>Scan Reward</span>
+            </button>
+            <button
+              type="button"
+              id="btn-add-reward"
+              onClick={() => {
+                setEditingReward(null);
+                setIsRewardModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Create Reward</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -312,10 +314,22 @@ export const RewardsView: React.FC = () => {
                       </p>
                     </div>
 
-                    <div className="shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
                       <span className="px-2.5 py-1 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg">
                         ×{exc.quantity}
                       </span>
+                      <button
+                        type="button"
+                        id={`btn-redeem-${exc.id}`}
+                        onClick={() => {
+                          setSelectedRedeemExchange(exc);
+                          setIsRedeemModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer shadow-2xs active:scale-95 flex items-center gap-1"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        <span>Redeem</span>
+                      </button>
                     </div>
                   </div>
                 );
@@ -347,7 +361,6 @@ export const RewardsView: React.FC = () => {
                   <div className="space-y-2">
                     {group.items.map((exc) => {
                       const owedText = formatOwedDetail(exc.reward_description, exc.quantity, exc.reward_name);
-                      const isFulfilling = fulfillingId === exc.id;
 
                       return (
                         <div
@@ -360,24 +373,17 @@ export const RewardsView: React.FC = () => {
                               <h4 className="text-sm font-bold text-gray-900 truncate tracking-tight">
                                 {exc.reward_name}
                               </h4>
-                              <span className="px-2 py-0.5 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md">
-                                ×{exc.quantity}
-                              </span>
                             </div>
                             <p className="text-xs text-gray-500 font-medium pt-0.5">
                               {owedText}
                             </p>
                           </div>
 
-                          <button
-                            type="button"
-                            id={`btn-fulfill-${exc.id}`}
-                            onClick={() => handleFulfill(exc.id)}
-                            disabled={isFulfilling}
-                            className="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 border border-rose-200/80 bg-rose-50/50 hover:bg-rose-100/60 rounded-lg transition-colors cursor-pointer shrink-0 disabled:opacity-50"
-                          >
-                            {isFulfilling ? 'Fulfilling...' : 'Remove'}
-                          </button>
+                          <div className="shrink-0">
+                            <span className="px-2.5 py-1 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg">
+                              ×{exc.quantity}
+                            </span>
+                          </div>
                         </div>
                       );
                     })}
@@ -396,6 +402,31 @@ export const RewardsView: React.FC = () => {
         reward={editingReward}
         onSaved={loadRewardsData}
       />
+
+      {/* Member Redemption Modal (Select Qty -> Generate QR) */}
+      <RedemptionModal
+        isOpen={isRedeemModalOpen}
+        onClose={() => {
+          setIsRedeemModalOpen(false);
+          setSelectedRedeemExchange(null);
+        }}
+        exchange={selectedRedeemExchange}
+        onFulfilled={() => {
+          loadRewardsData();
+          fetchFamilyData();
+        }}
+      />
+
+      {/* Adult QR Scanner Modal */}
+      <RewardScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onRewardFulfilled={() => {
+          loadRewardsData();
+          fetchFamilyData();
+        }}
+      />
     </div>
   );
 };
+

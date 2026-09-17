@@ -309,26 +309,32 @@ export const api = {
   // Google Calendar Integration
   getGoogleConfig: () => fetchJson<GoogleConfigResponse>('/api/calendar/google/config'),
   
-  getGoogleAuthUrl: () => fetchJson<{ url: string; state: string }>('/api/calendar/google/auth-url?json=true'),
+  getGoogleAuthUrl: (memberId?: string) =>
+    fetchJson<{ url: string; state: string }>(
+      '/api/calendar/google/auth-url?json=true' + (memberId ? `&member_id=${encodeURIComponent(memberId)}` : '')
+    ),
 
-  getGoogleAccounts: () => fetchJson<GoogleAccount[]>('/api/calendar/google/accounts'),
+  getGoogleAccounts: (memberId?: string) =>
+    fetchJson<GoogleAccount[]>(
+      '/api/calendar/google/accounts' + (memberId ? `?member_id=${encodeURIComponent(memberId)}` : '')
+    ),
 
-  discoverGoogleCalendars: (accountId?: string) =>
+  discoverGoogleCalendars: (accountId?: string, memberId?: string) =>
     fetchJson<{ success: boolean; count: number; calendars: any[] }>('/api/calendar/google/discover', {
       method: 'POST',
-      body: JSON.stringify({ account_id: accountId }),
+      body: JSON.stringify({ account_id: accountId, member_id: memberId }),
     }),
 
-  syncGoogle: (accountId?: string) =>
+  syncGoogle: (accountId?: string, memberId?: string) =>
     fetchJson<{ success: boolean; eventsSynced: number; syncedAt: string }>('/api/calendar/google/sync', {
       method: 'POST',
-      body: JSON.stringify({ account_id: accountId }),
+      body: JSON.stringify({ account_id: accountId, member_id: memberId }),
     }),
 
-  disconnectGoogle: (accountId?: string) =>
+  disconnectGoogle: (accountId?: string, memberId?: string) =>
     fetchJson<{ success: boolean }>('/api/calendar/google/disconnect', {
       method: 'POST',
-      body: JSON.stringify({ account_id: accountId }),
+      body: JSON.stringify({ account_id: accountId, member_id: memberId }),
     }),
 
   getGoogleLogs: () => fetchJson<GoogleSyncLog[]>('/api/calendar/google/logs'),
@@ -476,5 +482,47 @@ export const api = {
   fulfillRewardExchange: (id: string) =>
     fetchJson<{ success: boolean }>(`/api/rewards/exchanges/${id}/fulfill`, {
       method: 'POST',
+    }),
+
+  createRedemptionToken: (exchange_id: string, quantity: number) =>
+    fetchJson<{
+      success: boolean;
+      token: string;
+      expires_at: string;
+      quantity: number;
+      reward_name: string;
+      reward_description: string | null;
+      exchange_id: string;
+      available_quantity: number;
+    }>('/api/rewards/redemption-token', {
+      method: 'POST',
+      body: JSON.stringify({ exchange_id, quantity }),
+    }),
+
+  cancelRedemptionToken: (token: string) =>
+    fetchJson<{ success: boolean }>('/api/rewards/redemption-token/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+
+  checkRedemptionTokenStatus: (token: string) =>
+    fetchJson<{
+      token: string;
+      status: 'active' | 'used' | 'cancelled' | 'expired';
+      quantity: number;
+      reward_name: string;
+      used_at?: string | null;
+    }>(`/api/rewards/redemption-token/status/${encodeURIComponent(token)}`),
+
+  fulfillRedemptionToken: (token: string) =>
+    fetchJson<{
+      success: boolean;
+      redeemed_quantity: number;
+      remaining_quantity: number;
+      reward_name: string;
+      member_id: string;
+    }>('/api/rewards/redemption-token/fulfill', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
     }),
 };

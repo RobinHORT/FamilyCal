@@ -316,6 +316,41 @@ export function initDatabase() {
       FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS reward_redemption_tokens (
+      id TEXT PRIMARY KEY,
+      token TEXT UNIQUE NOT NULL,
+      family_id TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      exchange_id TEXT NOT NULL,
+      reward_id TEXT,
+      reward_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      used_by_user_id TEXT,
+      FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE,
+      FOREIGN KEY (exchange_id) REFERENCES reward_exchanges(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS reward_fulfilment_logs (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      exchange_id TEXT NOT NULL,
+      reward_id TEXT,
+      reward_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      fulfilled_by_user_id TEXT NOT NULL,
+      token_id TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE,
+      FOREIGN KEY (exchange_id) REFERENCES reward_exchanges(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_events_family_start ON events(family_id, start_time);
     CREATE INDEX IF NOT EXISTS idx_events_calendar ON events(calendar_id);
     CREATE INDEX IF NOT EXISTS idx_events_google_id ON events(google_event_id);
@@ -339,6 +374,27 @@ export function initDatabase() {
     }
   } catch (migErr) {
     console.warn('Calendar member_id migration check warning:', migErr);
+  }
+
+  // Safe startup migration: Ensure member_id column exists on google_accounts and oauth_states
+  try {
+    const googleAccCols = db.prepare(`PRAGMA table_info(google_accounts);`).all() as Array<{ name: string }>;
+    if (!googleAccCols.some((col) => col.name === 'member_id')) {
+      db.prepare(`ALTER TABLE google_accounts ADD COLUMN member_id TEXT REFERENCES family_members(id) ON DELETE SET NULL;`).run();
+      console.log('Migration applied: added member_id column to google_accounts table.');
+    }
+  } catch (migErr) {
+    console.warn('google_accounts member_id migration check warning:', migErr);
+  }
+
+  try {
+    const oauthStateCols = db.prepare(`PRAGMA table_info(oauth_states);`).all() as Array<{ name: string }>;
+    if (!oauthStateCols.some((col) => col.name === 'member_id')) {
+      db.prepare(`ALTER TABLE oauth_states ADD COLUMN member_id TEXT;`).run();
+      console.log('Migration applied: added member_id column to oauth_states table.');
+    }
+  } catch (migErr) {
+    console.warn('oauth_states member_id migration check warning:', migErr);
   }
 
   // Safe startup migration: Ensure username and is_active columns exist on users in existing databases
