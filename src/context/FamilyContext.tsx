@@ -57,7 +57,7 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       setMembers(familyRes.members);
       setBirthdays(birthdaysRes);
     } catch (err) {
-      console.error('Failed to load family data:', err);
+      console.warn('Family data fetch warning:', err);
     } finally {
       setIsLoading(false);
     }

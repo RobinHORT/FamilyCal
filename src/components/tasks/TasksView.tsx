@@ -53,6 +53,7 @@ import { getEventAssignmentInfo, getPastelColorInfo } from '../../utils/colors';
 import { formatReminderLabel } from '../../utils/taskNotifications';
 import { getTaskAssignedMemberIds, canMemberToggleTask, canMemberClaimTask, isAdultOrAdminRole, isTaskDateActionable, getHouseholdTodayDateString, isTaskOccurrenceCompleted } from '../../utils/taskPermissions';
 import { MonthGrid } from '../calendar/MonthGrid';
+import { RewardsView } from './RewardsView';
 
 function formatTaskRepeatLabel(rule?: string | null, interval?: number | null, unit?: string | null): string | null {
   if (!rule || rule === 'none') return null;
@@ -73,7 +74,7 @@ function formatTaskRepeatLabel(rule?: string | null, interval?: number | null, u
   return null;
 }
 
-type TaskViewMode = 'month' | 'week' | 'day' | 'agenda';
+type TaskViewMode = 'month' | 'week' | 'day' | 'agenda' | 'rewards';
 type TaskStatusFilter = 'all' | 'open' | 'completed';
 
 export const TasksView: React.FC = () => {
@@ -267,6 +268,7 @@ export const TasksView: React.FC = () => {
 
   // Header title formatter matching CalendarHeader exactly
   const formattedHeaderTitle = () => {
+    if (viewMode === 'rewards') return 'Rewards';
     if (viewMode === 'month') return format(currentDate, 'MMMM yyyy');
     if (viewMode === 'week') {
       const start = startOfWeek(currentDate, { weekStartsOn: 1 });
@@ -729,7 +731,7 @@ export const TasksView: React.FC = () => {
 
             {/* View Mode Switcher */}
             <div id="tasks-view-mode-tabs" className="flex items-center bg-blue-50/80 p-1 rounded-xl border border-blue-200/60 shadow-2xs">
-              {(['month', 'week', 'day', 'agenda'] as TaskViewMode[]).map((mode) => (
+              {(['month', 'week', 'day', 'agenda', 'rewards'] as TaskViewMode[]).map((mode) => (
                 <button
                   key={mode}
                   id={`task-mode-${mode}`}
@@ -790,7 +792,7 @@ export const TasksView: React.FC = () => {
 
           {/* View Switcher Bar on Mobile & Small Tablets */}
           <div className="flex items-center justify-between bg-blue-50/80 p-1 rounded-xl border border-blue-200/60 gap-1">
-            {(['month', 'week', 'day', 'agenda'] as TaskViewMode[]).map((mode) => (
+            {(['month', 'week', 'day', 'agenda', 'rewards'] as TaskViewMode[]).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
@@ -1176,6 +1178,9 @@ export const TasksView: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* --- REWARDS VIEW --- */}
+        {viewMode === 'rewards' && <RewardsView />}
       </div>
 
       {/* Floating Action Add Button on Mobile (Hidden in Viewer mode) */}

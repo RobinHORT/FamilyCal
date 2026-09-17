@@ -15,6 +15,8 @@ import {
   StockItem,
   StockBarcode,
   ShoppingListItem,
+  Reward,
+  RewardExchange,
 } from '../types';
 
 class ApiError extends Error {
@@ -24,6 +26,27 @@ class ApiError extends Error {
     this.name = 'ApiError';
     this.code = code;
   }
+}
+
+async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 2, delayMs = 300): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      return response;
+    } catch (err: any) {
+      const isNetworkError =
+        err?.name === 'TypeError' ||
+        err?.message?.includes('Failed to fetch') ||
+        err?.message?.includes('NetworkError') ||
+        err?.message?.includes('Load failed');
+      if (attempt < retries && isNetworkError) {
+        await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Failed to fetch after retries');
 }
 
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -37,7 +60,7 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     ...options,
     headers,
     credentials: 'include',
@@ -50,6 +73,10 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
       errorMsg = errorJson.error || errorJson.message || errorMsg;
     } catch {
       // ignore
+    }
+    if (response.status === 401 && !url.includes('/api/auth/login') && !url.includes('/api/auth/viewer-login')) {
+      // Clean up stale token on 401
+      localStorage.removeItem('yimly_jwt_token');
     }
     throw new ApiError(errorMsg, response.status);
   }
@@ -415,6 +442,39 @@ export const api = {
 
   clearCompletedShoppingList: () =>
     fetchJson<{ success: boolean; count: number }>('/api/shopping-list/clear-completed', {
+      method: 'POST',
+    }),
+
+  // Rewards
+  getRewards: () => fetchJson<Reward[]>('/api/rewards'),
+
+  createReward: (data: { name: string; description?: string; points_cost: number; icon?: string; is_enabled?: boolean }) =>
+    fetchJson<Reward>('/api/rewards', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateReward: (id: string, data: Partial<Reward>) =>
+    fetchJson<Reward>(`/api/rewards/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  deleteReward: (id: string) =>
+    fetchJson<{ success: boolean }>(`/api/rewards/${id}`, {
+      method: 'DELETE',
+    }),
+
+  getRewardExchanges: () => fetchJson<RewardExchange[]>('/api/rewards/exchanges'),
+
+  exchangeReward: (reward_id: string) =>
+    fetchJson<{ success: boolean; points: number }>('/api/rewards/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ reward_id }),
+    }),
+
+  fulfillRewardExchange: (id: string) =>
+    fetchJson<{ success: boolean }>(`/api/rewards/exchanges/${id}/fulfill`, {
       method: 'POST',
     }),
 };

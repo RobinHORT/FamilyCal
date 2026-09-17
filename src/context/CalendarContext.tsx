@@ -187,7 +187,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
       const data = await api.getTasks();
       setTasks(data);
     } catch (err) {
-      console.error('Failed to load tasks:', err);
+      console.warn('Tasks fetch warning:', err);
     }
   }, [user]);
 
@@ -232,7 +232,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         setLastSyncedAt(gAccountsRes[0].last_synced_at);
       }
     } catch (err) {
-      console.error('Failed to load calendar data:', err);
+      console.warn('Calendar data fetch warning:', err);
     } finally {
       setIsLoading(false);
     }

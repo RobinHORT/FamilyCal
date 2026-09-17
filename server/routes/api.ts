@@ -8,6 +8,7 @@ import {
   seedDefaultCalendarLayersForFamily,
   syncMemberBirthdaysToCalendarLayer,
   reconcileMemberPoints,
+  ensureDefaultRewards,
   recordTaskCompletionPoints,
   getStockItems,
   getStockItemById,
@@ -3413,6 +3414,276 @@ router.post('/shopping-list/clear-completed', authenticateToken, (req: AuthReque
     const familyId = req.user!.family_id;
     const cleared = clearCompletedShoppingList(familyId);
     res.json({ success: true, count: cleared });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// REWARDS API ROUTES
+// ==========================================
+
+// Helper to check if current authenticated user is adult or admin
+function isAdultOrAdminUser(req: AuthRequest): boolean {
+  if (req.user?.role === 'administrator') return true;
+  const currentMemberId = getUserMemberId(req.user!.id, req.user!.family_id);
+  if (!currentMemberId) return false;
+  const member = db.prepare('SELECT role FROM family_members WHERE id = ?').get(currentMemberId) as any;
+  return member?.role === 'administrator' || member?.role === 'adult';
+}
+
+// Get all rewards catalog
+router.get('/rewards', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    ensureDefaultRewards(familyId);
+    const isAdult = isAdultOrAdminUser(req);
+
+    const query = isAdult
+      ? 'SELECT * FROM rewards WHERE family_id = ? ORDER BY points_cost ASC, name ASC'
+      : 'SELECT * FROM rewards WHERE family_id = ? AND is_enabled = 1 ORDER BY points_cost ASC, name ASC';
+
+    const rows = db.prepare(query).all(familyId) as any[];
+    const rewards = rows.map((r) => ({
+      ...r,
+      is_enabled: Boolean(r.is_enabled),
+    }));
+
+    res.json(rewards);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create new reward (Adult/Admin only)
+router.post('/rewards', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (!isAdultOrAdminUser(req)) {
+      return res.status(403).json({ error: 'Only adults or admins can create rewards.' });
+    }
+
+    const familyId = req.user!.family_id;
+    const { name, description, points_cost, icon, is_enabled } = req.body;
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Reward name is required.' });
+    }
+
+    const id = 'rew_' + uuidv4().slice(0, 8);
+    const now = new Date().toISOString();
+    const cost = Math.max(0, parseInt(points_cost, 10) || 0);
+    const enabled = is_enabled === false || is_enabled === 0 ? 0 : 1;
+
+    db.prepare(`
+      INSERT INTO rewards (id, family_id, name, description, points_cost, icon, is_enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, familyId, name.trim(), description ? String(description).trim() : null, cost, icon || null, enabled, now, now);
+
+    const created = db.prepare('SELECT * FROM rewards WHERE id = ?').get(id) as any;
+    res.json({
+      ...created,
+      is_enabled: Boolean(created.is_enabled),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update reward (Adult/Admin only)
+router.put('/rewards/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (!isAdultOrAdminUser(req)) {
+      return res.status(403).json({ error: 'Only adults or admins can update rewards.' });
+    }
+
+    const familyId = req.user!.family_id;
+    const rewardId = req.params.id;
+    const { name, description, points_cost, icon, is_enabled } = req.body;
+
+    const existing = db.prepare('SELECT * FROM rewards WHERE id = ? AND family_id = ?').get(rewardId, familyId) as any;
+    if (!existing) {
+      return res.status(404).json({ error: 'Reward not found.' });
+    }
+
+    const now = new Date().toISOString();
+    const newName = name !== undefined ? String(name).trim() : existing.name;
+    const newDesc = description !== undefined ? (description ? String(description).trim() : null) : existing.description;
+    const newCost = points_cost !== undefined ? Math.max(0, parseInt(points_cost, 10) || 0) : existing.points_cost;
+    const newIcon = icon !== undefined ? (icon ? String(icon) : null) : existing.icon;
+    const newEnabled = is_enabled !== undefined ? (is_enabled ? 1 : 0) : existing.is_enabled;
+
+    db.prepare(`
+      UPDATE rewards
+      SET name = ?, description = ?, points_cost = ?, icon = ?, is_enabled = ?, updated_at = ?
+      WHERE id = ? AND family_id = ?
+    `).run(newName, newDesc, newCost, newIcon, newEnabled, now, rewardId, familyId);
+
+    const updated = db.prepare('SELECT * FROM rewards WHERE id = ?').get(rewardId) as any;
+    res.json({
+      ...updated,
+      is_enabled: Boolean(updated.is_enabled),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete reward (Adult/Admin only)
+router.delete('/rewards/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (!isAdultOrAdminUser(req)) {
+      return res.status(403).json({ error: 'Only adults or admins can delete rewards.' });
+    }
+
+    const familyId = req.user!.family_id;
+    const rewardId = req.params.id;
+
+    db.prepare('DELETE FROM rewards WHERE id = ? AND family_id = ?').run(rewardId, familyId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get outstanding reward exchanges / IOUs
+router.get('/rewards/exchanges', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const isAdult = isAdultOrAdminUser(req);
+    const currentMemberId = getUserMemberId(req.user!.id, familyId);
+
+    let rows: any[] = [];
+    if (isAdult) {
+      rows = db.prepare(`
+        SELECT re.*, fm.name as member_name, fm.color as member_color
+        FROM reward_exchanges re
+        LEFT JOIN family_members fm ON re.member_id = fm.id
+        WHERE re.family_id = ? AND re.status = 'pending' AND re.quantity > 0
+        ORDER BY re.created_at DESC
+      `).all(familyId);
+    } else {
+      if (!currentMemberId) {
+        return res.json([]);
+      }
+      rows = db.prepare(`
+        SELECT re.*, fm.name as member_name, fm.color as member_color
+        FROM reward_exchanges re
+        LEFT JOIN family_members fm ON re.member_id = fm.id
+        WHERE re.family_id = ? AND re.member_id = ? AND re.status = 'pending' AND re.quantity > 0
+        ORDER BY re.created_at DESC
+      `).all(familyId, currentMemberId);
+    }
+
+    res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Exchange a reward (Deduct points, add/increment outstanding IOU)
+router.post('/rewards/exchange', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const familyId = req.user!.family_id;
+    const currentMemberId = getUserMemberId(req.user!.id, familyId);
+    if (!currentMemberId) {
+      return res.status(400).json({ error: 'No member profile found for this user.' });
+    }
+
+    const { reward_id } = req.body;
+    if (!reward_id) {
+      return res.status(400).json({ error: 'reward_id is required.' });
+    }
+
+    const reward = db.prepare('SELECT * FROM rewards WHERE id = ? AND family_id = ?').get(reward_id, familyId) as any;
+    if (!reward) {
+      return res.status(404).json({ error: 'Reward not found.' });
+    }
+    if (!reward.is_enabled) {
+      return res.status(400).json({ error: 'This reward is currently disabled.' });
+    }
+
+    // Verify member has enough points
+    const currentPoints = reconcileMemberPoints(familyId, currentMemberId);
+    if (currentPoints < reward.points_cost) {
+      return res.status(400).json({ error: 'Not enough points for this reward.' });
+    }
+
+    const now = new Date().toISOString();
+
+    // Check if member already has an unfulfilled pending exchange for this reward
+    const existing = db.prepare(`
+      SELECT * FROM reward_exchanges
+      WHERE family_id = ? AND member_id = ? AND (reward_id = ? OR (reward_id IS NULL AND reward_name = ?)) AND status = 'pending'
+    `).get(familyId, currentMemberId, reward.id, reward.name) as any;
+
+    if (existing) {
+      db.prepare(`
+        UPDATE reward_exchanges
+        SET quantity = quantity + 1, updated_at = ?
+        WHERE id = ?
+      `).run(now, existing.id);
+    } else {
+      const exchangeId = 'exc_' + uuidv4().slice(0, 8);
+      db.prepare(`
+        INSERT INTO reward_exchanges (id, family_id, member_id, reward_id, reward_name, reward_description, points_cost, quantity, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)
+      `).run(
+        exchangeId,
+        familyId,
+        currentMemberId,
+        reward.id,
+        reward.name,
+        reward.description || null,
+        reward.points_cost,
+        now,
+        now
+      );
+    }
+
+    // Re-reconcile points after exchange
+    const newPoints = reconcileMemberPoints(familyId, currentMemberId);
+
+    res.json({ success: true, points: newPoints });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Fulfill/Remove an outstanding IOU instance (Adult/Admin only)
+router.post('/rewards/exchanges/:id/fulfill', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (!isAdultOrAdminUser(req)) {
+      return res.status(403).json({ error: 'Only adults or admins can fulfill rewards.' });
+    }
+
+    const familyId = req.user!.family_id;
+    const exchangeId = req.params.id;
+    const currentMemberId = getUserMemberId(req.user!.id, familyId);
+
+    const exchange = db.prepare('SELECT * FROM reward_exchanges WHERE id = ? AND family_id = ?').get(exchangeId, familyId) as any;
+    if (!exchange) {
+      return res.status(404).json({ error: 'Outstanding reward IOU not found.' });
+    }
+
+    const now = new Date().toISOString();
+    if (exchange.quantity > 1) {
+      db.prepare(`
+        UPDATE reward_exchanges
+        SET quantity = quantity - 1, updated_at = ?
+        WHERE id = ?
+      `).run(now, exchange.id);
+    } else {
+      db.prepare(`
+        UPDATE reward_exchanges
+        SET status = 'fulfilled', quantity = 0, fulfilled_at = ?, fulfilled_by = ?, updated_at = ?
+        WHERE id = ?
+      `).run(now, currentMemberId || req.user!.id, now, exchange.id);
+    }
+
+    // Reconcile points (points remain spent, history preserved)
+    reconcileMemberPoints(familyId, exchange.member_id);
+
+    res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

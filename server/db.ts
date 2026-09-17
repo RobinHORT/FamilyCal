@@ -285,6 +285,37 @@ export function initDatabase() {
       FOREIGN KEY (stock_item_id) REFERENCES stock_items(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS rewards (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      points_cost INTEGER NOT NULL DEFAULT 0,
+      icon TEXT,
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS reward_exchanges (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      reward_id TEXT,
+      reward_name TEXT NOT NULL,
+      reward_description TEXT,
+      points_cost INTEGER NOT NULL DEFAULT 0,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'pending',
+      fulfilled_at TEXT,
+      fulfilled_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_events_family_start ON events(family_id, start_time);
     CREATE INDEX IF NOT EXISTS idx_events_calendar ON events(calendar_id);
     CREATE INDEX IF NOT EXISTS idx_events_google_id ON events(google_event_id);
@@ -294,6 +325,8 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_stock_barcodes_lookup ON stock_barcodes(family_id, barcode);
     CREATE INDEX IF NOT EXISTS idx_stock_barcodes_item ON stock_barcodes(stock_item_id);
     CREATE INDEX IF NOT EXISTS idx_shopping_list_family ON shopping_list_items(family_id, is_completed);
+    CREATE INDEX IF NOT EXISTS idx_rewards_family ON rewards(family_id);
+    CREATE INDEX IF NOT EXISTS idx_reward_exchanges_family ON reward_exchanges(family_id, status);
   `);
 
   // Safe startup migration: Ensure member_id column exists on calendars in existing databases
@@ -1207,18 +1240,46 @@ function seedInitialDataIfEmpty() {
 
 export function reconcileMemberPoints(familyId: string, memberId: string): number {
   try {
-    const result = db.prepare(`
+    const earnedResult = db.prepare(`
       SELECT COALESCE(SUM(points_awarded), 0) as total
       FROM task_points_records
       WHERE family_id = ? AND member_id = ? AND completed = 1
     `).get(familyId, memberId) as any;
 
-    const totalPoints = result ? Number(result.total) || 0 : 0;
-    db.prepare(`UPDATE family_members SET points = ? WHERE id = ?`).run(totalPoints, memberId);
-    return totalPoints;
+    const spentResult = db.prepare(`
+      SELECT COALESCE(SUM(points_cost * quantity), 0) as total
+      FROM reward_exchanges
+      WHERE family_id = ? AND member_id = ?
+    `).get(familyId, memberId) as any;
+
+    const totalEarned = earnedResult ? Number(earnedResult.total) || 0 : 0;
+    const totalSpent = spentResult ? Number(spentResult.total) || 0 : 0;
+    const netPoints = Math.max(0, totalEarned - totalSpent);
+
+    db.prepare(`UPDATE family_members SET points = ? WHERE id = ?`).run(netPoints, memberId);
+    return netPoints;
   } catch (err) {
     console.error('Error reconciling member points:', err);
     return 0;
+  }
+}
+
+export function ensureDefaultRewards(familyId: string) {
+  try {
+    const existing = db.prepare('SELECT COUNT(*) as count FROM rewards WHERE family_id = ?').get(familyId) as any;
+    if (existing && Number(existing.count) > 0) return;
+
+    const now = new Date().toISOString();
+    const insertReward = db.prepare(`
+      INSERT INTO rewards (id, family_id, name, description, points_cost, icon, is_enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `);
+
+    insertReward.run('rew_device_' + uuidv4().slice(0, 8), familyId, 'Device Time', '1 hour', 300, '📱', now, now);
+    insertReward.run('rew_money_' + uuidv4().slice(0, 8), familyId, '$5 Money', '$5', 500, '💵', now, now);
+    insertReward.run('rew_movie_' + uuidv4().slice(0, 8), familyId, 'Choose Movie', 'Choose a movie', 200, '🎬', now, now);
+  } catch (err) {
+    console.warn('Ensure default rewards warning:', err);
   }
 }
 

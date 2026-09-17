@@ -348,7 +348,37 @@ export interface SystemStats {
   serverTime: string;
 }
 
-export type CalendarViewMode = 'month' | 'week' | 'day' | 'agenda';
+export type CalendarViewMode = 'month' | 'week' | 'day' | 'agenda' | 'rewards';
+
+export interface Reward {
+  id: string;
+  family_id: string;
+  name: string;
+  description?: string | null;
+  points_cost: number;
+  icon?: string | null;
+  is_enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface RewardExchange {
+  id: string;
+  family_id: string;
+  member_id: string;
+  reward_id?: string | null;
+  reward_name: string;
+  reward_description?: string | null;
+  points_cost: number;
+  quantity: number;
+  status: 'pending' | 'fulfilled';
+  fulfilled_at?: string | null;
+  fulfilled_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  member_name?: string;
+  member_color?: string;
+}
 
 export const DEFAULT_MEMBER_PERMISSIONS: UserPermissions = {
   calendar_view: true,
