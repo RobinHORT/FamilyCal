@@ -5,6 +5,7 @@ import {
   parseISO,
 } from 'date-fns';
 import { CalendarEvent } from '../types';
+import { isoToLocalTime } from './timezoneData';
 
 /**
  * Extracts the raw YYYY-MM-DD string from any date string or ISO timestamp
@@ -71,9 +72,10 @@ export function formatAllDayPayloadDates(
 /**
  * Checks if a calendar event (all-day or timed) is active on a specific day.
  */
-export function isEventOnDay(evt: CalendarEvent, dayDate: Date): boolean {
+export function isEventOnDay(evt: CalendarEvent, dayDate: Date, viewingTimezone?: string): boolean {
+  const dayStr = format(dayDate, 'yyyy-MM-dd');
+
   if (evt.all_day) {
-    const dayStr = format(dayDate, 'yyyy-MM-dd');
     const sStr = evt.start_time.slice(0, 10);
     const eStr = evt.end_time ? evt.end_time.slice(0, 10) : sStr;
     const finalEnd = eStr >= sStr ? eStr : sStr;
@@ -110,34 +112,46 @@ export function isEventOnDay(evt: CalendarEvent, dayDate: Date): boolean {
     return false;
   }
 
-  // Timed event logic (unchanged)
-  const evtStart = new Date(evt.start_time);
-  const evtEnd = new Date(evt.end_time);
+  // Timed event logic (converted to viewing timezone when provided)
+  let sDateStr: string;
+  let eDateStr: string;
 
-  if (isSameDay(evtStart, dayDate) || (dayDate >= evtStart && dayDate <= evtEnd)) return true;
-
-  if (evt.recurring_rule === 'daily' && dayDate >= evtStart) {
-    if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
+  if (viewingTimezone) {
+    const sLocal = isoToLocalTime(evt.start_time, viewingTimezone);
+    const eLocal = isoToLocalTime(evt.end_time, viewingTimezone);
+    sDateStr = sLocal.dateStr;
+    eDateStr = eLocal.dateStr >= sLocal.dateStr ? eLocal.dateStr : sLocal.dateStr;
+  } else {
+    sDateStr = format(new Date(evt.start_time), 'yyyy-MM-dd');
+    eDateStr = format(new Date(evt.end_time), 'yyyy-MM-dd');
   }
-  if (evt.recurring_rule === 'weekly' && dayDate >= evtStart) {
-    if (dayDate.getDay() === evtStart.getDay()) {
-      if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
+
+  if (dayStr >= sDateStr && dayStr <= eDateStr) return true;
+
+  if (evt.recurring_rule === 'daily' && dayStr >= sDateStr) {
+    if (!evt.recurring_until || dayStr <= evt.recurring_until.slice(0, 10)) return true;
+  }
+  if (evt.recurring_rule === 'weekly' && dayStr >= sDateStr) {
+    const startD = parseISO(sDateStr);
+    if (dayDate.getDay() === startD.getDay()) {
+      if (!evt.recurring_until || dayStr <= evt.recurring_until.slice(0, 10)) return true;
     }
   }
-  if (evt.recurring_rule === 'biweekly' && dayDate >= evtStart) {
-    const diffDays = differenceInCalendarDays(dayDate, evtStart);
+  if (evt.recurring_rule === 'biweekly' && dayStr >= sDateStr) {
+    const diffDays = differenceInCalendarDays(dayDate, parseISO(sDateStr));
     if (diffDays >= 0 && diffDays % 14 === 0) {
-      if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
+      if (!evt.recurring_until || dayStr <= evt.recurring_until.slice(0, 10)) return true;
     }
   }
-  if (evt.recurring_rule === 'monthly' && dayDate >= evtStart) {
-    if (dayDate.getDate() === evtStart.getDate()) {
-      if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
+  if (evt.recurring_rule === 'monthly' && dayStr >= sDateStr) {
+    if (parseISO(dayStr).getDate() === parseISO(sDateStr).getDate()) {
+      if (!evt.recurring_until || dayStr <= evt.recurring_until.slice(0, 10)) return true;
     }
   }
-  if (evt.recurring_rule === 'yearly' && dayDate >= evtStart) {
-    if (dayDate.getMonth() === evtStart.getMonth() && dayDate.getDate() === evtStart.getDate()) {
-      if (!evt.recurring_until || dayDate <= new Date(evt.recurring_until)) return true;
+  if (evt.recurring_rule === 'yearly' && dayStr >= sDateStr) {
+    const sDateObj = parseISO(sDateStr);
+    if (dayDate.getMonth() === sDateObj.getMonth() && dayDate.getDate() === sDateObj.getDate()) {
+      if (!evt.recurring_until || dayStr <= evt.recurring_until.slice(0, 10)) return true;
     }
   }
 

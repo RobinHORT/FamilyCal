@@ -1399,11 +1399,16 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
       recurring_until,
       assigned_member_ids,
       reminder_minutes,
+      timezone,
     } = req.body;
 
     if (!title || !start_time || !end_time) {
       return res.status(400).json({ error: 'Title, start time, and end time are required.' });
     }
+
+    // Default timezone to household main timezone if not explicitly provided
+    const household = db.prepare('SELECT timezone FROM families WHERE id = ?').get(req.user!.family_id) as any;
+    const eventTimezone = (timezone && typeof timezone === 'string' && timezone.trim()) ? timezone.trim() : (household?.timezone || 'Australia/Melbourne');
 
     // Default to first non-Family-Hub calendar if not provided
     let targetCalId = calendar_id;
@@ -1466,9 +1471,9 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
       INSERT INTO events (
         id, family_id, calendar_id, title, description, location, color, event_type,
         start_time, end_time, all_day, recurring_rule, recurring_until,
-        assigned_member_ids, reminder_minutes, sync_status, created_by, created_at, updated_at
+        assigned_member_ids, reminder_minutes, timezone, sync_status, created_by, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       eventId,
       req.user!.family_id,
@@ -1485,6 +1490,7 @@ router.post('/events', authenticateToken, async (req: AuthRequest, res: Response
       recurring_until || null,
       memberIdsJson,
       reminderMinutesVal,
+      eventTimezone,
       syncStatus,
       req.user!.id,
       now,
@@ -1534,6 +1540,7 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
       recurring_until,
       assigned_member_ids,
       reminder_minutes,
+      timezone,
     } = req.body;
 
     const existing = db.prepare('SELECT * FROM events WHERE id = ? AND family_id = ?').get(
@@ -1575,6 +1582,8 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
       ? (reminder_minutes !== null && reminder_minutes !== '' ? Number(reminder_minutes) : null)
       : (existing.reminder_minutes !== null && existing.reminder_minutes !== undefined ? Number(existing.reminder_minutes) : null);
 
+    const finalTimezone = timezone !== undefined ? (timezone?.trim() || null) : existing.timezone;
+
     db.prepare(`
       UPDATE events
       SET calendar_id = ?,
@@ -1590,6 +1599,7 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
           recurring_until = ?,
           assigned_member_ids = ?,
           reminder_minutes = ?,
+          timezone = COALESCE(?, timezone),
           sync_status = ?,
           updated_at = ?
       WHERE id = ? AND family_id = ?
@@ -1607,6 +1617,7 @@ router.put('/events/:id', authenticateToken, async (req: AuthRequest, res: Respo
       recurring_until !== undefined ? recurring_until : existing.recurring_until,
       assigned_member_ids ? JSON.stringify(assigned_member_ids) : existing.assigned_member_ids,
       finalReminderMinutes,
+      finalTimezone,
       syncStatus,
       now,
       id,

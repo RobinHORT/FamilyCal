@@ -71,6 +71,11 @@ interface CalendarContextType {
   archiveTask: (id: string, options?: { allInGroup?: boolean }) => Promise<Task>;
   deleteTask: (id: string, options?: { allInGroup?: boolean }) => Promise<void>;
   triggerGoogleSync: () => Promise<{ success: boolean; eventsSynced: number }>;
+  viewingTimezone: string;
+  setViewingTimezone: (tz: string) => void;
+  isTimezonePickerOpen: boolean;
+  openTimezonePicker: () => void;
+  closeTimezonePicker: () => void;
 }
 
 const CalendarContext = createContext<CalendarContextType | undefined>(undefined);
@@ -111,6 +116,36 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const [googleAccounts, setGoogleAccounts] = useState<GoogleAccount[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [navigationDirection, setNavigationDirection] = useState<number>(0);
+
+  // Timezone state: Viewing Timezone (top nav badge) defaults to household Main Timezone
+  const [viewingTimezone, setViewingTimezoneState] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('familycal_viewing_timezone');
+      if (saved) return saved;
+    }
+    return 'Australia/Melbourne';
+  });
+  const [isTimezonePickerOpen, setIsTimezonePickerOpen] = useState(false);
+
+  // Keep viewing timezone aligned with family setting if user hasn't explicitly set a custom one
+  useEffect(() => {
+    if (family?.timezone && typeof window !== 'undefined') {
+      const saved = localStorage.getItem('familycal_viewing_timezone');
+      if (!saved) {
+        setViewingTimezoneState(family.timezone);
+      }
+    }
+  }, [family?.timezone]);
+
+  const setViewingTimezone = useCallback((tz: string) => {
+    setViewingTimezoneState(tz);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('familycal_viewing_timezone', tz);
+    }
+  }, []);
+
+  const openTimezonePicker = useCallback(() => setIsTimezonePickerOpen(true), []);
+  const closeTimezonePicker = useCallback(() => setIsTimezonePickerOpen(false), []);
 
   const goToPreviousPeriod = useCallback(() => {
     setNavigationDirection(-1);
@@ -552,6 +587,11 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         archiveTask,
         deleteTask,
         triggerGoogleSync,
+        viewingTimezone,
+        setViewingTimezone,
+        isTimezonePickerOpen,
+        openTimezonePicker,
+        closeTimezonePicker,
       }}
     >
       {children}

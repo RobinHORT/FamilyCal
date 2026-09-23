@@ -780,6 +780,18 @@ export function initDatabase() {
       console.warn('Families timezone migration check warning:', tzMigErr);
     }
 
+    // Migration: ensure timezone column on events table
+    try {
+      const evtCols = db.prepare(`PRAGMA table_info(events);`).all() as Array<{ name: string }>;
+      const hasEvtTz = evtCols.some((col) => col.name === 'timezone');
+      if (!hasEvtTz) {
+        db.prepare(`ALTER TABLE events ADD COLUMN timezone TEXT;`).run();
+        console.log('Migration applied: added timezone column to events table.');
+      }
+    } catch (evtTzErr) {
+      console.warn('Events timezone column migration warning:', evtTzErr);
+    }
+
     // Make sure all existing families have default event types seeded
     const existingFamilies = db.prepare('SELECT id FROM families').all() as Array<{ id: string }>;
     for (const fam of existingFamilies) {

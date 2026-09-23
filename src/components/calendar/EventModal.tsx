@@ -37,6 +37,12 @@ import {
   addMinutesToDateTime,
   isEndAfterStart,
 } from '../../utils/calendarDateUtils';
+import {
+  getTimezoneInfo,
+  localTimeToISO,
+  isoToLocalTime,
+} from '../../utils/timezoneData';
+import { TimezonePickerModal } from '../common/TimezonePickerModal';
 
 export const EventModal: React.FC = () => {
   const {
@@ -51,7 +57,7 @@ export const EventModal: React.FC = () => {
     deleteEvent,
   } = useCalendar();
 
-  const { members } = useFamily();
+  const { members, family } = useFamily();
   const { hasPermission, isAdmin, canEditEvent, canDeleteEvent } = useAuth();
 
   const [title, setTitle] = useState('');
@@ -66,6 +72,8 @@ export const EventModal: React.FC = () => {
   const [endTime, setEndTime] = useState('09:30');
   const [isEndTimeExplicit, setIsEndTimeExplicit] = useState(false);
   const [allDay, setAllDay] = useState(false);
+  const [eventTimezone, setEventTimezone] = useState<string>('Australia/Melbourne');
+  const [isTzPickerOpen, setIsTzPickerOpen] = useState(false);
   const [recurringRule, setRecurringRule] = useState<RecurrenceRule>('none');
   const [recurringUntil, setRecurringUntil] = useState('');
   const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
@@ -102,6 +110,10 @@ export const EventModal: React.FC = () => {
       setEventType(selectedEvent.event_type || 'Other');
       const isEventAllDay = Boolean(selectedEvent.all_day);
       setAllDay(isEventAllDay);
+
+      const targetTz = selectedEvent.timezone || family?.timezone || 'Australia/Melbourne';
+      setEventTimezone(targetTz);
+
       setRecurringRule(selectedEvent.recurring_rule || 'none');
       setRecurringUntil(selectedEvent.recurring_until ? selectedEvent.recurring_until.slice(0, 10) : '');
       setReminderMinutes(
@@ -128,16 +140,19 @@ export const EventModal: React.FC = () => {
         setEndTime('09:30');
         setIsEndTimeExplicit(false);
       } else {
-        const sDate = new Date(selectedEvent.start_time);
-        const eDate = new Date(selectedEvent.end_time);
-        setStartDate(format(sDate, 'yyyy-MM-dd'));
-        setStartTime(format(sDate, 'HH:mm'));
-        setEndDate(format(eDate, 'yyyy-MM-dd'));
-        setEndTime(format(eDate, 'HH:mm'));
+        const sLocal = isoToLocalTime(selectedEvent.start_time, targetTz);
+        const eLocal = isoToLocalTime(selectedEvent.end_time, targetTz);
+        setStartDate(sLocal.dateStr);
+        setStartTime(sLocal.timeStr);
+        setEndDate(eLocal.dateStr);
+        setEndTime(eLocal.timeStr);
         setIsEndTimeExplicit(true);
       }
     } else {
-      // New Event Defaults
+      // New Event Defaults automatically use Household Main Timezone
+      const mainTz = family?.timezone || 'Australia/Melbourne';
+      setEventTimezone(mainTz);
+
       const baseDate = eventModalInitialDate || new Date();
       const sDateStr = format(baseDate, 'yyyy-MM-dd');
       const sTimeStr = format(baseDate, 'HH:mm') === '00:00' ? '09:00' : format(baseDate, 'HH:mm');
@@ -170,7 +185,7 @@ export const EventModal: React.FC = () => {
     }
     setPermState(getNotificationPermission());
     setError(null);
-  }, [isEventModalOpen, selectedEvent, eventModalInitialDate, calendars, members]);
+  }, [isEventModalOpen, selectedEvent, eventModalInitialDate, calendars, members, family?.timezone]);
 
   if (!isEventModalOpen) return null;
 
@@ -325,8 +340,8 @@ export const EventModal: React.FC = () => {
         startIso = payloadDates.start_time;
         endIso = payloadDates.end_time;
       } else {
-        startIso = new Date(`${startDate}T${startTime}:00`).toISOString();
-        endIso = new Date(`${endDate || startDate}T${endTime}:00`).toISOString();
+        startIso = localTimeToISO(startDate, startTime, eventTimezone);
+        endIso = localTimeToISO(endDate || startDate, endTime, eventTimezone);
       }
 
       let targetCalendarId = calendarId;
@@ -363,6 +378,7 @@ export const EventModal: React.FC = () => {
         recurring_until: recurringUntil ? `${recurringUntil}T23:59:59Z` : null,
         assigned_member_ids: finalAssignedMemberIds,
         reminder_minutes: reminderMinutes,
+        timezone: eventTimezone,
       };
 
       if (selectedEvent) {
@@ -832,6 +848,31 @@ export const EventModal: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Event Timezone Selector */}
+            <div className="pt-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-gray-500 font-semibold flex items-center gap-1">
+                  <Globe className="w-3 h-3 text-blue-500" /> Event Timezone
+                </span>
+                <span className="text-[10px] text-gray-400">Local event timezone</span>
+              </div>
+              <button
+                type="button"
+                id="event-timezone-select-btn"
+                disabled={!canSave}
+                onClick={() => setIsTzPickerOpen(true)}
+                className="w-full flex items-center justify-between bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-3 py-2 text-xs text-gray-900 font-medium transition-colors cursor-pointer disabled:opacity-70"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 text-[10px] font-black tracking-wider">
+                    {getTimezoneInfo(eventTimezone).code}
+                  </span>
+                  <span>{getTimezoneInfo(eventTimezone).city}, {getTimezoneInfo(eventTimezone).country}</span>
+                </div>
+                <span className="text-[11px] text-blue-600 font-semibold">Change</span>
+              </button>
+            </div>
           </div>
 
           {/* Recurrence Options */}
@@ -1040,6 +1081,16 @@ export const EventModal: React.FC = () => {
           </div>
         </form>
       </div>
+
+      {/* Event Timezone Picker Modal */}
+      <TimezonePickerModal
+        isOpen={isTzPickerOpen}
+        onClose={() => setIsTzPickerOpen(false)}
+        selectedTimezone={eventTimezone}
+        onSelectTimezone={(tz) => setEventTimezone(tz)}
+        title="Select Event Timezone"
+        subtitle="The local timezone where this event takes place"
+      />
     </div>
   );
 };

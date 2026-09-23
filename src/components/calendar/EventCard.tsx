@@ -2,6 +2,8 @@ import React from 'react';
 import { format } from 'date-fns';
 import { CalendarEvent, EventType, FamilyMember, Task } from '../../types';
 import { getEventAssignmentInfo, getEventTypeInfo, getPastelColorInfo } from '../../utils/colors';
+import { useCalendar } from '../../context/CalendarContext';
+import { formatTimeInTimezone } from '../../utils/timezoneData';
 import { Users, Clock, MapPin, Repeat, Globe, CheckCircle2, Circle } from 'lucide-react';
 
 interface EventCardProps {
@@ -23,11 +25,12 @@ export const EventCard: React.FC<EventCardProps> = ({
   showDescription = false,
   showLocation = true,
 }) => {
+  const { viewingTimezone } = useCalendar();
   const assignmentInfo = getEventAssignmentInfo(event, members);
   const eventType = getEventTypeInfo(event.title, event.event_type, eventTypes);
 
-  const startD = new Date(event.start_time);
-  const endD = new Date(event.end_time);
+  const startFormatted = formatTimeInTimezone(event.start_time, viewingTimezone);
+  const endFormatted = formatTimeInTimezone(event.end_time, viewingTimezone);
   const isGoogle = event.google_event_id || event.calendar_source === 'google';
 
   return (
@@ -150,7 +153,7 @@ export const EventCard: React.FC<EventCardProps> = ({
             <span className="whitespace-nowrap">
               {event.all_day
                 ? 'All Day'
-                : `${format(startD, 'h:mm a')} – ${format(endD, 'h:mm a')}`}
+                : `${startFormatted} – ${endFormatted}`}
             </span>
           </span>
 

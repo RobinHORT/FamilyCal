@@ -130,6 +130,7 @@ export interface CalendarEvent {
   recurring_until?: string | null;
   assigned_member_ids: string[];
   reminder_minutes?: number | null;
+  timezone?: string | null;
   google_event_id?: string | null;
   google_calendar_id?: string | null;
   sync_status: SyncStatus;

@@ -31,6 +31,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
     navigationDirection,
     selectedCalendarDate,
     setSelectedCalendarDate,
+    viewingTimezone,
   } = useCalendar();
   const { members } = useFamily();
   const { user } = useAuth();
@@ -72,7 +73,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
   });
 
   const getEventsForDay = (dayDate: Date) => {
-    return filteredEvents.filter((evt) => isEventOnDay(evt, dayDate));
+    return filteredEvents.filter((evt) => isEventOnDay(evt, dayDate, viewingTimezone));
   };
 
   const selectedDayEvents = getEventsForDay(selectedDay);

@@ -59,6 +59,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
     goToPreviousPeriod,
     goToNextPeriod,
     navigationDirection,
+    viewingTimezone,
   } = useCalendar();
   const { members } = useFamily();
   const { user, isAdmin, hasPermission } = useAuth();
@@ -89,7 +90,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(start, i));
 
   const getEventsForDay = (day: Date): CalendarEvent[] => {
-    return filteredEvents.filter((evt) => isEventOnDay(evt, day));
+    return filteredEvents.filter((evt) => isEventOnDay(evt, day, viewingTimezone));
   };
 
   const weekKey = format(start, 'yyyy-MM-dd');

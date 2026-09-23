@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { MemberGoogleCalendarSection } from './MemberGoogleCalendarSection';
+import { getTimezoneInfo } from '../../utils/timezoneData';
+import { TimezonePickerModal } from '../common/TimezonePickerModal';
 import {
   FamilyMember,
   UserRole,
@@ -76,6 +78,7 @@ export const FamilyView: React.FC = () => {
   const [isEditingHousehold, setIsEditingHousehold] = useState(false);
   const [householdName, setHouseholdName] = useState(family?.name || '');
   const [householdTimezone, setHouseholdTimezone] = useState(family?.timezone || 'Australia/Melbourne');
+  const [isMainTzPickerOpen, setIsMainTzPickerOpen] = useState(false);
   const [viewerPassword, setViewerPassword] = useState('');
   const [showViewerPassword, setShowViewerPassword] = useState(false);
   const [householdSuccessMsg, setHouseholdSuccessMsg] = useState<string | null>(null);
@@ -390,43 +393,26 @@ export const FamilyView: React.FC = () => {
             </div>
 
             <div>
-              <label htmlFor="household-timezone-select" className="block text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1.5">
+              <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1.5">
                 <Globe className="w-3.5 h-3.5 text-gray-500" />
-                <span>Household Time Zone</span>
+                <span>Main Timezone</span>
               </label>
-              <select
-                id="household-timezone-select"
-                value={householdTimezone}
-                onChange={(e) => setHouseholdTimezone(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-xs text-gray-900 focus:outline-none focus:border-gray-900 font-medium cursor-pointer"
+              <button
+                type="button"
+                id="household-timezone-select-btn"
+                onClick={() => setIsMainTzPickerOpen(true)}
+                className="w-full flex items-center justify-between bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-3.5 py-2.5 text-xs text-gray-900 font-medium transition-colors cursor-pointer"
               >
-                <optgroup label="Australia & Oceania">
-                  <option value="Australia/Melbourne">Australia/Melbourne — Melbourne</option>
-                  <option value="Australia/Sydney">Australia/Sydney — Sydney</option>
-                  <option value="Australia/Brisbane">Australia/Brisbane — Brisbane</option>
-                  <option value="Australia/Adelaide">Australia/Adelaide — Adelaide</option>
-                  <option value="Australia/Perth">Australia/Perth — Perth</option>
-                  <option value="Australia/Darwin">Australia/Darwin — Darwin</option>
-                  <option value="Australia/Hobart">Australia/Hobart — Hobart</option>
-                  <option value="Australia/Canberra">Australia/Canberra — Canberra</option>
-                  <option value="Australia/Lord_Howe">Australia/Lord_Howe — Lord Howe</option>
-                  <option value="Australia/Eucla">Australia/Eucla — Eucla</option>
-                  <option value="Pacific/Auckland">Pacific/Auckland — Auckland</option>
-                </optgroup>
-                <optgroup label="International">
-                  <option value="America/New_York">America/New_York — New York (Eastern)</option>
-                  <option value="America/Chicago">America/Chicago — Chicago (Central)</option>
-                  <option value="America/Denver">America/Denver — Denver (Mountain)</option>
-                  <option value="America/Los_Angeles">America/Los_Angeles — Los Angeles (Pacific)</option>
-                  <option value="Europe/London">Europe/London — London (GMT/BST)</option>
-                  <option value="Europe/Paris">Europe/Paris — Paris (CET/CEST)</option>
-                  <option value="Asia/Tokyo">Asia/Tokyo — Tokyo (JST)</option>
-                  <option value="Asia/Singapore">Asia/Singapore — Singapore (SGT)</option>
-                  <option value="UTC">UTC — Coordinated Universal Time</option>
-                </optgroup>
-              </select>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 text-[10px] font-black tracking-wider">
+                    {getTimezoneInfo(householdTimezone).code}
+                  </span>
+                  <span>{getTimezoneInfo(householdTimezone).city}, {getTimezoneInfo(householdTimezone).country}</span>
+                </div>
+                <span className="text-xs text-blue-600 font-semibold">Change</span>
+              </button>
               <p className="text-[11px] text-gray-500 mt-1">
-                Authoritative time zone for household calendars, daily chores, and reminder notifications.
+                Default timezone used when creating new events and authoritative timezone for household tasks.
               </p>
             </div>
 
@@ -504,7 +490,7 @@ export const FamilyView: React.FC = () => {
             <p className="text-xs text-gray-500 mt-1.5 flex flex-wrap items-center gap-2">
               <span className="flex items-center gap-1 font-medium text-gray-700">
                 <Globe className="w-3.5 h-3.5 text-pink-600" />
-                <span>Timezone: {TIMEZONE_LABELS[family?.timezone || 'Australia/Melbourne'] || family?.timezone || 'Australia/Melbourne'}</span>
+                <span>Main Timezone: {getTimezoneInfo(family?.timezone || 'Australia/Melbourne').city} ({getTimezoneInfo(family?.timezone || 'Australia/Melbourne').code})</span>
               </span>
               <span>•</span>
               <span>{members.length} Household {members.length === 1 ? 'Member' : 'Members'}</span>
@@ -1296,6 +1282,16 @@ export const FamilyView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Main Timezone Picker Modal */}
+      <TimezonePickerModal
+        isOpen={isMainTzPickerOpen}
+        onClose={() => setIsMainTzPickerOpen(false)}
+        selectedTimezone={householdTimezone}
+        onSelectTimezone={(tz) => setHouseholdTimezone(tz)}
+        title="Select Main Timezone"
+        subtitle="Authoritative timezone used as default for new events"
+      />
     </div>
   );
 };
