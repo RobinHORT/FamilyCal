@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useFamily } from '../../context/FamilyContext';
 import { useCalendar } from '../../context/CalendarContext';
-import { getTimezoneInfo } from '../../utils/timezoneData';
+import { getTimezoneBadge, getTimezoneDisplayLabel } from '../../utils/timezoneData';
 import { TimezonePickerModal } from '../common/TimezonePickerModal';
 import {
   Calendar as CalIcon,
@@ -35,7 +35,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
   } = useCalendar();
 
   const userColorInfo = user ? getPastelColorInfo(user.color) : null;
-  const tzInfo = getTimezoneInfo(viewingTimezone);
+  const tzBadge = getTimezoneBadge(viewingTimezone);
+  const tzLabel = getTimezoneDisplayLabel(viewingTimezone);
 
   useEffect(() => {
     if (family?.name) {
@@ -129,9 +130,9 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
           type="button"
           onClick={openTimezonePicker}
           className="px-2.5 py-1 text-[11px] sm:text-xs font-black tracking-wider bg-slate-100 hover:bg-blue-50 hover:text-blue-600 border border-slate-200/80 hover:border-blue-200 text-slate-700 rounded-xl transition-all cursor-pointer shadow-2xs shrink-0 active:scale-95"
-          title={`Viewing Timezone: ${tzInfo.city} (${tzInfo.code}) • Tap to change`}
+          title={`Viewing Timezone: ${tzLabel} • Tap to change`}
         >
-          {tzInfo.code}
+          {tzBadge}
         </button>
 
         {isViewer ? (

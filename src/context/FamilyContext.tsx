@@ -34,9 +34,10 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [colorSoftness, setColorSoftnessState] = useState<number>(() => {
     const saved = localStorage.getItem('familycal_color_softness');
-    const val = saved !== null ? parseInt(saved, 10) : 0;
-    setGlobalColorSoftness(isNaN(val) ? 0 : val);
-    return isNaN(val) ? 0 : val;
+    const val = saved !== null ? parseInt(saved, 10) : 85;
+    const finalVal = isNaN(val) ? 85 : val;
+    setGlobalColorSoftness(finalVal);
+    return finalVal;
   });
 
   const fetchFamilyData = useCallback(async () => {
@@ -77,8 +78,10 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('familycal_color_softness', String(level));
     } else {
       const saved = localStorage.getItem('familycal_color_softness');
-      const val = saved !== null ? parseInt(saved, 10) : 0;
-      setGlobalColorSoftness(isNaN(val) ? 0 : val);
+      const val = saved !== null ? parseInt(saved, 10) : 85;
+      const finalVal = isNaN(val) ? 85 : val;
+      setColorSoftnessState(finalVal);
+      setGlobalColorSoftness(finalVal);
     }
   }, [family?.color_softness, family?.colorSoftness]);
 

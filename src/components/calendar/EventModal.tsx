@@ -38,7 +38,8 @@ import {
   isEndAfterStart,
 } from '../../utils/calendarDateUtils';
 import {
-  getTimezoneInfo,
+  getTimezoneBadge,
+  getTimezoneDisplayLabel,
   localTimeToISO,
   isoToLocalTime,
 } from '../../utils/timezoneData';
@@ -866,9 +867,9 @@ export const EventModal: React.FC = () => {
               >
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 text-[10px] font-black tracking-wider">
-                    {getTimezoneInfo(eventTimezone).code}
+                    {getTimezoneBadge(eventTimezone)}
                   </span>
-                  <span>{getTimezoneInfo(eventTimezone).city}, {getTimezoneInfo(eventTimezone).country}</span>
+                  <span>{getTimezoneDisplayLabel(eventTimezone)}</span>
                 </div>
                 <span className="text-[11px] text-blue-600 font-semibold">Change</span>
               </button>

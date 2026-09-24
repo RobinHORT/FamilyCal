@@ -159,7 +159,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab =
           <p className="text-xs text-gray-500 mt-0.5">
             {subTab === 'family'
               ? 'Manage household members, logins, custom colours, and family preferences.'
-              : 'Configure Google Calendar synchronization, colour softness, export backups, and view diagnostics.'}
+              : 'Configure Google Calendar synchronization, global softness, export backups, and view diagnostics.'}
           </p>
         </div>
 
@@ -248,10 +248,10 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab =
             </div>
             <div>
               <h3 className="text-base font-bold text-gray-900 font-serif">
-                Member Colour Softness
+                Global Softness
               </h3>
               <p className="text-xs text-gray-500 mt-0.5">
-                Adjust the global softness and fade level of member colours throughout the entire app.
+                Adjust the global softness and fade level for all member and family colour surfaces throughout the app.
               </p>
             </div>
           </div>
@@ -286,35 +286,93 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab =
         </div>
 
         {/* Live Preview */}
-        {members.length > 0 && (
-          <div className="pt-3 border-t border-gray-100 space-y-2">
-            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-              Live Colour Surfaces Preview
-            </span>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {members.slice(0, 4).map((m) => {
-                const colorInfo = getPastelColorInfo(m.color);
-                return (
-                  <div
-                    key={m.id}
-                    style={{ backgroundColor: colorInfo.hex, borderColor: colorInfo.borderHex }}
-                    className="p-3 rounded-2xl border flex items-center gap-2.5 transition-all shadow-2xs"
-                  >
+        <div className="pt-3 border-t border-gray-100 space-y-3">
+          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+            Live Global Colour System Preview
+          </span>
+          <div className="space-y-2.5">
+            {/* Member & Family Surfaces */}
+            {members.length > 0 && (
+              <div>
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">
+                  Members & Family Surfaces
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {members.slice(0, 4).map((m) => {
+                    const colorInfo = getPastelColorInfo(m.color);
+                    return (
+                      <div
+                        key={m.id}
+                        style={{ backgroundColor: colorInfo.hex, borderColor: colorInfo.borderHex }}
+                        className="p-2.5 rounded-xl border flex items-center gap-2 transition-all shadow-2xs"
+                      >
+                        <span
+                          className="w-3 h-3 rounded-full shrink-0 border"
+                          style={{ backgroundColor: colorInfo.dotHex, borderColor: colorInfo.borderHex }}
+                        />
+                        <span style={{ color: colorInfo.textHex }} className="text-xs font-bold truncate block">
+                          {m.name}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Event Categories & Badges */}
+            <div>
+              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">
+                Event Categories & Badges
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { name: 'Sport ⚽', color: '#3B82F6' },
+                  { name: 'School 🎓', color: '#EAB308' },
+                  { name: 'Important ⚡', color: '#EF4444' },
+                  { name: 'Appointment 🩺', color: '#10B981' },
+                  { name: 'Holiday 🏖️', color: '#8B5CF6' },
+                ].map((item) => {
+                  const c = getPastelColorInfo(item.color);
+                  return (
                     <span
-                      className="w-3.5 h-3.5 rounded-full shrink-0 border"
-                      style={{ backgroundColor: colorInfo.dotHex, borderColor: colorInfo.borderHex }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <span style={{ color: colorInfo.textHex }} className="text-xs font-extrabold truncate block">
-                        {m.name}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+                      key={item.name}
+                      style={{ backgroundColor: c.hex, borderColor: c.borderHex, color: c.textHex }}
+                      className="px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-2xs"
+                    >
+                      {item.name}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Task Priority Badges */}
+            <div>
+              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">
+                Task Priority Badges
+              </span>
+              <div className="flex items-center gap-2">
+                {[
+                  { label: 'High Priority', color: '#EF4444' },
+                  { label: 'Medium Priority', color: '#F59E0B' },
+                  { label: 'Low Priority', color: '#64748B' },
+                ].map((p) => {
+                  const c = getPastelColorInfo(p.color);
+                  return (
+                    <span
+                      key={p.label}
+                      style={{ backgroundColor: c.hex, borderColor: c.borderHex, color: c.textHex }}
+                      className="px-2.5 py-1 rounded-full border text-[11px] font-black uppercase tracking-wider transition-all"
+                    >
+                      {p.label}
+                    </span>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Google Calendar Card */}

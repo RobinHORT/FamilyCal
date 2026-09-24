@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { MemberGoogleCalendarSection } from './MemberGoogleCalendarSection';
-import { getTimezoneInfo } from '../../utils/timezoneData';
+import { getTimezoneBadge, getTimezoneDisplayLabel } from '../../utils/timezoneData';
 import { TimezonePickerModal } from '../common/TimezonePickerModal';
 import {
   FamilyMember,
@@ -405,9 +405,9 @@ export const FamilyView: React.FC = () => {
               >
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 text-[10px] font-black tracking-wider">
-                    {getTimezoneInfo(householdTimezone).code}
+                    {getTimezoneBadge(householdTimezone)}
                   </span>
-                  <span>{getTimezoneInfo(householdTimezone).city}, {getTimezoneInfo(householdTimezone).country}</span>
+                  <span>{getTimezoneDisplayLabel(householdTimezone)}</span>
                 </div>
                 <span className="text-xs text-blue-600 font-semibold">Change</span>
               </button>

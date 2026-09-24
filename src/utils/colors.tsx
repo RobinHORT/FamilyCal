@@ -27,13 +27,15 @@ export function getEventTypeInfo(
   explicitType?: string,
   customTypes?: Array<{ id?: string; name: string; color: string; icon?: string }>
 ): EventTypeInfo {
+  let matchedInfo: EventTypeInfo | null = null;
+
   // 1. If explicitType is provided and customTypes exist, match against customTypes first
   if (explicitType && customTypes && customTypes.length > 0) {
     const matchedCustom = customTypes.find(
       (ct) => ct.name.toLowerCase() === explicitType.toLowerCase() || ct.id === explicitType
     );
     if (matchedCustom) {
-      return {
+      matchedInfo = {
         id: matchedCustom.id,
         name: matchedCustom.name,
         bgHex: matchedCustom.color,
@@ -44,43 +46,43 @@ export function getEventTypeInfo(
   }
 
   // 2. If explicitType is provided, match against predefined event types
-  if (explicitType) {
+  if (!matchedInfo && explicitType) {
     const matched = PREDEFINED_EVENT_TYPES.find(
       (dt) => dt.name.toLowerCase() === explicitType.toLowerCase() || dt.id === explicitType.toLowerCase()
     );
-    if (matched) return matched;
+    if (matched) matchedInfo = matched;
   }
 
   // 3. Keyword matching for backwards compatibility / smart inference with existing events
-  const t = (title || '').toLowerCase();
-  if (t.includes('school') || t.includes('excursion') || t.includes('class') || t.includes('homework') || t.includes('exam')) {
-    return PREDEFINED_EVENT_TYPES[0]; // School (Yellow)
-  }
-  if (t.includes('sport') || t.includes('football') || t.includes('basketball') || t.includes('match') || t.includes('training') || t.includes('soccer') || t.includes('tennis') || t.includes('dance') || t.includes('swim')) {
-    if (t.includes('dance')) return { ...PREDEFINED_EVENT_TYPES[1], icon: '🎵' };
-    return PREDEFINED_EVENT_TYPES[1]; // Sport (Blue)
-  }
-  if (t.includes('doctor') || t.includes('appointment') || t.includes('dentist') || t.includes('clinic') || t.includes('checkup')) {
-    return PREDEFINED_EVENT_TYPES[2]; // Appointment (Green)
-  }
-  if (t.includes('work') || t.includes('meeting') || t.includes('client') || t.includes('presentation')) {
-    return PREDEFINED_EVENT_TYPES[3]; // Work (Orange)
-  }
-  if (t.includes('birthday') || t.includes('party')) {
-    return PREDEFINED_EVENT_TYPES[4]; // Birthday (Pink)
-  }
-  if (t.includes('holiday') || t.includes('trip') || t.includes('fishing') || t.includes('vacation') || t.includes('camp')) {
-    return PREDEFINED_EVENT_TYPES[5]; // Holiday (Purple)
-  }
-  if (t.includes('social') || t.includes('lunch') || t.includes('gaming') || t.includes('friends') || t.includes('dinner') || t.includes('family time')) {
-    return PREDEFINED_EVENT_TYPES[6]; // Social (Lilac)
-  }
-  if (t.includes('important') || t.includes('urgent') || t.includes('tax') || t.includes('deadline')) {
-    return PREDEFINED_EVENT_TYPES[7]; // Important (Red)
+  if (!matchedInfo) {
+    const t = (title || '').toLowerCase();
+    if (t.includes('school') || t.includes('excursion') || t.includes('class') || t.includes('homework') || t.includes('exam')) {
+      matchedInfo = PREDEFINED_EVENT_TYPES[0]; // School (Yellow)
+    } else if (t.includes('sport') || t.includes('football') || t.includes('basketball') || t.includes('match') || t.includes('training') || t.includes('soccer') || t.includes('tennis') || t.includes('dance') || t.includes('swim')) {
+      matchedInfo = t.includes('dance') ? { ...PREDEFINED_EVENT_TYPES[1], icon: '🎵' } : PREDEFINED_EVENT_TYPES[1]; // Sport (Blue)
+    } else if (t.includes('doctor') || t.includes('appointment') || t.includes('dentist') || t.includes('clinic') || t.includes('checkup')) {
+      matchedInfo = PREDEFINED_EVENT_TYPES[2]; // Appointment (Green)
+    } else if (t.includes('work') || t.includes('meeting') || t.includes('client') || t.includes('presentation')) {
+      matchedInfo = PREDEFINED_EVENT_TYPES[3]; // Work (Orange)
+    } else if (t.includes('birthday') || t.includes('party')) {
+      matchedInfo = PREDEFINED_EVENT_TYPES[4]; // Birthday (Pink)
+    } else if (t.includes('holiday') || t.includes('trip') || t.includes('fishing') || t.includes('vacation') || t.includes('camp')) {
+      matchedInfo = PREDEFINED_EVENT_TYPES[5]; // Holiday (Purple)
+    } else if (t.includes('social') || t.includes('lunch') || t.includes('gaming') || t.includes('friends') || t.includes('dinner') || t.includes('family time')) {
+      matchedInfo = PREDEFINED_EVENT_TYPES[6]; // Social (Lilac)
+    } else if (t.includes('important') || t.includes('urgent') || t.includes('tax') || t.includes('deadline')) {
+      matchedInfo = PREDEFINED_EVENT_TYPES[7]; // Important (Red)
+    } else {
+      matchedInfo = PREDEFINED_EVENT_TYPES[8]; // Other (Grey)
+    }
   }
 
-  // Default: Other (Grey)
-  return PREDEFINED_EVENT_TYPES[8];
+  const colorInfo = getPastelColorInfo(matchedInfo.bgHex);
+  return {
+    ...matchedInfo,
+    bgHex: colorInfo.hex,
+    textHex: colorInfo.textHex,
+  };
 }
 
 export interface PastelColor {
@@ -233,7 +235,7 @@ export const PASTEL_COLORS: PastelColor[] = [
 
 export const DEFAULT_PASTEL_COLOR = PASTEL_COLORS[0]; // Pastel Pink
 
-let currentGlobalColorSoftness = 0;
+let currentGlobalColorSoftness = 85;
 
 export function setGlobalColorSoftness(softness: number) {
   if (typeof softness === 'number' && !isNaN(softness)) {
@@ -290,32 +292,18 @@ export function getBasePastelColorInfo(colorStr?: string | null): PastelColor {
   
   if (matched) return matched;
 
-  // Map legacy saturated colors to closest pastel
-  const legacyMap: Record<string, number> = {
-    '#FF4FA3': 0, // Pastel Pink
-    '#EC4899': 1, // Soft Rose
-    '#F59E0B': 2, // Peach
-    '#EF4444': 1, // Soft Rose
-    '#10B981': 6, // Mint
-    '#06B6D4': 8, // Pastel Aqua
-    '#3B82F6': 9, // Powder Blue
-    '#8B5CF6': 11, // Lavender
-    '#4285F4': 9, // Powder Blue
-  };
+  // Generate dynamic soft pastel background, border, and text for ANY application color
+  const bgSoft = interpolateColor(colorStr, '#FFFFFF', 0.92);
+  const borderHex = interpolateColor(colorStr, '#FFFFFF', 0.5);
 
-  if (legacyMap[normalized] !== undefined) {
-    return PASTEL_COLORS[legacyMap[normalized]];
-  }
-
-  // Fallback custom color object with dark readable text
   return {
     id: 'custom',
     name: 'Custom',
     hex: colorStr,
     textHex: '#0F172A',
-    borderHex: '#CBD5E1',
+    borderHex: borderHex,
     dotHex: colorStr,
-    bgSoft: colorStr,
+    bgSoft: bgSoft,
   };
 }
 

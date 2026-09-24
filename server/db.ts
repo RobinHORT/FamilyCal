@@ -431,7 +431,7 @@ export function initDatabase() {
     const familyCols = db.prepare(`PRAGMA table_info(families);`).all() as Array<{ name: string }>;
     const hasColorSoftness = familyCols.some((col) => col.name === 'color_softness');
     if (!hasColorSoftness) {
-      db.prepare(`ALTER TABLE families ADD COLUMN color_softness INTEGER DEFAULT 0;`).run();
+      db.prepare(`ALTER TABLE families ADD COLUMN color_softness INTEGER DEFAULT 85;`).run();
       console.log('Migration applied: added color_softness column to families table.');
     }
 

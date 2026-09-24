@@ -369,24 +369,39 @@ export const TasksView: React.FC = () => {
 
   const getPriorityBadge = (priority: Priority) => {
     switch (priority) {
-      case 'high':
+      case 'high': {
+        const c = getPastelColorInfo('#EF4444');
         return (
-          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200 shrink-0">
+          <span
+            style={{ backgroundColor: c.hex, color: c.textHex, borderColor: c.borderHex }}
+            className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shrink-0"
+          >
             High
           </span>
         );
-      case 'medium':
+      }
+      case 'medium': {
+        const c = getPastelColorInfo('#F59E0B');
         return (
-          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 shrink-0">
+          <span
+            style={{ backgroundColor: c.hex, color: c.textHex, borderColor: c.borderHex }}
+            className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shrink-0"
+          >
             Medium
           </span>
         );
-      case 'low':
+      }
+      case 'low': {
+        const c = getPastelColorInfo('#64748B');
         return (
-          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
+          <span
+            style={{ backgroundColor: c.hex, color: c.textHex, borderColor: c.borderHex }}
+            className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shrink-0"
+          >
             Low
           </span>
         );
+      }
       default:
         return null;
     }
@@ -409,12 +424,12 @@ export const TasksView: React.FC = () => {
         onClick={() => openEditTaskModal(task)}
         style={{
           background: (isOpenTask && !isCompleted)
-            ? '#FEF3C7' // Golden color for open chores!
+            ? getPastelColorInfo('#FEF3C7').hex // Golden color for open chores with Global Softness!
             : (assignmentInfo.isFamilyEvent
                 ? assignmentInfo.segmentedGradient
                 : assignmentInfo.primaryColorInfo.hex),
           borderColor: (isOpenTask && !isCompleted)
-            ? '#FDE68A' // Golden border!
+            ? getPastelColorInfo('#FEF3C7').borderHex // Golden border with Global Softness!
             : assignmentInfo.borderHex,
         }}
         className={`relative p-3.5 sm:p-4 rounded-2xl border shadow-2xs hover:shadow-md active:scale-99 transition-all cursor-pointer flex flex-col justify-between gap-2.5 group overflow-hidden w-full max-w-full min-w-0 box-border ${
