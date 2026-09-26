@@ -117,7 +117,6 @@ docker network inspect cloudflared_bridge >nul 2>&1
 if errorlevel 1 (
 docker network create cloudflared_bridge >nul 2>&1
 
-```
 if errorlevel 1 (
     echo [ERROR] Failed to create shared Docker network.
     pause
@@ -125,7 +124,6 @@ if errorlevel 1 (
 )
 
 echo [OK] Created shared Docker network.
-```
 
 ) else (
 echo [OK] Existing shared Docker network detected and preserved.

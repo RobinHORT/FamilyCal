@@ -999,7 +999,7 @@ export const TasksView: React.FC = () => {
             <div
               id="mobile-month-container"
               {...(!mobileSelectedDate ? swipeHandlers : {})}
-              className="flex md:hidden flex-col flex-1 min-h-0 h-full touch-pan-y w-full max-w-full min-w-0 overflow-hidden"
+              className="flex md:hidden flex-col flex-1 min-h-0 h-full touch-pan-y w-full max-w-full min-w-0 overflow-hidden pb-[calc(3.25rem+env(safe-area-inset-bottom,0px)+0.5rem)] md:pb-0"
             >
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
@@ -1328,7 +1328,7 @@ export const TasksView: React.FC = () => {
           onClick={() => openAddChoiceModal(selectedDate || currentDate)}
           className="md:hidden fixed right-5 w-12 h-12 rounded-full bg-blue-600 text-white shadow-lg flex items-center justify-center hover:bg-blue-700 active:scale-95 transition-all z-40 cursor-pointer border border-blue-500/20 bottom-fab-mobile"
           style={{
-            bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 16px)',
+            bottom: 'calc(3.25rem + env(safe-area-inset-bottom, 0px) + 12px)',
           }}
           title="Add"
         >
