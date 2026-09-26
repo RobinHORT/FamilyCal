@@ -157,7 +157,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
   return (
     <div className={`flex flex-col flex-1 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-2xs ${className}`}>
       {/* 7 Days Header */}
-      <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50/70 text-center text-[11px] sm:text-xs font-bold text-gray-500 py-1.5 sm:py-2 shrink-0 select-none">
+      <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50/70 text-center text-[10px] sm:text-xs font-bold text-gray-500 py-1 sm:py-1.5 shrink-0 select-none">
         <div>Mon</div>
         <div>Tue</div>
         <div>Wed</div>
@@ -320,7 +320,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
           });
 
           return (
-            <div key={weekIdx} className="flex-1 flex flex-col min-h-[96px] md:min-h-0 border-b border-gray-100 last:border-b-0 relative">
+            <div key={weekIdx} className="flex-1 flex flex-col min-h-0 border-b border-gray-100 last:border-b-0 relative overflow-hidden">
               {/* Day Cells Grid */}
               <div className="grid grid-cols-7 flex-1 divide-x divide-gray-100 relative h-full">
                 {weekDays.map((dayDate, colIdx) => {
@@ -336,14 +336,14 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                     <div
                       key={dayDate.toISOString()}
                       onClick={() => onSelectDay(dayDate)}
-                      className={`p-1 sm:p-1.5 flex flex-col justify-between transition-colors cursor-pointer select-none relative min-h-[96px] md:min-h-0 ${
+                      className={`p-0.5 sm:p-1 flex flex-col justify-between transition-colors cursor-pointer select-none relative min-h-0 h-full ${
                         !isCurrentMonth ? 'bg-gray-50/40 text-gray-300' : 'bg-white text-gray-800'
                       } ${isSelected ? 'ring-2 ring-blue-500/80 ring-inset bg-blue-50/20' : ''}`}
                     >
                       {/* Day Number Header */}
-                      <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+                      <div className="flex items-center justify-between">
                         <span
-                          className={`text-[11px] sm:text-xs font-extrabold flex items-center justify-center rounded-lg w-5 h-5 sm:w-6 sm:h-6 ${
+                          className={`text-[10px] sm:text-xs font-extrabold flex items-center justify-center rounded-md sm:rounded-lg w-4.5 h-4.5 sm:w-5 sm:h-5 md:w-6 md:h-6 ${
                             isDayToday
                               ? 'bg-blue-600 text-white shadow-xs'
                               : isCurrentMonth
@@ -356,15 +356,15 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                       </div>
 
                       {/* Spacer for slots */}
-                      <div className="flex-1 my-0.5" />
+                      <div className="flex-1 min-h-0" />
 
                       {/* Overflow +X more link */}
                       {overflowCount > 0 ? (
-                        <div className="text-[10px] sm:text-[11px] font-extrabold text-blue-600 pl-0.5 pt-0.5 relative z-20 pointer-events-none">
+                        <div className="text-[9px] sm:text-[10px] font-extrabold text-blue-600 pl-0.5 leading-none relative z-20 pointer-events-none truncate">
                           +{overflowCount} more
                         </div>
                       ) : (
-                        <div className="h-2" />
+                        <div className="h-1 sm:h-1.5" />
                       )}
                     </div>
                   );
@@ -372,12 +372,12 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
               </div>
 
               {/* Overlay Layer for Spanning Continuous Multi-Day and Single-Day Pills */}
-              <div className="absolute inset-x-0 top-[26px] sm:top-8 px-1 sm:px-1.5 flex flex-col gap-1 pointer-events-none z-10">
+              <div className="absolute inset-x-0 top-[20px] sm:top-[22px] md:top-7 px-0.5 sm:px-1 flex flex-col gap-0.5 sm:gap-1 pointer-events-none z-10">
                 {Array.from({ length: maxVisibleSlots }).map((_, slotIdx) => {
                   const itemsInRow = scheduledSlots.filter((s) => s.slotIdx === slotIdx);
 
                   return (
-                    <div key={slotIdx} className="grid grid-cols-7 gap-x-1 sm:gap-x-1.5 h-5 sm:h-5.5 relative">
+                    <div key={slotIdx} className="grid grid-cols-7 gap-x-0.5 sm:gap-x-1.5 h-3.5 sm:h-4.5 md:h-5 relative">
                       {itemsInRow.map((slotInfo) => {
                         const { type, event, task, startCol, endCol, isStartOfWeek, isEndOfWeek } = slotInfo;
                         const spanCount = endCol - startCol + 1;

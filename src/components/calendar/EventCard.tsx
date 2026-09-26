@@ -233,7 +233,7 @@ export const EventPill: React.FC<EventPillProps> = ({
           : assignmentInfo.primaryColorInfo.hex,
         borderColor: assignmentInfo.borderHex,
       }}
-      className={`relative px-1 sm:px-1.5 py-0.5 text-[10px] sm:text-[11px] font-bold text-slate-900 truncate flex items-center gap-1 shadow-2xs hover:shadow-xs transition-shadow overflow-hidden h-5 sm:h-5.5 ${
+      className={`relative px-1 sm:px-1.5 py-0.5 text-[9px] sm:text-[10px] md:text-[11px] font-bold text-slate-900 truncate flex items-center gap-1 shadow-2xs hover:shadow-xs transition-shadow overflow-hidden h-3.5 sm:h-4.5 md:h-5 ${
         onClick ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none'
       } ${roundedClasses} ${borderClasses} ${marginClasses} ${className}`}
       title={`${event.title} (${assignmentInfo.label} • ${eventType.name})`}
@@ -315,7 +315,7 @@ export const MultiDayEventBar: React.FC<MultiDayEventBarProps> = ({
           : assignmentInfo.primaryColorInfo.hex,
         borderColor: assignmentInfo.borderHex,
       }}
-      className={`relative h-5 sm:h-5.5 flex items-center select-none group z-10 border shadow-2xs hover:shadow-xs transition-shadow ${roundedClass} ${
+      className={`relative h-3.5 sm:h-4.5 md:h-5 flex items-center select-none group z-10 border shadow-2xs hover:shadow-xs transition-shadow ${roundedClass} ${
         onClick ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none'
       } ${className}`}
       title={`${event.title} (${assignmentInfo.label} • ${eventType.name})`}
@@ -334,7 +334,7 @@ export const MultiDayEventBar: React.FC<MultiDayEventBarProps> = ({
 
       {/* Title Layer: displayed only on the first segment */}
       {isFirstSegment && (
-        <div className="relative z-10 px-1.5 sm:px-2 w-full truncate font-extrabold text-slate-900 text-[10px] sm:text-[11px] leading-none">
+        <div className="relative z-10 px-1 sm:px-1.5 w-full truncate font-extrabold text-slate-900 text-[9px] sm:text-[10px] md:text-[11px] leading-none">
           {event.title}
         </div>
       )}
@@ -395,7 +395,7 @@ export const MultiDayTaskBar: React.FC<MultiDayTaskBarProps> = ({
           : assignmentInfo.primaryColorInfo.hex,
         borderColor: assignmentInfo.borderHex,
       }}
-      className={`relative h-5 sm:h-5.5 flex items-center select-none group z-10 border shadow-2xs hover:shadow-xs transition-shadow ${roundedClass} ${
+      className={`relative h-3.5 sm:h-4.5 md:h-5 flex items-center select-none group z-10 border shadow-2xs hover:shadow-xs transition-shadow ${roundedClass} ${
         task.completed ? 'opacity-75' : ''
       } ${
         onClick ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none'
@@ -416,7 +416,7 @@ export const MultiDayTaskBar: React.FC<MultiDayTaskBarProps> = ({
 
       {/* Title & Checkbox Layer: displayed only on the first segment */}
       {isFirstSegment && (
-        <div className="relative z-10 px-1.5 sm:px-2 w-full truncate font-extrabold text-slate-900 text-[10px] sm:text-[11px] leading-none flex items-center gap-1">
+        <div className="relative z-10 px-1 sm:px-1.5 w-full truncate font-extrabold text-slate-900 text-[9px] sm:text-[10px] md:text-[11px] leading-none flex items-center gap-0.5 sm:gap-1">
           <span className="shrink-0 p-0 text-slate-800">
             {task.completed ? (
               <CheckCircle2 className="w-2.5 h-2.5 fill-blue-600 text-white" />

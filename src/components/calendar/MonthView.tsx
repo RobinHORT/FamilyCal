@@ -139,7 +139,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
   };
 
   return (
-    <div id="calendar-month-view" className="flex flex-col flex-1 min-h-0 md:h-full gap-2.5 sm:gap-3 overflow-y-auto md:overflow-hidden relative">
+    <div id="calendar-month-view" className="flex flex-col flex-1 min-h-0 h-full gap-2 sm:gap-3 overflow-hidden relative">
       {/* 1. TABLET / IPAD / PC: SIDE-BY-SIDE (MONTH CALENDAR on Left, SELECTED DAY DAY VIEW on Right) */}
       <div
         id="desktop-month-split"
@@ -188,7 +188,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
       <div
         id="mobile-month-container"
         {...(!mobileSelectedDate ? swipeHandlers : {})}
-        className="flex md:hidden flex-col gap-4 touch-pan-y w-full max-w-full min-w-0"
+        className="flex md:hidden flex-col flex-1 min-h-0 h-full touch-pan-y w-full max-w-full min-w-0 overflow-hidden"
       >
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
@@ -203,7 +203,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
               x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
             }}
             transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
-            className="w-full max-w-full min-w-0"
+            className="flex-1 flex flex-col min-h-0 h-full w-full max-w-full min-w-0 overflow-hidden"
           >
             <MonthGrid
               currentDate={currentDate}
@@ -213,7 +213,8 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
               members={members}
               eventTypes={eventTypes}
               onEditEvent={openEditEventModal}
-              maxVisibleSlots={3}
+              maxVisibleSlots={2}
+              className="h-full flex-1 min-h-0 overflow-hidden"
             />
           </motion.div>
         </AnimatePresence>

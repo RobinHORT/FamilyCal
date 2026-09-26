@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   CheckSquare,
@@ -91,6 +91,7 @@ export const TasksView: React.FC = () => {
     goToPreviousPeriod,
     goToNextPeriod,
     goToToday,
+    navigationDirection,
     toggleTask,
     claimTask,
     unclaimTask,
@@ -112,10 +113,72 @@ export const TasksView: React.FC = () => {
   const canCreateTask = !isViewer && (isAdmin || hasPermission('task_create'));
   const canAddItem = !isViewer && (isAdmin || hasPermission('task_create') || hasPermission('event_create'));
 
-  // Mobile horizontal swipe navigation handlers
+  // Mobile selected day state (null when no overlay is open)
+  const [mobileSelectedDate, setMobileSelectedDate] = useState<Date | null>(null);
+
+  const overlayScrollRef = useRef<HTMLDivElement | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
+  const startedAtTopRef = useRef<boolean>(false);
+
+  // Desktop day selection
+  const handleSelectDesktopDay = (d: Date) => {
+    setSelectedDate(d);
+  };
+
+  // Mobile date tap handler (opens overlay)
+  const handleSelectMobileDay = (d: Date) => {
+    setMobileSelectedDate(d);
+    setSelectedDate(d);
+  };
+
+  // Dismiss mobile overlay & clear selected date
+  const handleDismissMobileOverlay = useCallback(() => {
+    setMobileSelectedDate(null);
+  }, []);
+
+  // Reset mobile overlay when month changes
+  useEffect(() => {
+    setMobileSelectedDate(null);
+  }, [currentDate]);
+
+  // Downward swipe-to-dismiss gesture handling on the mobile overlay
+  const onOverlayTouchStart = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    if (e.touches.length !== 1) return;
+    touchStartYRef.current = e.touches[0].clientY;
+    startedAtTopRef.current = overlayScrollRef.current
+      ? overlayScrollRef.current.scrollTop <= 5
+      : true;
+  };
+
+  const onOverlayTouchMove = (e: React.TouchEvent) => {
+    e.stopPropagation();
+  };
+
+  const onOverlayTouchEnd = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    if (touchStartYRef.current === null) return;
+    const touchEndY = e.changedTouches[0].clientY;
+    const diffY = touchEndY - touchStartYRef.current;
+    const isCurrentlyAtTop = overlayScrollRef.current
+      ? overlayScrollRef.current.scrollTop <= 5
+      : true;
+    touchStartYRef.current = null;
+
+    // If gesture is a downward swipe and started at the top
+    if (diffY > 50 && startedAtTopRef.current && isCurrentlyAtTop) {
+      handleDismissMobileOverlay();
+    }
+  };
+
+  // Mobile horizontal swipe navigation handlers (active only when overlay is closed)
   const swipeHandlers = useCalendarSwipe({
-    onSwipeLeft: goToNextPeriod, // Swipe LEFT -> next month/week/day
-    onSwipeRight: goToPreviousPeriod, // Swipe RIGHT -> previous month/week/day
+    onSwipeLeft: () => {
+      if (!mobileSelectedDate) goToNextPeriod();
+    },
+    onSwipeRight: () => {
+      if (!mobileSelectedDate) goToPreviousPeriod();
+    },
     minDistance: 45,
     maxTime: 700,
     preventScrollToleranceRatio: 1.3,
@@ -643,6 +706,8 @@ export const TasksView: React.FC = () => {
   }
 
   const selectedDayTasks = getTasksForDay(selectedDate);
+  const mobileSelectedDayTasks = mobileSelectedDate ? getTasksForDay(mobileSelectedDate) : [];
+  const monthKey = format(currentDate, 'yyyy-MM');
 
   // Week View Calculation
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
@@ -680,7 +745,7 @@ export const TasksView: React.FC = () => {
   return (
     <div id="tasks-container" className="flex flex-col flex-1 min-h-0 h-full gap-3 sm:gap-4 max-w-7xl mx-auto w-full max-w-full min-w-0 relative">
       {/* 1. Header & Navigation Controls Section (EXACT MATCH to CalendarHeader) */}
-      <div id="calendar-header-section" className="flex flex-col gap-3 pb-3 border-b border-gray-200 shrink-0">
+      <div id="calendar-header-section" className="flex flex-col gap-2 pb-2 border-b border-gray-200 shrink-0">
         {/* Top Bar: Navigation, Title, View Mode & Action (Desktop) */}
         <div className="hidden md:flex items-center justify-between gap-3">
           {/* Left: Date controls */}
@@ -742,13 +807,13 @@ export const TasksView: React.FC = () => {
             </div>
 
             {/* View Mode Switcher */}
-            <div id="tasks-view-mode-tabs" className="flex items-center bg-blue-50/80 p-1 rounded-xl border border-blue-200/60 shadow-2xs">
+            <div id="tasks-view-mode-tabs" className="flex items-center bg-blue-50/80 p-0.5 rounded-xl border border-blue-200/60 shadow-2xs">
               {(['month', 'week', 'day', 'agenda', 'rewards'] as TaskViewMode[]).map((mode) => (
                 <button
                   key={mode}
                   id={`task-mode-${mode}`}
                   onClick={() => setViewMode(mode)}
-                  className={`px-2.5 sm:px-3.5 py-1.5 min-h-[36px] text-xs font-bold capitalize rounded-lg transition-all cursor-pointer ${
+                  className={`px-2.5 sm:px-3 py-1 min-h-[30px] sm:min-h-[32px] text-xs font-bold capitalize rounded-lg transition-all cursor-pointer ${
                     viewMode === mode
                       ? 'bg-blue-600 text-white shadow-xs'
                       : 'text-blue-700 hover:bg-blue-100/60'
@@ -782,8 +847,8 @@ export const TasksView: React.FC = () => {
         </div>
 
         {/* Mobile Controls */}
-        <div className="flex md:hidden flex-col gap-2.5 pt-1">
-          <div className="flex items-center justify-between bg-white p-2 rounded-2xl border border-gray-200 shadow-2xs">
+        <div className="flex md:hidden flex-col gap-2 pt-0.5">
+          <div className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-2xl border border-gray-200 shadow-2xs">
             <div className="flex items-center gap-1.5">
               <button onClick={handlePrev} className="p-1 rounded-lg hover:bg-gray-100 text-gray-600 cursor-pointer">
                 <ChevronLeft className="w-4 h-4" />
@@ -803,12 +868,12 @@ export const TasksView: React.FC = () => {
           </div>
 
           {/* View Switcher Bar on Mobile & Small Tablets */}
-          <div className="flex items-center justify-between bg-blue-50/80 p-1 rounded-xl border border-blue-200/60 gap-1">
+          <div className="flex items-center justify-between bg-blue-50/80 p-0.5 rounded-xl border border-blue-200/60 gap-1">
             {(['month', 'week', 'day', 'agenda', 'rewards'] as TaskViewMode[]).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
-                className={`flex-1 py-2 min-h-[40px] text-xs font-bold capitalize rounded-lg transition-all text-center cursor-pointer ${
+                className={`flex-1 py-1.5 min-h-[32px] text-xs font-bold capitalize rounded-lg transition-all text-center cursor-pointer ${
                   viewMode === mode
                     ? 'bg-blue-600 text-white shadow-2xs'
                     : 'text-blue-700 hover:bg-blue-100/60'
@@ -821,8 +886,8 @@ export const TasksView: React.FC = () => {
         </div>
 
         {/* Horizontal Multi-Layer Filter Bar (Members) */}
-        <div id="tasks-layer-filter-bar" className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 scrollbar-none text-xs">
-          <span className="text-gray-400 font-semibold text-[11px] uppercase tracking-wider whitespace-nowrap flex items-center gap-1 shrink-0 mr-0.5">
+        <div id="tasks-layer-filter-bar" className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+          <span className="text-gray-400 font-semibold text-[10.5px] sm:text-[11px] uppercase tracking-wider whitespace-nowrap flex items-center gap-1 shrink-0 mr-0.5">
             <Users className="w-3.5 h-3.5 text-blue-500" /> Members:
           </span>
 
@@ -840,13 +905,13 @@ export const TasksView: React.FC = () => {
                   borderColor: isSelected ? colorInfo.borderHex : '#E2E8F0',
                   color: isSelected ? colorInfo.textHex : '#94A3B8',
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold transition-all whitespace-nowrap cursor-pointer border shadow-2xs ${
+                className={`flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3 sm:py-0.5 rounded-full font-semibold transition-all whitespace-nowrap cursor-pointer border shadow-2xs ${
                   isSelected ? 'ring-1 ring-black/5 opacity-100' : 'opacity-65 hover:opacity-90 hover:border-gray-300'
                 }`}
                 title={`Toggle ${member.name}'s Tasks`}
               >
                 <span
-                  className="w-2.5 h-2.5 rounded-full border shrink-0"
+                  className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full border shrink-0"
                   style={{
                     backgroundColor: isSelected ? colorInfo.dotHex : '#CBD5E1',
                     borderColor: isSelected ? colorInfo.borderHex : '#94A3B8',
@@ -858,7 +923,7 @@ export const TasksView: React.FC = () => {
                     ★ {member.points}
                   </span>
                 )}
-                {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                {isSelected && <Check className="w-2.5 h-2.5 sm:w-3 sm:h-3 stroke-[3]" />}
               </button>
             );
           })}
@@ -867,17 +932,17 @@ export const TasksView: React.FC = () => {
 
       {/* 2. MAIN TASKS CALENDAR CONTENT CONTAINER (EXACT MATCH to CalendarContainer body) */}
       <div className="flex-1 flex flex-col min-h-0 w-full max-w-full min-w-0">
-        {/* --- MONTH VIEW (SPLIT LAYOUT: Month Grid Left, Day Tasks Right) --- */}
+        {/* --- MONTH VIEW (SPLIT LAYOUT: Month Grid Left, Day Tasks Right on Desktop; Full Month Grid + Floating Sheet on Mobile) --- */}
         {viewMode === 'month' && (
-          <div id="tasks-month-view" className="flex flex-col flex-1 min-h-0 md:h-full gap-2.5 sm:gap-3 overflow-y-auto md:overflow-hidden">
+          <div id="tasks-month-view" className="flex flex-col flex-1 min-h-0 h-full gap-2 sm:gap-3 overflow-hidden relative">
             {/* Desktop / Tablet Split Layout */}
-            <div id="desktop-month-split" className="hidden md:grid md:grid-cols-12 gap-3.5 lg:gap-4 flex-1 items-stretch min-h-0 h-full touch-pan-y overflow-hidden">
+            <div id="desktop-month-split" {...swipeHandlers} className="hidden md:grid md:grid-cols-12 gap-3.5 lg:gap-4 flex-1 items-stretch min-h-0 h-full touch-pan-y overflow-hidden">
               {/* Left: MONTH CALENDAR (Locked, fully visible, non-scrollable) */}
               <div className="md:col-span-7 lg:col-span-7 xl:col-span-8 flex flex-col min-w-0 h-full min-h-0 overflow-hidden">
                 <MonthGrid
                   currentDate={currentDate}
                   selectedDay={selectedDate}
-                  onSelectDay={setSelectedDate}
+                  onSelectDay={handleSelectDesktopDay}
                   filteredEvents={[]}
                   tasks={visibleTasks}
                   members={members}
@@ -933,42 +998,103 @@ export const TasksView: React.FC = () => {
             {/* Mobile Month View */}
             <div
               id="mobile-month-container"
-              {...swipeHandlers}
-              className="flex md:hidden flex-col gap-4 pb-calendar-mobile touch-pan-y w-full max-w-full min-w-0"
-              style={{
-                paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 64px)',
-              }}
+              {...(!mobileSelectedDate ? swipeHandlers : {})}
+              className="flex md:hidden flex-col flex-1 min-h-0 h-full touch-pan-y w-full max-w-full min-w-0 overflow-hidden"
             >
-              {/* Month Grid Card */}
-              <MonthGrid
-                currentDate={currentDate}
-                selectedDay={selectedDate}
-                onSelectDay={setSelectedDate}
-                filteredEvents={[]}
-                tasks={visibleTasks}
-                members={members}
-                eventTypes={[]}
-                onEditTask={openEditTaskModal}
-                maxVisibleSlots={3}
-              />
-
-              {/* Selected Day Agenda Section Below */}
-              <div className="flex flex-col gap-3 pt-1 w-full max-w-full min-w-0">
-                <h3 className="text-base font-bold text-slate-900 px-1 font-serif tracking-tight truncate">
-                  {format(selectedDate, 'EEEE, d MMMM')}
-                </h3>
-
-                <div className="flex flex-col gap-2.5 w-full max-w-full min-w-0">
-                  {selectedDayTasks.length === 0 ? (
-                    <div className="py-6 px-4 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium text-center shadow-2xs w-full">
-                      No tasks scheduled for this date
-                    </div>
-                  ) : (
-                    selectedDayTasks.map((t) => renderTaskCard(t))
-                  )}
-                </div>
-              </div>
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={monthKey}
+                  initial={{
+                    opacity: 0,
+                    x: navigationDirection > 0 ? 20 : navigationDirection < 0 ? -20 : 0,
+                  }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{
+                    opacity: 0,
+                    x: navigationDirection > 0 ? -20 : navigationDirection < 0 ? 20 : 0,
+                  }}
+                  transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
+                  className="flex-1 flex flex-col min-h-0 h-full w-full max-w-full min-w-0 overflow-hidden"
+                >
+                  <MonthGrid
+                    currentDate={currentDate}
+                    selectedDay={mobileSelectedDate}
+                    onSelectDay={handleSelectMobileDay}
+                    filteredEvents={[]}
+                    tasks={visibleTasks}
+                    members={members}
+                    eventTypes={[]}
+                    onEditTask={openEditTaskModal}
+                    maxVisibleSlots={2}
+                    className="h-full flex-1 min-h-0 overflow-hidden"
+                  />
+                </motion.div>
+              </AnimatePresence>
             </div>
+
+            {/* Mobile Floating Day View Overlay (Occupies bottom half of phone screen) */}
+            <AnimatePresence>
+              {mobileSelectedDate && (
+                <>
+                  {/* Backdrop: Captures outside taps to dismiss overlay & deselect date */}
+                  <motion.div
+                    key="mobile-overlay-backdrop"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    onClick={handleDismissMobileOverlay}
+                    className="md:hidden fixed inset-0 z-40 bg-black/20 backdrop-blur-[0.5px]"
+                  />
+
+                  {/* Bottom-Half Floating Sheet (Covers bottom navigation completely) */}
+                  <motion.div
+                    key="mobile-overlay-sheet"
+                    initial={{ y: '100%' }}
+                    animate={{ y: 0 }}
+                    exit={{ y: '100%' }}
+                    transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                    onTouchStart={onOverlayTouchStart}
+                    onTouchMove={onOverlayTouchMove}
+                    onTouchEnd={onOverlayTouchEnd}
+                    className="md:hidden fixed inset-x-0 bottom-0 z-50 h-[50vh] max-h-[60vh] flex flex-col bg-white rounded-t-3xl border-t border-gray-200 shadow-2xl overflow-hidden"
+                  >
+                    {/* Subtle grab handle pill at top */}
+                    <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mt-2.5 mb-1 shrink-0" />
+
+                    {/* Selected Day Title Bar */}
+                    <div className="flex items-center justify-between px-4 py-1.5 border-b border-gray-100 shrink-0">
+                      <h3 className="text-base font-bold text-slate-900 font-serif tracking-tight truncate">
+                        {format(mobileSelectedDate, 'EEEE, d MMMM')}
+                      </h3>
+                      {canCreateTask && (
+                        <button
+                          onClick={() => openCreateTaskModal(mobileSelectedDate)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer shrink-0"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Add Task</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Vertically Scrollable Tasks List */}
+                    <div
+                      ref={overlayScrollRef}
+                      className="flex-1 overflow-y-auto p-3.5 space-y-2.5 min-h-0 overscroll-contain pb-[calc(1.5rem+env(safe-area-inset-bottom,0px)+16px)]"
+                    >
+                      {mobileSelectedDayTasks.length === 0 ? (
+                        <div className="py-6 px-4 rounded-2xl bg-white border border-dashed border-gray-200 text-gray-400 text-xs font-medium text-center shadow-2xs w-full">
+                          No tasks scheduled for this date
+                        </div>
+                      ) : (
+                        mobileSelectedDayTasks.map((t) => renderTaskCard(t))
+                      )}
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </div>
         )}
 

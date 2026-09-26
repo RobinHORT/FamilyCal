@@ -45,7 +45,7 @@ export function CalendarContainer({ isViewer: isViewerProp }: CalendarContainerP
           onClick={() => openAddChoiceModal(selectedCalendarDate || currentDate)}
           className="md:hidden fixed right-5 w-12 h-12 rounded-full bg-blue-600 text-white shadow-lg flex items-center justify-center hover:bg-blue-700 active:scale-95 transition-all z-40 cursor-pointer border border-blue-500/20 bottom-fab-mobile"
           style={{
-            bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 16px)',
+            bottom: 'calc(3.25rem + env(safe-area-inset-bottom, 0px) + 12px)',
           }}
           title="Add"
         >

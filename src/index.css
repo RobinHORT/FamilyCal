@@ -8,15 +8,15 @@
     padding-top: env(safe-area-inset-top, 0px);
   }
   .pb-calendar-mobile {
-    padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 64px);
+    padding-bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px) + 48px);
   }
   .bottom-fab-mobile {
-    bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 16px);
+    bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px) + 12px);
   }
 }
 
 .main-stage-scroll {
-  padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 64px);
+  padding-bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px) + 48px);
 }
 @media (min-width: 768px) {
   .main-stage-scroll {
