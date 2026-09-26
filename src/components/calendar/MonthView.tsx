@@ -188,7 +188,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
       <div
         id="mobile-month-container"
         {...(!mobileSelectedDate ? swipeHandlers : {})}
-        className="flex md:hidden flex-col gap-4 touch-pan-y w-full max-w-full min-w-0 pb-[calc(4rem+env(safe-area-inset-bottom,0px)+16px)]"
+        className="flex md:hidden flex-col gap-4 touch-pan-y w-full max-w-full min-w-0"
       >
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
