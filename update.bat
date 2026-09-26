@@ -1,6 +1,6 @@
 ```bat
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 
 :: 1. Verify working directory
 if not exist "docker-compose.yml" (
@@ -15,7 +15,7 @@ if not exist "docker-compose.yml" (
 echo [1/7] Updating code from GitHub...
 
 where git >nul 2>&1
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo [ERROR] Git is not installed or not available in PATH.
     pause
     exit /b 1
@@ -33,7 +33,7 @@ echo.
 
 echo Fetching latest GitHub changes...
 git fetch origin
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo.
     echo [ERROR] Could not fetch from GitHub.
     echo Deployment stopped. Existing production container was NOT changed.
@@ -45,18 +45,15 @@ if !errorlevel! neq 0 (
 echo.
 echo Synchronising local code with GitHub main...
 
-:: Make sure the deployment uses exactly the GitHub main branch.
-:: WARNING: this discards uncommitted LOCAL changes in the deployment folder.
-:: It does NOT touch Docker persistent data.
 git checkout main
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo [ERROR] Could not switch to main branch.
     pause
     exit /b 1
 )
 
 git reset --hard origin/main
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo.
     echo [ERROR] Could not synchronise with origin/main.
     echo Deployment stopped. Existing production container was NOT changed.
@@ -66,7 +63,7 @@ if !errorlevel! neq 0 (
 )
 
 git clean -fd
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo.
     echo [ERROR] Could not clean old repository files.
     echo Deployment stopped.
@@ -82,14 +79,14 @@ echo.
 echo [2/7] Checking Docker engine status...
 
 where docker >nul 2>&1
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo [ERROR] Docker is not installed or not in PATH.
     pause
     exit /b 1
 )
 
 docker info >nul 2>&1
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo [ERROR] Docker Desktop is not currently running.
     pause
     exit /b 1
@@ -100,18 +97,17 @@ echo [OK] Docker daemon is running.
 set "DOCKER_COMPOSE_CMD=docker compose"
 
 docker compose version >nul 2>&1
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     docker-compose version >nul 2>&1
-    if !errorlevel! equ 0 (
-        set "DOCKER_COMPOSE_CMD=docker-compose"
-    ) else (
+    if errorlevel 1 (
         echo [ERROR] Docker Compose not found.
         pause
         exit /b 1
     )
+    set "DOCKER_COMPOSE_CMD=docker-compose"
 )
 
-echo [OK] Using '!DOCKER_COMPOSE_CMD!'.
+echo [OK] Using '%DOCKER_COMPOSE_CMD%'.
 echo.
 
 :: 4. Cloudflare Bridge Network
@@ -119,16 +115,16 @@ echo [3/7] Verifying Docker network 'cloudflared_bridge'...
 
 docker network inspect cloudflared_bridge >nul 2>&1
 
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     docker network create cloudflared_bridge >nul 2>&1
 
-    if !errorlevel! equ 0 (
-        echo [OK] Created shared Docker network.
-    ) else (
+    if errorlevel 1 (
         echo [ERROR] Failed to create Docker network.
         pause
         exit /b 1
     )
+
+    echo [OK] Created shared Docker network.
 ) else (
     echo [OK] Existing Docker network detected and preserved.
 )
@@ -162,7 +158,7 @@ echo [5/7] Building production image from GitHub code...
 echo.
 
 %DOCKER_COMPOSE_CMD% build
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo.
     echo [ERROR] Docker build failed.
     echo Existing production container was NOT changed.
@@ -179,7 +175,7 @@ echo [6/7] Deploying newly built image...
 echo.
 
 %DOCKER_COMPOSE_CMD% down
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo.
     echo [ERROR] Failed to stop existing services.
     pause
@@ -187,7 +183,7 @@ if !errorlevel! neq 0 (
 )
 
 %DOCKER_COMPOSE_CMD% up -d --force-recreate --remove-orphans
-if !errorlevel! neq 0 (
+if errorlevel 1 (
     echo.
     echo [ERROR] Failed to start production services.
     pause
@@ -206,29 +202,31 @@ set "ELAPSED=0"
 
 :HEALTH_LOOP
 
-if !ELAPSED! geq !HEALTH_TIMEOUT! (
-    echo.
-    echo [WARNING] Health check timed out after !HEALTH_TIMEOUT! seconds.
-    echo.
-    %DOCKER_COMPOSE_CMD% ps
-    echo.
-    %DOCKER_COMPOSE_CMD% logs --tail=25
-    echo.
-    pause
-    exit /b 1
-)
+if %ELAPSED% GEQ %HEALTH_TIMEOUT% goto HEALTH_TIMEOUT
 
 docker exec yimly-assistant curl -s -f http://localhost:3000/api/setup/status >nul 2>&1
 
-if !errorlevel! equ 0 (
-    goto HEALTHY
-)
+if not errorlevel 1 goto HEALTHY
 
 timeout /t 2 /nobreak >nul
-set /a ELAPSED+=2
 
-echo Waiting for backend... (!ELAPSED!s/!HEALTH_TIMEOUT!s)
+set /a ELAPSED=%ELAPSED%+2
+
+echo Waiting for backend... (%ELAPSED%s/%HEALTH_TIMEOUT%s)
+
 goto HEALTH_LOOP
+
+:HEALTH_TIMEOUT
+
+echo.
+echo [WARNING] Health check timed out after %HEALTH_TIMEOUT% seconds.
+echo.
+%DOCKER_COMPOSE_CMD% ps
+echo.
+%DOCKER_COMPOSE_CMD% logs --tail=25
+echo.
+pause
+exit /b 1
 
 :HEALTHY
 
