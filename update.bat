@@ -1,4 +1,3 @@
-```bat
 @echo off
 setlocal EnableExtensions
 
@@ -253,4 +252,3 @@ echo.
 
 pause
 endlocal
-```
