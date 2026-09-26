@@ -6,6 +6,7 @@ import { useAuth } from './AuthContext';
 import { useFamily } from './FamilyContext';
 import { useTaskReminderScheduler } from '../hooks/useTaskReminderScheduler';
 import { getHouseholdTodayDateString } from '../utils/taskPermissions';
+import { getTimezoneBadge, DEFAULT_UTC_OFFSET_LABEL } from '../utils/timezoneData';
 
 interface CalendarContextType {
   calendars: Calendar[];
@@ -117,13 +118,13 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [navigationDirection, setNavigationDirection] = useState<number>(0);
 
-  // Timezone state: Viewing Timezone (top nav badge) defaults to household Main Timezone
+  // Timezone state: Viewing Timezone (top nav badge) defaults to household Timezone offset
   const [viewingTimezone, setViewingTimezoneState] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('familycal_viewing_timezone');
-      if (saved) return saved;
+      if (saved) return getTimezoneBadge(saved);
     }
-    return 'Australia/Melbourne';
+    return DEFAULT_UTC_OFFSET_LABEL;
   });
   const [isTimezonePickerOpen, setIsTimezonePickerOpen] = useState(false);
 
@@ -132,15 +133,16 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     if (family?.timezone && typeof window !== 'undefined') {
       const saved = localStorage.getItem('familycal_viewing_timezone');
       if (!saved) {
-        setViewingTimezoneState(family.timezone);
+        setViewingTimezoneState(getTimezoneBadge(family.timezone));
       }
     }
   }, [family?.timezone]);
 
   const setViewingTimezone = useCallback((tz: string) => {
-    setViewingTimezoneState(tz);
+    const formatted = getTimezoneBadge(tz);
+    setViewingTimezoneState(formatted);
     if (typeof window !== 'undefined') {
-      localStorage.setItem('familycal_viewing_timezone', tz);
+      localStorage.setItem('familycal_viewing_timezone', formatted);
     }
   }, []);
 

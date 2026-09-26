@@ -124,13 +124,13 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
 
       {/* Right side controls: Viewing Timezone Badge + Profile avatar or Log Out for Viewer */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Viewing Timezone Badge (Compact 3-letter city code, e.g. MEL, LAX, SUV) */}
+        {/* Viewing Timezone Badge (e.g. UTC +10, UTC -7) */}
         <button
           id="viewing-timezone-badge"
           type="button"
           onClick={openTimezonePicker}
           className="px-2.5 py-1 text-[11px] sm:text-xs font-black tracking-wider bg-slate-100 hover:bg-blue-50 hover:text-blue-600 border border-slate-200/80 hover:border-blue-200 text-slate-700 rounded-xl transition-all cursor-pointer shadow-2xs shrink-0 active:scale-95"
-          title={`Viewing Timezone: ${tzLabel} • Tap to change`}
+          title={`Timezone: ${tzBadge} • Tap to change`}
         >
           {tzBadge}
         </button>

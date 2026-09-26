@@ -3,85 +3,201 @@ import React, { useRef, useCallback } from 'react';
 interface UseCalendarSwipeOptions {
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
+  onSwipeUp?: () => void;
+  onSwipeDown?: () => void;
   minDistance?: number;
   maxTime?: number;
   preventScrollToleranceRatio?: number;
+  requireBottomForSwipeUp?: boolean;
+  requireTopForSwipeDown?: boolean;
+}
+
+/**
+ * Checks if a given element or any of its scrollable parent containers
+ * are scrolled to the bottom of their scrollable content.
+ */
+function checkIsAtBottom(element: HTMLElement | null): boolean {
+  if (!element) return true;
+
+  // Check element and its parent hierarchy
+  let current: HTMLElement | null = element;
+  while (current && current !== document.body && current !== document.documentElement) {
+    const style = window.getComputedStyle(current);
+    const overflowY = style.overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') {
+      if (current.scrollHeight > current.clientHeight + 8) {
+        const atBottom = current.scrollTop + current.clientHeight >= current.scrollHeight - 16;
+        if (!atBottom) return false;
+      }
+    }
+    current = current.parentElement;
+  }
+
+  // Check known app-level scroll containers
+  const mainStage = document.getElementById('main-stage-content');
+  if (mainStage && mainStage.scrollHeight > mainStage.clientHeight + 8) {
+    const atBottom = mainStage.scrollTop + mainStage.clientHeight >= mainStage.scrollHeight - 16;
+    if (!atBottom) return false;
+  }
+
+  const monthView = document.getElementById('calendar-month-view');
+  if (monthView && monthView.scrollHeight > monthView.clientHeight + 8) {
+    const atBottom = monthView.scrollTop + monthView.clientHeight >= monthView.scrollHeight - 16;
+    if (!atBottom) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Checks if a given element or any of its scrollable parent containers
+ * are at the top of their scrollable content.
+ */
+function checkIsAtTop(element: HTMLElement | null): boolean {
+  if (!element) return true;
+
+  let current: HTMLElement | null = element;
+  while (current && current !== document.body && current !== document.documentElement) {
+    const style = window.getComputedStyle(current);
+    const overflowY = style.overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') {
+      if (current.scrollTop > 12) {
+        return false;
+      }
+    }
+    current = current.parentElement;
+  }
+
+  const mainStage = document.getElementById('main-stage-content');
+  if (mainStage && mainStage.scrollTop > 12) {
+    return false;
+  }
+
+  const monthView = document.getElementById('calendar-month-view');
+  if (monthView && monthView.scrollTop > 12) {
+    return false;
+  }
+
+  return true;
 }
 
 export function useCalendarSwipe({
   onSwipeLeft,
   onSwipeRight,
-  minDistance = 50,
+  onSwipeUp,
+  onSwipeDown,
+  minDistance = 45,
   maxTime = 700,
-  preventScrollToleranceRatio = 1.3,
+  preventScrollToleranceRatio = 1.2,
+  requireBottomForSwipeUp = false,
+  requireTopForSwipeDown = false,
 }: UseCalendarSwipeOptions) {
-  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
-  const isVerticalScrollRef = useRef<boolean>(false);
+  const touchStartRef = useRef<{
+    x: number;
+    y: number;
+    time: number;
+    target: HTMLElement | null;
+    atBottom: boolean;
+    atTop: boolean;
+  } | null>(null);
 
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length !== 1) return;
-    touchStartRef.current = {
-      x: e.touches[0].clientX,
-      y: e.touches[0].clientY,
-      time: Date.now(),
-    };
-    isVerticalScrollRef.current = false;
-  }, []);
+  const onTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const target = e.target as HTMLElement | null;
+      touchStartRef.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+        time: Date.now(),
+        target,
+        atBottom: requireBottomForSwipeUp ? checkIsAtBottom(target) : true,
+        atTop: requireTopForSwipeDown ? checkIsAtTop(target) : true,
+      };
+    },
+    [requireBottomForSwipeUp, requireTopForSwipeDown]
+  );
 
   const onTouchMove = useCallback((e: React.TouchEvent) => {
+    // Touch tracking continues without prematurely aborting
     if (!touchStartRef.current || e.touches.length !== 1) return;
-    const currentX = e.touches[0].clientX;
-    const currentY = e.touches[0].clientY;
-    const diffX = currentX - touchStartRef.current.x;
-    const diffY = currentY - touchStartRef.current.y;
-
-    // If movement is predominantly vertical, flag it as scrolling so horizontal swipe is aborted
-    if (Math.abs(diffY) > Math.abs(diffX) * 1.1 && Math.abs(diffY) > 8) {
-      isVerticalScrollRef.current = true;
-    }
   }, []);
 
   const onTouchEnd = useCallback(
     (e: React.TouchEvent) => {
       if (!touchStartRef.current) return;
 
-      // If it was identified as vertical scrolling, do not trigger swipe
-      if (isVerticalScrollRef.current) {
-        touchStartRef.current = null;
-        isVerticalScrollRef.current = false;
-        return;
-      }
+      const { x: startX, y: startY, time: startTime, target, atBottom: startedAtBottom, atTop: startedAtTop } =
+        touchStartRef.current;
+
+      touchStartRef.current = null;
 
       const endX = e.changedTouches[0].clientX;
       const endY = e.changedTouches[0].clientY;
-      const diffX = endX - touchStartRef.current.x;
-      const diffY = endY - touchStartRef.current.y;
-      const elapsed = Date.now() - touchStartRef.current.time;
+      const diffX = endX - startX;
+      const diffY = endY - startY;
+      const elapsed = Date.now() - startTime;
 
-      touchStartRef.current = null;
-      isVerticalScrollRef.current = false;
+      if (elapsed > maxTime) return;
 
-      // Check thresholds
-      const isHorizontal = Math.abs(diffX) > Math.abs(diffY) * preventScrollToleranceRatio;
-      const isSufficientDistance = Math.abs(diffX) >= minDistance;
-      const isWithinTime = elapsed <= maxTime;
+      const absX = Math.abs(diffX);
+      const absY = Math.abs(diffY);
 
-      if (isHorizontal && isSufficientDistance && isWithinTime) {
+      if (absX < minDistance && absY < minDistance) return;
+
+      // Determine predominant gesture direction
+      const isHorizontal = absX > absY * preventScrollToleranceRatio;
+      const isVertical = absY > absX * preventScrollToleranceRatio;
+
+      // 1. Horizontal Swipes (Left = Next, Right = Previous)
+      if (isHorizontal && absX >= minDistance) {
         if (diffX < 0 && onSwipeLeft) {
-          // Swiped left -> move forward / next period
           onSwipeLeft();
         } else if (diffX > 0 && onSwipeRight) {
-          // Swiped right -> move backward / previous period
           onSwipeRight();
+        }
+        return;
+      }
+
+      // 2. Vertical Swipes (Up = Next, Down = Previous)
+      if (isVertical && absY >= minDistance) {
+        if (diffY < 0 && onSwipeUp) {
+          // Swipe UP (finger moves up) -> Next Period
+          if (requireBottomForSwipeUp) {
+            const currentlyAtBottom = checkIsAtBottom(target);
+            if (startedAtBottom && currentlyAtBottom) {
+              onSwipeUp();
+            }
+          } else {
+            onSwipeUp();
+          }
+        } else if (diffY > 0 && onSwipeDown) {
+          // Swipe DOWN (finger moves down) -> Previous Period
+          if (requireTopForSwipeDown) {
+            const currentlyAtTop = checkIsAtTop(target);
+            if (startedAtTop && currentlyAtTop) {
+              onSwipeDown();
+            }
+          } else {
+            onSwipeDown();
+          }
         }
       }
     },
-    [onSwipeLeft, onSwipeRight, minDistance, maxTime, preventScrollToleranceRatio]
+    [
+      onSwipeLeft,
+      onSwipeRight,
+      onSwipeUp,
+      onSwipeDown,
+      minDistance,
+      maxTime,
+      preventScrollToleranceRatio,
+      requireBottomForSwipeUp,
+      requireTopForSwipeDown,
+    ]
   );
 
   const onTouchCancel = useCallback(() => {
     touchStartRef.current = null;
-    isVerticalScrollRef.current = false;
   }, []);
 
   return {

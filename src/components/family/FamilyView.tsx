@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { MemberGoogleCalendarSection } from './MemberGoogleCalendarSection';
-import { getTimezoneBadge, getTimezoneDisplayLabel } from '../../utils/timezoneData';
+import { getTimezoneBadge, getTimezoneDisplayLabel, getTimezoneInfo } from '../../utils/timezoneData';
 import { TimezonePickerModal } from '../common/TimezonePickerModal';
 import {
   FamilyMember,
@@ -395,7 +395,7 @@ export const FamilyView: React.FC = () => {
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1.5">
                 <Globe className="w-3.5 h-3.5 text-gray-500" />
-                <span>Main Timezone</span>
+                <span>Timezone</span>
               </label>
               <button
                 type="button"
@@ -407,12 +407,11 @@ export const FamilyView: React.FC = () => {
                   <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 text-[10px] font-black tracking-wider">
                     {getTimezoneBadge(householdTimezone)}
                   </span>
-                  <span>{getTimezoneDisplayLabel(householdTimezone)}</span>
                 </div>
                 <span className="text-xs text-blue-600 font-semibold">Change</span>
               </button>
               <p className="text-[11px] text-gray-500 mt-1">
-                Default timezone used when creating new events and authoritative timezone for household tasks.
+                Default timezone offset used when creating new events and displaying calendar times.
               </p>
             </div>
 
@@ -490,7 +489,7 @@ export const FamilyView: React.FC = () => {
             <p className="text-xs text-gray-500 mt-1.5 flex flex-wrap items-center gap-2">
               <span className="flex items-center gap-1 font-medium text-gray-700">
                 <Globe className="w-3.5 h-3.5 text-pink-600" />
-                <span>Main Timezone: {getTimezoneInfo(family?.timezone || 'Australia/Melbourne').city} ({getTimezoneInfo(family?.timezone || 'Australia/Melbourne').code})</span>
+                <span>Timezone: {getTimezoneBadge(family?.timezone || 'UTC +10')}</span>
               </span>
               <span>•</span>
               <span>{members.length} Household {members.length === 1 ? 'Member' : 'Members'}</span>
@@ -1289,8 +1288,8 @@ export const FamilyView: React.FC = () => {
         onClose={() => setIsMainTzPickerOpen(false)}
         selectedTimezone={householdTimezone}
         onSelectTimezone={(tz) => setHouseholdTimezone(tz)}
-        title="Select Main Timezone"
-        subtitle="Authoritative timezone used as default for new events"
+        title="Timezone"
+        subtitle="Select the household UTC offset for displaying calendar times"
       />
     </div>
   );

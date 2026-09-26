@@ -1,10 +1,8 @@
 import React from 'react';
-import { format } from 'date-fns';
 import { CalendarEvent, EventType, FamilyMember, Task } from '../../types';
 import { getEventAssignmentInfo, getEventTypeInfo, getPastelColorInfo } from '../../utils/colors';
 import { useCalendar } from '../../context/CalendarContext';
-import { useFamily } from '../../context/FamilyContext';
-import { formatTimeInTimezone, getTimezoneBadge, getTimezoneDisplayLabel } from '../../utils/timezoneData';
+import { formatTimeInTimezone } from '../../utils/timezoneData';
 import { Users, Clock, MapPin, Repeat, Globe, CheckCircle2, Circle } from 'lucide-react';
 
 interface EventCardProps {
@@ -27,13 +25,8 @@ export const EventCard: React.FC<EventCardProps> = ({
   showLocation = true,
 }) => {
   const { viewingTimezone } = useCalendar();
-  const { family } = useFamily();
   const assignmentInfo = getEventAssignmentInfo(event, members);
   const eventType = getEventTypeInfo(event.title, event.event_type, eventTypes);
-
-  const eventTimezone = event.timezone || family?.timezone || 'Australia/Melbourne';
-  const eventTzBadge = getTimezoneBadge(eventTimezone);
-  const eventTzLabel = getTimezoneDisplayLabel(eventTimezone);
 
   const startFormatted = formatTimeInTimezone(event.start_time, viewingTimezone);
   const endFormatted = formatTimeInTimezone(event.end_time, viewingTimezone);
@@ -161,14 +154,6 @@ export const EventCard: React.FC<EventCardProps> = ({
                 ? 'All Day'
                 : `${startFormatted} – ${endFormatted}`}
             </span>
-          </span>
-
-          {/* Event Timezone City Badge */}
-          <span
-            className="px-1.5 py-0.5 text-[9px] sm:text-[10px] font-black tracking-wider bg-slate-100/90 border border-slate-200/80 text-slate-700 rounded-md shrink-0 shadow-2xs"
-            title={`Event Timezone: ${eventTzLabel}`}
-          >
-            {eventTzBadge}
           </span>
 
           {showLocation && event.location && (

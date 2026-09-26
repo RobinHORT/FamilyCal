@@ -76,13 +76,15 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
 
   const canCreateEvent = !isViewer && (isAdmin || hasPermission('event_create'));
 
-  // Mobile / touch horizontal swipe navigation handlers
+  // Mobile / touch horizontal and vertical swipe navigation handlers
   const swipeHandlers = useCalendarSwipe({
     onSwipeLeft: goToNextPeriod, // Swipe LEFT -> next week
     onSwipeRight: goToPreviousPeriod, // Swipe RIGHT -> previous week
+    onSwipeUp: goToNextPeriod, // Swipe UP -> next week
+    onSwipeDown: goToPreviousPeriod, // Swipe DOWN -> previous week
     minDistance: 45,
     maxTime: 700,
-    preventScrollToleranceRatio: 1.3,
+    preventScrollToleranceRatio: 1.2,
   });
 
   // Week starts on Monday (weekStartsOn: 1)

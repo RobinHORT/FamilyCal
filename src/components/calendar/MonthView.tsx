@@ -63,13 +63,17 @@ export const MonthView: React.FC<MonthViewProps> = ({ isViewer: isViewerProp }) 
     }
   }, [currentDate]);
 
-  // Mobile horizontal swipe navigation handlers
+  // Mobile & tablet horizontal and vertical swipe navigation handlers
   const swipeHandlers = useCalendarSwipe({
     onSwipeLeft: goToNextPeriod, // Swipe LEFT -> next month
     onSwipeRight: goToPreviousPeriod, // Swipe RIGHT -> previous month
+    onSwipeUp: goToNextPeriod, // Swipe UP -> next month (when scrolled through all cards to bottom)
+    onSwipeDown: goToPreviousPeriod, // Swipe DOWN -> previous month (when at top)
+    requireBottomForSwipeUp: true,
+    requireTopForSwipeDown: true,
     minDistance: 45,
     maxTime: 700,
-    preventScrollToleranceRatio: 1.3,
+    preventScrollToleranceRatio: 1.2,
   });
 
   const getEventsForDay = (dayDate: Date) => {

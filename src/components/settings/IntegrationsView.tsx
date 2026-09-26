@@ -662,7 +662,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab =
 
             <div className="p-3.5 rounded-2xl bg-gray-50 border border-gray-200">
               <span className="text-gray-500 block mb-1">App Version</span>
-              <span className="font-bold text-pink-700 font-mono text-sm">v{systemStats.version}</span>
+              <span className="font-bold text-pink-700 font-mono text-sm">v2.0.0</span>
             </div>
           </div>
         </div>

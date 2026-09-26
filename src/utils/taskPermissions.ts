@@ -1,4 +1,5 @@
 import { Task } from '../types';
+import { getEffectiveTodayDate } from './timezoneData';
 
 export function getTaskAssignedMemberIds(task: Task): string[] {
   if (Array.isArray(task.assigned_member_ids) && task.assigned_member_ids.length > 0) {
@@ -11,50 +12,10 @@ export function getTaskAssignedMemberIds(task: Task): string[] {
 }
 
 /**
- * Returns today's date formatted as YYYY-MM-DD in the household's configured local timezone.
- * Defaults to 'Australia/Melbourne'.
+ * Returns today's date formatted as YYYY-MM-DD in the household's configured UTC offset.
  */
 export function getHouseholdTodayDateString(householdTimezone?: string | null): string {
-  const tz = householdTimezone || 'Australia/Melbourne';
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).formatToParts(new Date());
-
-    const year = parts.find((p) => p.type === 'year')?.value;
-    const month = parts.find((p) => p.type === 'month')?.value;
-    const day = parts.find((p) => p.type === 'day')?.value;
-
-    if (year && month && day) {
-      return `${year}-${month}-${day}`;
-    }
-  } catch {
-    // Fallback if invalid timezone
-    try {
-      const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Australia/Melbourne',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).formatToParts(new Date());
-      const year = parts.find((p) => p.type === 'year')?.value;
-      const month = parts.find((p) => p.type === 'month')?.value;
-      const day = parts.find((p) => p.type === 'day')?.value;
-      if (year && month && day) {
-        return `${year}-${month}-${day}`;
-      }
-    } catch {}
-  }
-
-  // Fallback to local system calendar date
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return getEffectiveTodayDate(householdTimezone);
 }
 
 /**

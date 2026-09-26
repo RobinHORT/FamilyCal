@@ -54,9 +54,11 @@ export const DayView: React.FC<DayViewProps> = ({
   const swipeHandlers = useCalendarSwipe({
     onSwipeLeft: goToNextPeriod,
     onSwipeRight: goToPreviousPeriod,
+    onSwipeUp: goToNextPeriod,
+    onSwipeDown: goToPreviousPeriod,
     minDistance: 45,
     maxTime: 700,
-    preventScrollToleranceRatio: 1.3,
+    preventScrollToleranceRatio: 1.2,
   });
 
   const dayEvents = filteredEvents.filter((evt) => isEventOnDay(evt, activeDate, viewingTimezone));

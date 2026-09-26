@@ -3136,7 +3136,7 @@ router.get('/system/stats', authenticateToken, (req: AuthRequest, res: Response)
 
     res.json({
       status: 'healthy',
-      version: '1.0.0',
+      version: '2.0.0',
       familyId,
       members: memberCount,
       events: eventCount,

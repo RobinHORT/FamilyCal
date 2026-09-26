@@ -45,9 +45,11 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
   const swipeHandlers = useCalendarSwipe({
     onSwipeLeft: goToNextPeriod,
     onSwipeRight: goToPreviousPeriod,
+    onSwipeUp: goToNextPeriod,
+    onSwipeDown: goToPreviousPeriod,
     minDistance: 45,
     maxTime: 700,
-    preventScrollToleranceRatio: 1.3,
+    preventScrollToleranceRatio: 1.2,
   });
 
   // Filter events: for viewer date navigation when no search query is typed, focus on the current month
