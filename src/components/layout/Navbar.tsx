@@ -64,7 +64,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
   return (
     <header
       id="app-navbar"
-      className="h-16 bg-white border-b border-gray-200/80 px-4 sm:px-8 flex items-center justify-between z-30 shrink-0 shadow-xs"
+      className="hidden md:flex h-16 bg-white border-b border-gray-200/80 px-4 sm:px-8 items-center justify-between z-30 shrink-0 shadow-xs"
     >
       {/* Brand: 4 Colored Dots Logo + FamilyCal */}
       <div className="flex items-center gap-3">

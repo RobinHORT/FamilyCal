@@ -11,11 +11,33 @@ if (!fs.existsSync(DATA_DIR)) {
 
 const DB_PATH = path.join(DATA_DIR, 'yimly_familycal.db');
 
-export const db = new DatabaseSync(DB_PATH);
+function openDatabaseInstance(): DatabaseSync {
+  try {
+    const instance = new DatabaseSync(DB_PATH);
+    instance.exec('PRAGMA journal_mode = WAL;');
+    instance.exec('PRAGMA foreign_keys = ON;');
+    return instance;
+  } catch (err: any) {
+    if (err && (err.code === 'ERR_SQLITE_ERROR' || String(err.message || '').includes('malformed') || String(err.message || '').includes('corrupt'))) {
+      console.error('⚠️ SQLite database disk image is malformed. Moving corrupted database file and initializing fresh database...');
+      const timestamp = Date.now();
+      try {
+        if (fs.existsSync(DB_PATH)) fs.renameSync(DB_PATH, `${DB_PATH}.corrupted.${timestamp}`);
+        if (fs.existsSync(`${DB_PATH}-wal`)) fs.renameSync(`${DB_PATH}-wal`, `${DB_PATH}-wal.corrupted.${timestamp}`);
+        if (fs.existsSync(`${DB_PATH}-shm`)) fs.renameSync(`${DB_PATH}-shm`, `${DB_PATH}-shm.corrupted.${timestamp}`);
+      } catch (backupErr) {
+        console.error('Failed to move corrupted DB files:', backupErr);
+      }
+      const newInstance = new DatabaseSync(DB_PATH);
+      newInstance.exec('PRAGMA journal_mode = WAL;');
+      newInstance.exec('PRAGMA foreign_keys = ON;');
+      return newInstance;
+    }
+    throw err;
+  }
+}
 
-// Enable WAL mode for high concurrency and resilience
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA foreign_keys = ON;');
+export const db = openDatabaseInstance();
 
 export function initDatabase() {
   db.exec(`
