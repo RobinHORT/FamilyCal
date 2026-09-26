@@ -1,7 +1,6 @@
 import React from 'react';
 import { CalendarEvent, EventType, FamilyMember, Task } from '../../types';
 import { getEventAssignmentInfo, getEventTypeInfo, getPastelColorInfo } from '../../utils/colors';
-import { useCalendar } from '../../context/CalendarContext';
 import { formatTimeInTimezone } from '../../utils/timezoneData';
 import { Users, Clock, MapPin, Repeat, Globe, CheckCircle2, Circle } from 'lucide-react';
 
@@ -24,12 +23,11 @@ export const EventCard: React.FC<EventCardProps> = ({
   showDescription = false,
   showLocation = true,
 }) => {
-  const { viewingTimezone } = useCalendar();
   const assignmentInfo = getEventAssignmentInfo(event, members);
   const eventType = getEventTypeInfo(event.title, event.event_type, eventTypes);
 
-  const startFormatted = formatTimeInTimezone(event.start_time, viewingTimezone);
-  const endFormatted = formatTimeInTimezone(event.end_time, viewingTimezone);
+  const startFormatted = formatTimeInTimezone(event.start_time);
+  const endFormatted = formatTimeInTimezone(event.end_time);
   const isGoogle = event.google_event_id || event.calendar_source === 'google';
 
   return (

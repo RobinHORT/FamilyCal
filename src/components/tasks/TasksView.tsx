@@ -287,8 +287,7 @@ export const TasksView: React.FC = () => {
   // Action handlers
   const handleToggle = async (e: React.MouseEvent, task: Task) => {
     e.stopPropagation();
-    const householdTimezone = family?.timezone;
-    const check = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin, householdTimezone);
+    const check = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin);
     if (!task.completed && !check.canToggle) {
       alert(check.reason || 'You do not have permission to complete this task.');
       return;
@@ -296,7 +295,7 @@ export const TasksView: React.FC = () => {
 
     try {
       const occurrenceDueDate = task.due_date ? task.due_date.trim().slice(0, 10) : undefined;
-      const todayDateStr = getHouseholdTodayDateString(householdTimezone);
+      const todayDateStr = getHouseholdTodayDateString();
       await toggleTask(task.id, occurrenceDueDate, todayDateStr);
     } catch (err: any) {
       console.error(err);
@@ -307,8 +306,7 @@ export const TasksView: React.FC = () => {
   const handleClaim = async (e: React.MouseEvent, task: Task) => {
     e.stopPropagation();
     if (claimingTaskIds[task.id]) return;
-    const householdTimezone = family?.timezone;
-    const check = canMemberClaimTask(task, currentMemberId, isViewer, tasks, householdTimezone);
+    const check = canMemberClaimTask(task, currentMemberId, isViewer, tasks);
     if (!check.canClaim) {
       alert(check.reason || 'You cannot claim this task.');
       return;
@@ -317,7 +315,7 @@ export const TasksView: React.FC = () => {
     try {
       setClaimingTaskIds(prev => ({ ...prev, [task.id]: true }));
       const occurrenceDueDate = task.due_date ? task.due_date.trim().slice(0, 10) : undefined;
-      const todayDateStr = getHouseholdTodayDateString(householdTimezone);
+      const todayDateStr = getHouseholdTodayDateString();
       await claimTask(task.id, occurrenceDueDate, todayDateStr);
     } catch (err: any) {
       console.error(err);
@@ -409,9 +407,8 @@ export const TasksView: React.FC = () => {
 
   // Render Task Card Component (EXACT MATCH to EventCard visual system)
   const renderTaskCard = (task: Task, compact: boolean = false) => {
-    const householdTimezone = family?.timezone;
     const isCompleted = task.completed;
-    const toggleCheck = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin, householdTimezone);
+    const toggleCheck = canMemberToggleTask(task, currentMemberId, isViewer, isAdultOrAdmin);
     const isActionable = isCompleted || toggleCheck.canToggle;
 
     const isOpenTask = task.assignment_mode === 'open';

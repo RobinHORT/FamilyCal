@@ -33,7 +33,6 @@ export const DayView: React.FC<DayViewProps> = ({
     goToPreviousPeriod,
     goToNextPeriod,
     navigationDirection,
-    viewingTimezone,
   } = useCalendar();
   const { members } = useFamily();
   const { user, isAdmin, hasPermission } = useAuth();
@@ -54,14 +53,12 @@ export const DayView: React.FC<DayViewProps> = ({
   const swipeHandlers = useCalendarSwipe({
     onSwipeLeft: goToNextPeriod,
     onSwipeRight: goToPreviousPeriod,
-    onSwipeUp: goToNextPeriod,
-    onSwipeDown: goToPreviousPeriod,
     minDistance: 45,
     maxTime: 700,
-    preventScrollToleranceRatio: 1.2,
+    preventScrollToleranceRatio: 1.3,
   });
 
-  const dayEvents = filteredEvents.filter((evt) => isEventOnDay(evt, activeDate, viewingTimezone));
+  const dayEvents = filteredEvents.filter((evt) => isEventOnDay(evt, activeDate));
 
   const dayKey = format(activeDate, 'yyyy-MM-dd');
   const canCreate = !isViewer && (isAdmin || hasPermission('event_create'));

@@ -59,7 +59,6 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
     goToPreviousPeriod,
     goToNextPeriod,
     navigationDirection,
-    viewingTimezone,
   } = useCalendar();
   const { members } = useFamily();
   const { user, isAdmin, hasPermission } = useAuth();
@@ -76,15 +75,13 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
 
   const canCreateEvent = !isViewer && (isAdmin || hasPermission('event_create'));
 
-  // Mobile / touch horizontal and vertical swipe navigation handlers
+  // Mobile / touch horizontal swipe navigation handlers
   const swipeHandlers = useCalendarSwipe({
     onSwipeLeft: goToNextPeriod, // Swipe LEFT -> next week
     onSwipeRight: goToPreviousPeriod, // Swipe RIGHT -> previous week
-    onSwipeUp: goToNextPeriod, // Swipe UP -> next week
-    onSwipeDown: goToPreviousPeriod, // Swipe DOWN -> previous week
     minDistance: 45,
     maxTime: 700,
-    preventScrollToleranceRatio: 1.2,
+    preventScrollToleranceRatio: 1.3,
   });
 
   // Week starts on Monday (weekStartsOn: 1)
@@ -92,7 +89,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ isViewer: isViewerProp }) =>
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(start, i));
 
   const getEventsForDay = (day: Date): CalendarEvent[] => {
-    return filteredEvents.filter((evt) => isEventOnDay(evt, day, viewingTimezone));
+    return filteredEvents.filter((evt) => isEventOnDay(evt, day));
   };
 
   const weekKey = format(start, 'yyyy-MM-dd');

@@ -23,14 +23,9 @@ function saveNotifiedMap(map: Record<string, number>) {
   } catch {}
 }
 
-function parseTimestampInTimezone(
-  dateOrDateTimeStr: string,
-  timeStr?: string | null,
-  tz: string = 'Australia/Melbourne'
-): number {
+function parseTimestamp(dateOrDateTimeStr: string, timeStr?: string | null): number {
   if (!dateOrDateTimeStr) return NaN;
 
-  // If already full ISO with Z or offset, standard Date parsing is exact
   if (dateOrDateTimeStr.includes('Z') || /[+-]\d{2}:\d{2}$/.test(dateOrDateTimeStr)) {
     return new Date(dateOrDateTimeStr).getTime();
   }
@@ -43,29 +38,7 @@ function parseTimestampInTimezone(
     ? (timeStr.length === 5 ? `${timeStr}:00` : timeStr)
     : (dateOrDateTimeStr.includes('T') ? (dateOrDateTimeStr.split('T')[1] || '09:00:00') : '09:00:00');
 
-  const [yearStr, monthStr, dayStr] = datePart.split('-');
-  const [hourStr, minStr, secStr] = timePart.split(':');
-
-  const year = parseInt(yearStr, 10);
-  const month = parseInt(monthStr, 10);
-  const day = parseInt(dayStr, 10);
-  const hour = parseInt(hourStr || '9', 10);
-  const minute = parseInt(minStr || '0', 10);
-  const second = parseInt(secStr || '0', 10);
-
-  if (isNaN(year) || isNaN(month) || isNaN(day)) return NaN;
-
-  // Create UTC guess and adjust using Intl.DateTimeFormat for the household's timezone
-  try {
-    const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-    const invDate = new Date(
-      utcDate.toLocaleString('en-US', { timeZone: tz || 'Australia/Melbourne' })
-    );
-    const diff = utcDate.getTime() - invDate.getTime();
-    return utcDate.getTime() + diff;
-  } catch {
-    return new Date(`${datePart}T${timePart}`).getTime();
-  }
+  return new Date(`${datePart}T${timePart}`).getTime();
 }
 
 export function useTaskReminderScheduler(
@@ -73,8 +46,7 @@ export function useTaskReminderScheduler(
   tasks: Task[] = [],
   currentUser: User | null = null,
   currentMemberProfile: FamilyMember | null = null,
-  members: FamilyMember[] = [],
-  householdTimezone: string = 'Australia/Melbourne'
+  members: FamilyMember[] = []
 ) {
   const isCheckingRef = useRef(false);
 
@@ -116,7 +88,6 @@ export function useTaskReminderScheduler(
         // 1. CALENDAR EVENTS REMINDERS
         // ----------------------------------------------------
         for (const event of events) {
-          // Rule 1: Reminder configured? NO -> No device notification
           if (
             event.reminder_minutes === null ||
             event.reminder_minutes === undefined ||
@@ -125,7 +96,7 @@ export function useTaskReminderScheduler(
             continue;
           }
 
-          const startMs = parseTimestampInTimezone(event.start_time, null, householdTimezone);
+          const startMs = parseTimestamp(event.start_time);
           if (isNaN(startMs)) continue;
           const reminderMs = Number(event.reminder_minutes) * 60 * 1000;
           const triggerMs = startMs - reminderMs;
@@ -135,7 +106,7 @@ export function useTaskReminderScheduler(
             continue;
           }
 
-          // Rule 2: ONLY MEMBERS INVOLVED RECEIVE THE NOTIFICATION
+          // ONLY MEMBERS INVOLVED RECEIVE THE NOTIFICATION
           const assignedIds = Array.isArray(event.assigned_member_ids)
             ? event.assigned_member_ids
             : [];
@@ -152,8 +123,7 @@ export function useTaskReminderScheduler(
             // Whole family assigned -> all family members receive it
             isInvolved = true;
           } else {
-            // Specific subset of members assigned (e.g. Amanda + Jakob)
-            // Only members in assignedIds receive the device notification
+            // Specific subset of members assigned
             if (currentMemberId && assignedIds.includes(currentMemberId)) {
               isInvolved = true;
             } else {
@@ -185,8 +155,6 @@ export function useTaskReminderScheduler(
         // 2. TASKS REMINDERS
         // ----------------------------------------------------
         for (const task of tasks) {
-          // Rule 1: Reminder configured? NO -> No device notification
-          // Ignore completed, archived, or tasks without reminder or due date
           if (
             task.completed ||
             task.is_archived ||
@@ -197,11 +165,7 @@ export function useTaskReminderScheduler(
             continue;
           }
 
-          const dueMs = parseTimestampInTimezone(
-            task.due_date,
-            task.due_time || '09:00:00',
-            householdTimezone
-          );
+          const dueMs = parseTimestamp(task.due_date, task.due_time || '09:00:00');
           if (isNaN(dueMs)) continue;
 
           const reminderMs = Number(task.reminder_minutes) * 60 * 1000;
@@ -212,16 +176,13 @@ export function useTaskReminderScheduler(
             continue;
           }
 
-          // Rule 2: ONLY MEMBERS INVOLVED RECEIVE THE NOTIFICATION
           let isAssigned = false;
           const assignedIds: string[] = Array.isArray(task.assigned_member_ids)
             ? task.assigned_member_ids
             : [];
           if (!task.assigned_member_id && assignedIds.length === 0) {
-            // Task assigned to Whole Family -> all family members receive it
             isAssigned = true;
           } else {
-            // Specific member(s) assigned -> only those members receive it
             if (currentMemberId && (currentMemberId === task.assigned_member_id || assignedIds.includes(currentMemberId))) {
               isAssigned = true;
             } else {
@@ -265,7 +226,6 @@ export function useTaskReminderScheduler(
     // Check periodically every 20 seconds
     const interval = setInterval(checkReminders, 20000);
 
-    // Also check on window focus / visibility change
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         checkReminders();
@@ -277,5 +237,5 @@ export function useTaskReminderScheduler(
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [events, tasks, currentUser, currentMemberProfile, members, householdTimezone]);
+  }, [events, tasks, currentUser, currentMemberProfile, members]);
 }

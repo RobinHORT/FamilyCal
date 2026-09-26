@@ -1,5 +1,5 @@
+import { format } from 'date-fns';
 import { Task } from '../types';
-import { getEffectiveTodayDate } from './timezoneData';
 
 export function getTaskAssignedMemberIds(task: Task): string[] {
   if (Array.isArray(task.assigned_member_ids) && task.assigned_member_ids.length > 0) {
@@ -12,10 +12,10 @@ export function getTaskAssignedMemberIds(task: Task): string[] {
 }
 
 /**
- * Returns today's date formatted as YYYY-MM-DD in the household's configured UTC offset.
+ * Returns today's date formatted as YYYY-MM-DD in the user's local device/browser date.
  */
-export function getHouseholdTodayDateString(householdTimezone?: string | null): string {
-  return getEffectiveTodayDate(householdTimezone);
+export function getHouseholdTodayDateString(): string {
+  return format(new Date(), 'yyyy-MM-dd');
 }
 
 /**
@@ -23,15 +23,10 @@ export function getHouseholdTodayDateString(householdTimezone?: string | null): 
  * - Before the task's due date: FALSE
  * - On the due date: TRUE
  * - After the due date: TRUE
- *
- * Uses pure YYYY-MM-DD date string comparison in the household's timezone to avoid UTC timezone shifts.
  */
-export function isTaskDateActionable(
-  dueDateStr?: string | null,
-  householdTimezone?: string | null
-): boolean {
+export function isTaskDateActionable(dueDateStr?: string | null): boolean {
   if (!dueDateStr) return false;
-  const todayStr = getHouseholdTodayDateString(householdTimezone);
+  const todayStr = getHouseholdTodayDateString();
   const taskDateStr = dueDateStr.trim().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(taskDateStr)) return false;
   return taskDateStr <= todayStr;
@@ -67,8 +62,7 @@ export function canMemberToggleTask(
   task: Task,
   currentMemberId?: string | null,
   isViewer?: boolean,
-  isAdultOrAdmin?: boolean,
-  householdTimezone?: string | null
+  isAdultOrAdmin?: boolean
 ): { canToggle: boolean; reason?: string } {
   if (isViewer) {
     return { canToggle: false, reason: 'Viewer mode cannot modify tasks' };
@@ -80,7 +74,7 @@ export function canMemberToggleTask(
   }
 
   // Verify due date rule: tasks cannot be completed before their due date or outside scheduled date
-  const todayStr = getHouseholdTodayDateString(householdTimezone);
+  const todayStr = getHouseholdTodayDateString();
   const taskDateStr = task.due_date ? task.due_date.trim().slice(0, 10) : '';
 
   if (taskDateStr > todayStr) {
@@ -118,8 +112,7 @@ export function canMemberClaimTask(
   task: Task,
   currentMemberId?: string | null,
   isViewer?: boolean,
-  allTasks: Task[] = [],
-  householdTimezone?: string | null
+  allTasks: Task[] = []
 ): { canClaim: boolean; reason?: string } {
   return { canClaim: false, reason: 'Claiming is disabled. Open chores can be completed directly by any member.' };
 }

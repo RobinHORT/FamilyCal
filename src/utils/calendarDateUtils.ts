@@ -5,7 +5,6 @@ import {
   parseISO,
 } from 'date-fns';
 import { CalendarEvent } from '../types';
-import { isoToLocalTime } from './timezoneData';
 
 /**
  * Extracts the raw YYYY-MM-DD string from any date string or ISO timestamp
@@ -70,9 +69,9 @@ export function formatAllDayPayloadDates(
 }
 
 /**
- * Checks if a calendar event (all-day or timed) is active on a specific day.
+ * Checks if a calendar event (all-day or timed) is active on a specific day using local device time.
  */
-export function isEventOnDay(evt: CalendarEvent, dayDate: Date, viewingTimezone?: string): boolean {
+export function isEventOnDay(evt: CalendarEvent, dayDate: Date): boolean {
   const dayStr = format(dayDate, 'yyyy-MM-dd');
 
   if (evt.all_day) {
@@ -112,19 +111,9 @@ export function isEventOnDay(evt: CalendarEvent, dayDate: Date, viewingTimezone?
     return false;
   }
 
-  // Timed event logic (converted to viewing timezone when provided)
-  let sDateStr: string;
-  let eDateStr: string;
-
-  if (viewingTimezone) {
-    const sLocal = isoToLocalTime(evt.start_time, viewingTimezone);
-    const eLocal = isoToLocalTime(evt.end_time, viewingTimezone);
-    sDateStr = sLocal.dateStr;
-    eDateStr = eLocal.dateStr >= sLocal.dateStr ? eLocal.dateStr : sLocal.dateStr;
-  } else {
-    sDateStr = format(new Date(evt.start_time), 'yyyy-MM-dd');
-    eDateStr = format(new Date(evt.end_time), 'yyyy-MM-dd');
-  }
+  // Timed event logic formatted in local device date
+  const sDateStr = format(new Date(evt.start_time), 'yyyy-MM-dd');
+  const eDateStr = format(new Date(evt.end_time), 'yyyy-MM-dd');
 
   if (dayStr >= sDateStr && dayStr <= eDateStr) return true;
 
@@ -217,4 +206,3 @@ export function isEndAfterStart(
 
   return endDt.getTime() > startDt.getTime();
 }
-

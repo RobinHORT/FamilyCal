@@ -1,12 +1,8 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useFamily } from '../../context/FamilyContext';
-import { useCalendar } from '../../context/CalendarContext';
-import { getTimezoneBadge, getTimezoneDisplayLabel } from '../../utils/timezoneData';
-import { TimezonePickerModal } from '../common/TimezonePickerModal';
 import {
   Calendar as CalIcon,
-  Users,
   CheckSquare,
   Package,
   Bell,
@@ -26,17 +22,8 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
   const { user, logout } = useAuth();
   const { family } = useFamily();
-  const {
-    viewingTimezone,
-    setViewingTimezone,
-    isTimezonePickerOpen,
-    openTimezonePicker,
-    closeTimezonePicker,
-  } = useCalendar();
 
   const userColorInfo = user ? getPastelColorInfo(user.color) : null;
-  const tzBadge = getTimezoneBadge(viewingTimezone);
-  const tzLabel = getTimezoneDisplayLabel(viewingTimezone);
 
   useEffect(() => {
     if (family?.name) {
@@ -122,19 +109,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
         })}
       </nav>
 
-      {/* Right side controls: Viewing Timezone Badge + Profile avatar or Log Out for Viewer */}
+      {/* Right side controls: Profile avatar or Log Out for Viewer */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Viewing Timezone Badge (e.g. UTC +10, UTC -7) */}
-        <button
-          id="viewing-timezone-badge"
-          type="button"
-          onClick={openTimezonePicker}
-          className="px-2.5 py-1 text-[11px] sm:text-xs font-black tracking-wider bg-slate-100 hover:bg-blue-50 hover:text-blue-600 border border-slate-200/80 hover:border-blue-200 text-slate-700 rounded-xl transition-all cursor-pointer shadow-2xs shrink-0 active:scale-95"
-          title={`Timezone: ${tzBadge} • Tap to change`}
-        >
-          {tzBadge}
-        </button>
-
         {isViewer ? (
           <button
             id="viewer-nav-logout-btn"
@@ -170,16 +146,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
           </>
         )}
       </div>
-
-      {/* Timezone Picker Modal */}
-      <TimezonePickerModal
-        isOpen={isTimezonePickerOpen}
-        onClose={closeTimezonePicker}
-        selectedTimezone={viewingTimezone}
-        onSelectTimezone={setViewingTimezone}
-        title="Viewing Timezone"
-        subtitle="Controls how calendar dates and times are displayed"
-      />
     </header>
   );
 };

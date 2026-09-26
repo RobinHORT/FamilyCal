@@ -15,11 +15,10 @@ import {
 import { CalendarEvent, FamilyMember, EventType, Task } from '../../types';
 import { MultiDayEventBar, MultiDayTaskBar } from './EventCard';
 import { isEventOnDay, isEventMultiDay } from '../../utils/calendarDateUtils';
-import { useCalendar } from '../../context/CalendarContext';
 
 interface MonthGridProps {
   currentDate: Date;
-  selectedDay: Date;
+  selectedDay?: Date | null;
   onSelectDay: (day: Date) => void;
   filteredEvents?: CalendarEvent[];
   tasks?: Task[];
@@ -61,7 +60,6 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
   maxVisibleSlots = 2,
   className = '',
 }) => {
-  const { viewingTimezone } = useCalendar();
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
   const startDate = startOfWeek(monthStart, { weekStartsOn: 1 });
@@ -80,7 +78,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
   }
 
   const getEventsForDay = (dayDate: Date) => {
-    return filteredEvents.filter((evt) => isEventOnDay(evt, dayDate, viewingTimezone));
+    return filteredEvents.filter((evt) => isEventOnDay(evt, dayDate));
   };
 
   const getTasksForDay = (dayDate: Date) => {
@@ -190,14 +188,14 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                 if (multi) {
                   for (let c = 0; c < 7; c++) {
                     const d = weekDays[c];
-                    if (isEventOnDay(evt, d, viewingTimezone)) {
+                    if (isEventOnDay(evt, d)) {
                       startCol = c;
                       break;
                     }
                   }
                   for (let c = 6; c >= 0; c--) {
                     const d = weekDays[c];
-                    if (isEventOnDay(evt, d, viewingTimezone)) {
+                    if (isEventOnDay(evt, d)) {
                       endCol = c;
                       break;
                     }
@@ -328,7 +326,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                 {weekDays.map((dayDate, colIdx) => {
                   const isCurrentMonth = isSameMonth(dayDate, monthStart);
                   const isDayToday = isToday(dayDate);
-                  const isSelected = isSameDay(dayDate, selectedDay);
+                  const isSelected = Boolean(selectedDay && isSameDay(dayDate, selectedDay));
                   const itemsOnThisDay = scheduledSlots.filter(
                     (s) => s.startCol <= colIdx && colIdx <= s.endCol
                   );

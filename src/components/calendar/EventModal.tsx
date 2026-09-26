@@ -53,7 +53,6 @@ export const EventModal: React.FC = () => {
     createEvent,
     updateEvent,
     deleteEvent,
-    viewingTimezone,
   } = useCalendar();
 
   const { members } = useFamily();
@@ -134,8 +133,8 @@ export const EventModal: React.FC = () => {
         setEndTime('09:30');
         setIsEndTimeExplicit(false);
       } else {
-        const sLocal = isoToLocalTime(selectedEvent.start_time, viewingTimezone);
-        const eLocal = isoToLocalTime(selectedEvent.end_time, viewingTimezone);
+        const sLocal = isoToLocalTime(selectedEvent.start_time);
+        const eLocal = isoToLocalTime(selectedEvent.end_time);
         setStartDate(sLocal.dateStr);
         setStartTime(sLocal.timeStr);
         setEndDate(eLocal.dateStr);
@@ -175,7 +174,7 @@ export const EventModal: React.FC = () => {
     }
     setPermState(getNotificationPermission());
     setError(null);
-  }, [isEventModalOpen, selectedEvent, eventModalInitialDate, calendars, members, viewingTimezone]);
+  }, [isEventModalOpen, selectedEvent, eventModalInitialDate, calendars, members]);
 
   if (!isEventModalOpen) return null;
 
@@ -330,8 +329,8 @@ export const EventModal: React.FC = () => {
         startIso = payloadDates.start_time;
         endIso = payloadDates.end_time;
       } else {
-        startIso = localTimeToISO(startDate, startTime, viewingTimezone);
-        endIso = localTimeToISO(endDate || startDate, endTime, viewingTimezone);
+        startIso = localTimeToISO(startDate, startTime);
+        endIso = localTimeToISO(endDate || startDate, endTime);
       }
 
       let targetCalendarId = calendarId;

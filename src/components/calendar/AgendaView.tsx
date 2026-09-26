@@ -8,7 +8,6 @@ import { useCalendarSwipe } from '../../hooks/useCalendarSwipe';
 import { CalendarEvent } from '../../types';
 import { Search, Calendar as CalIcon, Plus } from 'lucide-react';
 import { EventCard } from './EventCard';
-import { isoToLocalTime } from '../../utils/timezoneData';
 
 interface AgendaViewProps {
   isViewer?: boolean;
@@ -24,7 +23,6 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
     goToPreviousPeriod,
     goToNextPeriod,
     navigationDirection,
-    viewingTimezone,
   } = useCalendar();
   const { members } = useFamily();
   const { user, isAdmin, hasPermission } = useAuth();
@@ -45,11 +43,9 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
   const swipeHandlers = useCalendarSwipe({
     onSwipeLeft: goToNextPeriod,
     onSwipeRight: goToPreviousPeriod,
-    onSwipeUp: goToNextPeriod,
-    onSwipeDown: goToPreviousPeriod,
     minDistance: 45,
     maxTime: 700,
-    preventScrollToleranceRatio: 1.2,
+    preventScrollToleranceRatio: 1.3,
   });
 
   // Filter events: for viewer date navigation when no search query is typed, focus on the current month
@@ -82,12 +78,12 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ isViewer: isViewerProp }
   // Sort upcoming
   searchedEvents.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 
-  // Group by Day Date String (yyyy-MM-dd) in viewing timezone
+  // Group by Day Date String (yyyy-MM-dd) using local device time
   const groupedEvents: Record<string, CalendarEvent[]> = {};
   for (const evt of searchedEvents) {
     const key = evt.all_day
       ? evt.start_time.slice(0, 10)
-      : isoToLocalTime(evt.start_time, viewingTimezone).dateStr;
+      : format(new Date(evt.start_time), 'yyyy-MM-dd');
     if (!groupedEvents[key]) {
       groupedEvents[key] = [];
     }

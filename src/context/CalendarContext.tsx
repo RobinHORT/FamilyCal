@@ -1,12 +1,24 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { subMonths, addMonths, subWeeks, addWeeks, subDays, addDays } from 'date-fns';
-import { Calendar, CalendarEvent, CalendarViewMode, GoogleAccount, EventType, Task } from '../types';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+  useCallback,
+} from 'react';
+import {
+  Calendar,
+  CalendarEvent,
+  EventType,
+  CalendarViewMode,
+  GoogleAccount,
+  Task,
+} from '../types';
 import { api } from '../api/client';
 import { useAuth } from './AuthContext';
 import { useFamily } from './FamilyContext';
+import { addMonths, subMonths, addWeeks, subWeeks, addDays, subDays } from 'date-fns';
 import { useTaskReminderScheduler } from '../hooks/useTaskReminderScheduler';
-import { getHouseholdTodayDateString } from '../utils/taskPermissions';
-import { getTimezoneBadge, DEFAULT_UTC_OFFSET_LABEL } from '../utils/timezoneData';
 
 interface CalendarContextType {
   calendars: Calendar[];
@@ -14,53 +26,62 @@ interface CalendarContextType {
   filteredEvents: CalendarEvent[];
   eventTypes: EventType[];
   tasks: Task[];
+  filteredTasks: Task[];
   currentDate: Date;
   selectedCalendarDate: Date;
   viewMode: CalendarViewMode;
   selectedEvent: CalendarEvent | null;
   isEventModalOpen: boolean;
   eventModalInitialDate: Date | null;
+  
+  // Add Choice Modal (+ popup with Event vs Task)
   isAddChoiceModalOpen: boolean;
   addChoiceInitialDate: Date | null;
+  openAddChoiceModal: (initialDate?: Date) => void;
+  closeAddChoiceModal: () => void;
+
+  // Task Modal state
   isTaskModalOpen: boolean;
   taskModalInitialDate: Date | null;
   editingTask: Task | null;
-  selectedCalendarIds: string[]; // for multi-calendar layer toggle
-  selectedMemberIds: string[]; // for multi-member layer toggle
+  openCreateTaskModal: (initialDate?: Date) => void;
+  openEditTaskModal: (task: Task) => void;
+  closeTaskModal: () => void;
+
+  selectedCalendarIds: string[];
+  selectedMemberIds: string[];
   isSyncing: boolean;
   lastSyncedAt: string | null;
   googleAccounts: GoogleAccount[];
   isLoading: boolean;
   navigationDirection: number;
-  setCurrentDate: (d: Date) => void;
-  setSelectedCalendarDate: (d: Date) => void;
-  setViewMode: (v: CalendarViewMode) => void;
-  goToPreviousPeriod: () => void;
-  goToNextPeriod: () => void;
-  goToToday: () => void;
-  openAddChoiceModal: (initialDate?: Date) => void;
-  closeAddChoiceModal: () => void;
+  setCurrentDate: React.Dispatch<React.SetStateAction<Date>>;
+  setSelectedCalendarDate: (date: Date) => void;
+  setViewMode: (mode: CalendarViewMode) => void;
+  setSelectedEvent: (event: CalendarEvent | null) => void;
+  setIsEventModalOpen: (open: boolean) => void;
   openCreateEventModal: (initialDate?: Date) => void;
   openEditEventModal: (event: CalendarEvent) => void;
   closeEventModal: () => void;
-  openCreateTaskModal: (initialDate?: Date) => void;
-  openEditTaskModal: (task: Task) => void;
-  closeTaskModal: () => void;
-  toggleCalendarSelection: (id: string) => void;
-  toggleMemberFilter: (id: string) => void;
+  setSelectedCalendarIds: React.Dispatch<React.SetStateAction<string[]>>;
+  toggleCalendarSelection: (calendarId: string) => void;
+  setSelectedMemberIds: React.Dispatch<React.SetStateAction<string[]>>;
+  toggleMemberFilter: (memberId: string) => void;
   selectAllMembers: () => void;
   deselectAllMembers: () => void;
   selectAllCalendars: () => void;
   deselectAllCalendars: () => void;
+  goToPreviousPeriod: () => void;
+  goToNextPeriod: () => void;
+  goToToday: () => void;
   fetchCalendarData: () => Promise<void>;
-  fetchTasks: () => Promise<void>;
   createEvent: (data: Partial<CalendarEvent>) => Promise<CalendarEvent>;
   updateEvent: (id: string, data: Partial<CalendarEvent>) => Promise<CalendarEvent>;
   deleteEvent: (id: string) => Promise<void>;
-  createCalendar: (data: { name: string; color?: string; description?: string; member_id?: string | null }) => Promise<Calendar>;
+  createCalendar: (data: Partial<Calendar>) => Promise<Calendar>;
   updateCalendar: (id: string, data: Partial<Calendar>) => Promise<Calendar>;
   deleteCalendar: (id: string) => Promise<void>;
-  createEventType: (data: { name: string; color: string; icon?: string }) => Promise<EventType>;
+  createEventType: (data: Partial<EventType>) => Promise<EventType>;
   updateEventType: (id: string, data: Partial<EventType>) => Promise<EventType>;
   deleteEventType: (id: string) => Promise<void>;
   createTask: (data: Partial<Task>) => Promise<Task>;
@@ -72,11 +93,6 @@ interface CalendarContextType {
   archiveTask: (id: string, options?: { allInGroup?: boolean }) => Promise<Task>;
   deleteTask: (id: string, options?: { allInGroup?: boolean }) => Promise<void>;
   triggerGoogleSync: () => Promise<{ success: boolean; eventsSynced: number }>;
-  viewingTimezone: string;
-  setViewingTimezone: (tz: string) => void;
-  isTimezonePickerOpen: boolean;
-  openTimezonePicker: () => void;
-  closeTimezonePicker: () => void;
 }
 
 const CalendarContext = createContext<CalendarContextType | undefined>(undefined);
@@ -91,12 +107,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date>(new Date());
-  const [viewMode, setViewMode] = useState<CalendarViewMode>(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
-      return 'week';
-    }
-    return 'month';
-  });
+  const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [eventModalInitialDate, setEventModalInitialDate] = useState<Date | null>(null);
@@ -117,37 +128,6 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const [googleAccounts, setGoogleAccounts] = useState<GoogleAccount[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [navigationDirection, setNavigationDirection] = useState<number>(0);
-
-  // Timezone state: Viewing Timezone (top nav badge) defaults to household Timezone offset
-  const [viewingTimezone, setViewingTimezoneState] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('familycal_viewing_timezone');
-      if (saved) return getTimezoneBadge(saved);
-    }
-    return DEFAULT_UTC_OFFSET_LABEL;
-  });
-  const [isTimezonePickerOpen, setIsTimezonePickerOpen] = useState(false);
-
-  // Keep viewing timezone aligned with family setting if user hasn't explicitly set a custom one
-  useEffect(() => {
-    if (family?.timezone && typeof window !== 'undefined') {
-      const saved = localStorage.getItem('familycal_viewing_timezone');
-      if (!saved) {
-        setViewingTimezoneState(getTimezoneBadge(family.timezone));
-      }
-    }
-  }, [family?.timezone]);
-
-  const setViewingTimezone = useCallback((tz: string) => {
-    const formatted = getTimezoneBadge(tz);
-    setViewingTimezoneState(formatted);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('familycal_viewing_timezone', formatted);
-    }
-  }, []);
-
-  const openTimezonePicker = useCallback(() => setIsTimezonePickerOpen(true), []);
-  const closeTimezonePicker = useCallback(() => setIsTimezonePickerOpen(false), []);
 
   const goToPreviousPeriod = useCallback(() => {
     setNavigationDirection(-1);
@@ -174,9 +154,8 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     setCurrentDate(new Date());
   }, []);
 
-  // Automatic Device Reminder Scheduler: checks and fires real device notifications on due reminders
-  // only to members involved in the Event or Task using the household's authoritative timezone
-  useTaskReminderScheduler(events, tasks, user, memberProfile, members, family?.timezone || 'Australia/Melbourne');
+  // Automatic Device Reminder Scheduler
+  useTaskReminderScheduler(events, tasks, user, memberProfile, members);
 
   // Deep-link handler: open event modal if ?eventId=... is in URL
   useEffect(() => {
@@ -188,340 +167,283 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
       if (match) {
         try {
           const d = new Date(match.start_time);
-          if (!isNaN(d.getTime())) {
-            setCurrentDate(d);
-            setSelectedCalendarDate(d);
-          }
+          setCurrentDate(d);
+          setSelectedEvent(match);
+          setIsEventModalOpen(true);
         } catch {}
-        setSelectedEvent(match);
-        setIsEventModalOpen(true);
-        // Clean URL parameter without reload
-        const url = new URL(window.location.href);
-        url.searchParams.delete('eventId');
-        window.history.replaceState(null, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''));
       }
     }
   }, [events]);
 
-  // Synchronize member layer filter when members load
+  const fetchCalendarData = useCallback(async () => {
+    if (!user) return;
+    setIsLoading(true);
+    try {
+      const [calsRes, evtsRes, typesRes, tasksRes, googleRes] = await Promise.all([
+        api.getCalendars(),
+        api.getEvents(),
+        api.getEventTypes(),
+        api.getTasks(),
+        api.getGoogleAccounts().catch(() => []),
+      ]);
+      setCalendars(calsRes);
+      setEvents(evtsRes);
+      setEventTypes(typesRes);
+      setTasks(tasksRes);
+      setGoogleAccounts(googleRes);
+
+      // Initialize selected calendars if empty
+      setSelectedCalendarIds((prev) => {
+        if (prev.length === 0 && calsRes.length > 0) {
+          return calsRes.map((c: Calendar) => c.id);
+        }
+        return prev;
+      });
+
+      // Initialize selected members to all active members by default
+      setSelectedMemberIds((prev) => {
+        if (prev.length === 0 && members.length > 0) {
+          return members.filter((m) => m.is_active !== 0).map((m) => m.id);
+        }
+        return prev;
+      });
+    } catch (err) {
+      console.error('Failed to fetch calendar data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, members]);
+
+  // When members list is loaded or updated, make sure all active members are included in filter
   useEffect(() => {
-    if (members.length > 0) {
+    if (members && members.length > 0) {
       setSelectedMemberIds((prev) => {
         if (prev.length === 0) {
-          return members.filter((m) => m.is_active === 1).map((m) => m.id);
+          return members.filter((m) => m.is_active !== 0).map((m) => m.id);
         }
         return prev;
       });
     }
   }, [members]);
 
-  const fetchTasks = useCallback(async () => {
-    if (!user) {
-      setTasks([]);
-      return;
-    }
-    try {
-      const data = await api.getTasks();
-      setTasks(data);
-    } catch (err) {
-      console.warn('Tasks fetch warning:', err);
-    }
-  }, [user]);
-
-  const fetchCalendarData = useCallback(async () => {
-    if (!user) {
-      setCalendars([]);
-      setEvents([]);
-      setEventTypes([]);
-      setTasks([]);
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const [calsRes, evtsRes, gAccountsRes, eventTypesRes, tasksRes] = await Promise.all([
-        api.getCalendars(),
-        api.getEvents(),
-        api.getGoogleAccounts().catch(() => []),
-        api.getEventTypes().catch(() => []),
-        api.getTasks().catch(() => []),
-      ]);
-
-      const validCals = calsRes.filter(
-        (c) => c.name !== 'Family Hub' && c.name.toLowerCase() !== 'family hub'
-      );
-
-      setCalendars(validCals);
-      setEvents(evtsRes);
-      setGoogleAccounts(gAccountsRes);
-      setEventTypes(eventTypesRes);
-      setTasks(tasksRes);
-
-      // Default select all calendars initially if not set
-      setSelectedCalendarIds((prev) => {
-        if (prev.length === 0 && validCals.length > 0) {
-          return validCals.map((c) => c.id);
-        }
-        return prev;
-      });
-
-      if (gAccountsRes.length > 0 && gAccountsRes[0].last_synced_at) {
-        setLastSyncedAt(gAccountsRes[0].last_synced_at);
-      }
-    } catch (err) {
-      console.warn('Calendar data fetch warning:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
-
   useEffect(() => {
     fetchCalendarData();
   }, [fetchCalendarData]);
 
-  // Compute filtered events based on member layer selection and calendar checkbox selection
-  const filteredEvents = events.filter((evt) => {
-    // 1. Calendar selection filter: Event's calendar must be enabled
-    if (selectedCalendarIds.length > 0 && !selectedCalendarIds.includes(evt.calendar_id)) {
-      return false;
-    }
+  const toggleCalendarSelection = useCallback((calendarId: string) => {
+    setSelectedCalendarIds((prev) =>
+      prev.includes(calendarId) ? prev.filter((id) => id !== calendarId) : [...prev, calendarId]
+    );
+  }, []);
 
-    // 2. Member filter:
-    let rawIds = evt.assigned_member_ids;
-    let assignedIds: string[] = [];
-    if (Array.isArray(rawIds)) {
-      assignedIds = rawIds;
-    } else if (typeof rawIds === 'string') {
-      try {
-        assignedIds = JSON.parse(rawIds);
-      } catch {
-        assignedIds = [];
-      }
-    }
+  const toggleMemberFilter = useCallback((memberId: string) => {
+    setSelectedMemberIds((prev) =>
+      prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
+    );
+  }, []);
 
-    // If event has assigned members, it is visible if ANY of those members are selected
-    if (assignedIds.length > 0) {
-      return assignedIds.some((id) => selectedMemberIds.includes(id));
-    }
+  const selectAllMembers = useCallback(() => {
+    setSelectedMemberIds(members.filter((m) => m.is_active !== 0).map((m) => m.id));
+  }, [members]);
 
-    // If event has a single member_id
-    if ((evt as any).member_id) {
-      return selectedMemberIds.includes((evt as any).member_id);
-    }
+  const deselectAllMembers = useCallback(() => {
+    setSelectedMemberIds([]);
+  }, []);
 
-    // If event has NO assigned members (e.g. non-login calendar layers like Birthdays, Bin Calendar, Public Holidays):
-    // It is shown whenever its calendar layer is enabled!
-    return true;
-  });
+  const selectAllCalendars = useCallback(() => {
+    setSelectedCalendarIds(calendars.map((c) => c.id));
+  }, [calendars]);
 
-  const openAddChoiceModal = (initialDate?: Date) => {
-    setAddChoiceInitialDate(initialDate || selectedCalendarDate || currentDate);
-    setIsAddChoiceModalOpen(true);
-  };
+  const deselectAllCalendars = useCallback(() => {
+    setSelectedCalendarIds([]);
+  }, []);
 
-  const closeAddChoiceModal = () => {
-    setIsAddChoiceModalOpen(false);
-    setAddChoiceInitialDate(null);
-  };
-
-  const openCreateEventModal = (initialDate?: Date) => {
+  const openCreateEventModal = useCallback((initialDate?: Date) => {
     setSelectedEvent(null);
-    setEventModalInitialDate(initialDate || selectedCalendarDate || currentDate);
+    setEventModalInitialDate(initialDate || new Date());
     setIsEventModalOpen(true);
-  };
+  }, []);
 
-  const openEditEventModal = (event: CalendarEvent) => {
+  const openEditEventModal = useCallback((event: CalendarEvent) => {
     setSelectedEvent(event);
-    setEventModalInitialDate(new Date(event.start_time));
+    setEventModalInitialDate(null);
     setIsEventModalOpen(true);
-  };
+  }, []);
 
-  const closeEventModal = () => {
+  const closeEventModal = useCallback(() => {
     setIsEventModalOpen(false);
     setSelectedEvent(null);
     setEventModalInitialDate(null);
-  };
+  }, []);
 
-  const openCreateTaskModal = (initialDate?: Date) => {
+  const openAddChoiceModal = useCallback((initialDate?: Date) => {
+    setAddChoiceInitialDate(initialDate || new Date());
+    setIsAddChoiceModalOpen(true);
+  }, []);
+
+  const closeAddChoiceModal = useCallback(() => {
+    setIsAddChoiceModalOpen(false);
+    setAddChoiceInitialDate(null);
+  }, []);
+
+  const openCreateTaskModal = useCallback((initialDate?: Date) => {
     setEditingTask(null);
-    setTaskModalInitialDate(initialDate || selectedCalendarDate || currentDate);
+    setTaskModalInitialDate(initialDate || new Date());
     setIsTaskModalOpen(true);
-  };
+  }, []);
 
-  const openEditTaskModal = (task: Task) => {
+  const openEditTaskModal = useCallback((task: Task) => {
     setEditingTask(task);
-    setTaskModalInitialDate(task.due_date ? new Date(task.due_date) : new Date());
+    setTaskModalInitialDate(null);
     setIsTaskModalOpen(true);
-  };
+  }, []);
 
-  const closeTaskModal = () => {
+  const closeTaskModal = useCallback(() => {
     setIsTaskModalOpen(false);
     setEditingTask(null);
     setTaskModalInitialDate(null);
-  };
-
-  const toggleCalendarSelection = (id: string) => {
-    setSelectedCalendarIds((prev) =>
-      prev.includes(id) ? prev.filter((calId) => calId !== id) : [...prev, id]
-    );
-  };
-
-  const toggleMemberFilter = (id: string) => {
-    setSelectedMemberIds((prev) =>
-      prev.includes(id) ? prev.filter((mId) => mId !== id) : [...prev, id]
-    );
-  };
-
-  const selectAllMembers = () => {
-    setSelectedMemberIds(members.filter((m) => m.is_active === 1).map((m) => m.id));
-  };
-
-  const deselectAllMembers = () => {
-    setSelectedMemberIds([]);
-  };
-
-  const selectAllCalendars = () => {
-    setSelectedCalendarIds(calendars.map((c) => c.id));
-  };
-
-  const deselectAllCalendars = () => {
-    setSelectedCalendarIds([]);
-  };
+  }, []);
 
   const createEvent = async (data: Partial<CalendarEvent>) => {
-    const created = await api.createEvent(data);
-    await fetchCalendarData();
-    return created;
+    const newEvent = await api.createEvent(data);
+    setEvents((prev) => [...prev, newEvent]);
+    return newEvent;
   };
 
   const updateEvent = async (id: string, data: Partial<CalendarEvent>) => {
     const updated = await api.updateEvent(id, data);
-    await fetchCalendarData();
+    setEvents((prev) => prev.map((e) => (e.id === id ? updated : e)));
     return updated;
   };
 
   const deleteEvent = async (id: string) => {
     await api.deleteEvent(id);
-    await fetchCalendarData();
+    setEvents((prev) => prev.filter((e) => e.id !== id));
   };
 
-  const createCalendar = async (data: { name: string; color?: string; description?: string; member_id?: string | null }) => {
-    const created = await api.createCalendar(data);
-    await fetchCalendarData();
-    setSelectedCalendarIds((prev) => [...prev, created.id]);
-    return created;
+  const createCalendar = async (data: Partial<Calendar>) => {
+    const newCal = await api.createCalendar(data as any);
+    setCalendars((prev) => [...prev, newCal]);
+    setSelectedCalendarIds((prev) => [...prev, newCal.id]);
+    return newCal;
   };
 
   const updateCalendar = async (id: string, data: Partial<Calendar>) => {
     const updated = await api.updateCalendar(id, data);
-    await fetchCalendarData();
+    setCalendars((prev) => prev.map((c) => (c.id === id ? updated : c)));
     return updated;
   };
 
   const deleteCalendar = async (id: string) => {
     await api.deleteCalendar(id);
-    await fetchCalendarData();
+    setCalendars((prev) => prev.filter((c) => c.id !== id));
+    setSelectedCalendarIds((prev) => prev.filter((calId) => calId !== id));
   };
 
-  const createEventType = async (data: { name: string; color: string; icon?: string }) => {
-    const created = await api.createEventType(data);
-    await fetchCalendarData();
-    return created;
+  const createEventType = async (data: Partial<EventType>) => {
+    const newType = await api.createEventType(data as any);
+    setEventTypes((prev) => [...prev, newType]);
+    return newType;
   };
 
   const updateEventType = async (id: string, data: Partial<EventType>) => {
     const updated = await api.updateEventType(id, data);
-    await fetchCalendarData();
+    setEventTypes((prev) => prev.map((t) => (t.id === id ? updated : t)));
     return updated;
   };
 
   const deleteEventType = async (id: string) => {
     await api.deleteEventType(id);
-    await fetchCalendarData();
+    setEventTypes((prev) => prev.filter((t) => t.id !== id));
   };
 
   const createTask = async (data: Partial<Task>) => {
-    const created = await api.createTask(data);
-    await fetchTasks();
-    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
-    return created;
+    const newTask = await api.createTask(data);
+    setTasks((prev) => [...prev, newTask]);
+    return newTask;
   };
 
   const updateTask = async (id: string, data: Partial<Task>) => {
     const updated = await api.updateTask(id, data);
-    await fetchTasks();
-    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
+    setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
     return updated;
   };
 
-  const toggleTask = async (id: string, occurrenceDate?: string, clientDate?: string) => {
-    const householdTodayStr = getHouseholdTodayDateString(family?.timezone);
-    const updated = await api.toggleTask(id, occurrenceDate, clientDate || householdTodayStr);
-    await fetchTasks();
-    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
+  const toggleTask = async (id: string, occurrenceDate?: string) => {
+    const updated = await api.toggleTask(id, occurrenceDate);
+    setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    await refreshProfile();
     return updated;
   };
 
-  const claimTask = async (id: string, occurrenceDate?: string, clientDate?: string) => {
-    const householdTodayStr = getHouseholdTodayDateString(family?.timezone);
-    const claimed = await api.claimTask(id, occurrenceDate, clientDate || householdTodayStr);
-    await fetchTasks();
-    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
-    return claimed;
+  const claimTask = async (id: string, occurrenceDate?: string) => {
+    const updated = await api.claimTask(id, occurrenceDate);
+    setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    await refreshProfile();
+    return updated;
   };
 
   const unclaimTask = async (id: string) => {
-    const res = await api.unclaimTask(id);
-    await fetchTasks();
-    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
-    return res;
+    const result = await api.unclaimTask(id);
+    await fetchCalendarData();
+    return result;
   };
 
   const adjustTaskPoints = async (id: string, data: { points_awarded: number; notes?: string }) => {
     const updated = await api.adjustTaskPoints(id, data);
-    await fetchTasks();
-    await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
+    setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    await refreshProfile();
     return updated;
   };
 
   const archiveTask = async (id: string, options?: { allInGroup?: boolean }) => {
     const updated = await api.archiveTask(id, options);
-    await fetchTasks();
+    setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
     return updated;
   };
 
   const deleteTask = async (id: string, options?: { allInGroup?: boolean }) => {
-    const targetTask = tasks.find((t) => t.id === id);
-    const taskGroupId = targetTask?.task_group_id;
-
-    // Optimistically remove immediately from local state for instant UI update
-    setTasks((prev) =>
-      prev.filter((t) => {
-        if (t.id === id || t.parent_task_id === id) return false;
-        if (options?.allInGroup && taskGroupId && t.task_group_id === taskGroupId) return false;
-        return true;
-      })
-    );
-
-    try {
-      await api.deleteTask(id, options);
-    } finally {
-      await fetchTasks();
-      await Promise.all([fetchFamilyData().catch(() => {}), refreshProfile().catch(() => {})]);
-    }
+    await api.deleteTask(id, options);
+    setTasks((prev) => prev.filter((t) => t.id !== id));
   };
 
   const triggerGoogleSync = async () => {
     setIsSyncing(true);
     try {
       const res = await api.syncGoogle();
-      setLastSyncedAt(res.syncedAt);
+      setLastSyncedAt(new Date().toISOString());
       await fetchCalendarData();
       return res;
     } finally {
       setIsSyncing(false);
     }
   };
+
+  // Filter events based on selected calendars AND assigned member filters
+  const filteredEvents = events.filter((evt) => {
+    // 1. Check if calendar is selected
+    const calSelected = selectedCalendarIds.includes(evt.calendar_id);
+    if (!calSelected) return false;
+
+    // 2. Check assigned member filters
+    const assignedIds = Array.isArray(evt.assigned_member_ids) ? evt.assigned_member_ids : [];
+    if (assignedIds.length === 0) {
+      return true;
+    }
+
+    return assignedIds.some((mId) => selectedMemberIds.includes(mId));
+  });
+
+  // Filter tasks based on assigned member filters
+  const filteredTasks = tasks.filter((task) => {
+    if (task.is_archived) return false;
+    const assignedIds: string[] = Array.isArray(task.assigned_member_ids)
+      ? task.assigned_member_ids
+      : (task.assigned_member_id ? [task.assigned_member_id] : []);
+
+    if (assignedIds.length === 0) return true;
+    return assignedIds.some((mId) => selectedMemberIds.includes(mId));
+  });
 
   return (
     <CalendarContext.Provider
@@ -531,6 +453,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         filteredEvents,
         eventTypes,
         tasks,
+        filteredTasks,
         currentDate,
         selectedCalendarDate,
         viewMode,
@@ -539,9 +462,14 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         eventModalInitialDate,
         isAddChoiceModalOpen,
         addChoiceInitialDate,
+        openAddChoiceModal,
+        closeAddChoiceModal,
         isTaskModalOpen,
         taskModalInitialDate,
         editingTask,
+        openCreateTaskModal,
+        openEditTaskModal,
+        closeTaskModal,
         selectedCalendarIds,
         selectedMemberIds,
         isSyncing,
@@ -552,25 +480,23 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         setCurrentDate,
         setSelectedCalendarDate,
         setViewMode,
-        goToPreviousPeriod,
-        goToNextPeriod,
-        goToToday,
-        openAddChoiceModal,
-        closeAddChoiceModal,
+        setSelectedEvent,
+        setIsEventModalOpen,
         openCreateEventModal,
         openEditEventModal,
         closeEventModal,
-        openCreateTaskModal,
-        openEditTaskModal,
-        closeTaskModal,
+        setSelectedCalendarIds,
         toggleCalendarSelection,
+        setSelectedMemberIds,
         toggleMemberFilter,
         selectAllMembers,
         deselectAllMembers,
         selectAllCalendars,
         deselectAllCalendars,
+        goToPreviousPeriod,
+        goToNextPeriod,
+        goToToday,
         fetchCalendarData,
-        fetchTasks,
         createEvent,
         updateEvent,
         deleteEvent,
@@ -589,11 +515,6 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         archiveTask,
         deleteTask,
         triggerGoogleSync,
-        viewingTimezone,
-        setViewingTimezone,
-        isTimezonePickerOpen,
-        openTimezonePicker,
-        closeTimezonePicker,
       }}
     >
       {children}

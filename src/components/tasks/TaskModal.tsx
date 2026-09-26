@@ -256,7 +256,7 @@ export const TaskModal: React.FC = () => {
       return;
     }
 
-    const check = canMemberToggleTask(editingTask, currentMemberId, isViewer, isAdultOrAdmin, family?.timezone);
+    const check = canMemberToggleTask(editingTask, currentMemberId, isViewer, isAdultOrAdmin);
     if (!editingTask.completed && !check.canToggle) {
       setError(check.reason || 'You do not have permission to complete this task');
       return;
