@@ -1,167 +1,258 @@
+```bat
 @echo off
-setlocal enabledelayedexpansion
+setlocal EnableExtensions EnableDelayedExpansion
 
-title FamilyCal - Update
-
-echo ========================================
-echo          FAMILY CAL UPDATE
-echo ========================================
-echo.
-
-:: [1/5] Checking repository...
-echo [1/5] Checking repository...
-where git >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Git is not installed or not found in PATH.
-    echo Please install Git for Windows to enable repository updates.
+:: 1. Verify working directory
+if not exist "docker-compose.yml" (
+    echo [ERROR] docker-compose.yml not found in current directory.
+    echo Please make sure you run update.bat from the root of the repository.
     echo.
     pause
     exit /b 1
 )
+
+:: 2. Update code from GitHub
+echo [1/7] Updating code from GitHub...
+
+where git >nul 2>&1
+if !errorlevel! neq 0 (
+    echo [ERROR] Git is not installed or not available in PATH.
+    pause
+    exit /b 1
+)
+
+if not exist ".git" (
+    echo [ERROR] This directory is not a Git repository.
+    pause
+    exit /b 1
+)
+
+echo Checking GitHub remote...
+git remote -v
+echo.
+
+echo Fetching latest GitHub changes...
+git fetch origin
+if !errorlevel! neq 0 (
+    echo.
+    echo [ERROR] Could not fetch from GitHub.
+    echo Deployment stopped. Existing production container was NOT changed.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo.
+echo Synchronising local code with GitHub main...
+
+:: Make sure the deployment uses exactly the GitHub main branch.
+:: WARNING: this discards uncommitted LOCAL changes in the deployment folder.
+:: It does NOT touch Docker persistent data.
+git checkout main
+if !errorlevel! neq 0 (
+    echo [ERROR] Could not switch to main branch.
+    pause
+    exit /b 1
+)
+
+git reset --hard origin/main
+if !errorlevel! neq 0 (
+    echo.
+    echo [ERROR] Could not synchronise with origin/main.
+    echo Deployment stopped. Existing production container was NOT changed.
+    echo.
+    pause
+    exit /b 1
+)
+
+git clean -fd
+if !errorlevel! neq 0 (
+    echo.
+    echo [ERROR] Could not clean old repository files.
+    echo Deployment stopped.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo [OK] Local deployment code now exactly matches GitHub main.
+echo.
+
+:: 3. Check Docker and Docker Compose availability
+echo [2/7] Checking Docker engine status...
 
 where docker >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Docker is not installed or not found in PATH.
-    echo Please ensure Docker Desktop is installed and running.
-    echo.
+if !errorlevel! neq 0 (
+    echo [ERROR] Docker is not installed or not in PATH.
     pause
     exit /b 1
 )
+
+docker info >nul 2>&1
+if !errorlevel! neq 0 (
+    echo [ERROR] Docker Desktop is not currently running.
+    pause
+    exit /b 1
+)
+
+echo [OK] Docker daemon is running.
+
+set "DOCKER_COMPOSE_CMD=docker compose"
 
 docker compose version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
+if !errorlevel! neq 0 (
     docker-compose version >nul 2>&1
-    if %ERRORLEVEL% neq 0 (
-        echo [ERROR] Docker Compose is not available.
-        echo Please ensure Docker Desktop is running with Docker Compose enabled.
-        echo.
+    if !errorlevel! equ 0 (
+        set "DOCKER_COMPOSE_CMD=docker-compose"
+    ) else (
+        echo [ERROR] Docker Compose not found.
         pause
         exit /b 1
     )
 )
+
+echo [OK] Using '!DOCKER_COMPOSE_CMD!'.
+echo.
+
+:: 4. Cloudflare Bridge Network
+echo [3/7] Verifying Docker network 'cloudflared_bridge'...
 
 docker network inspect cloudflared_bridge >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] External Docker network 'cloudflared_bridge' does not exist.
-    echo Manual Cloudflare network setup is required.
-    echo.
-    pause
-    exit /b 1
-)
 
-if not exist "docker-compose.yml" (
-    echo [ERROR] docker-compose.yml was not found.
-    echo Expected:
-    echo C:\DockerApps\FamilyCal\docker-compose.yml
-    echo.
-    pause
-    exit /b 1
-)
+if !errorlevel! neq 0 (
+    docker network create cloudflared_bridge >nul 2>&1
 
-echo Repository and Docker verified.
-echo.
-
-:: [2/5] Pulling latest GitHub changes...
-echo [2/5] Pulling latest GitHub changes...
-git pull origin main
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Failed to pull changes from remote GitHub repository.
-    echo Please check your network connection and Git credentials.
-    echo.
-    pause
-    exit /b 1
-)
-echo.
-
-:: Verify compose file after Git pull
-if not exist "docker-compose.yml" (
-    echo [ERROR] docker-compose.yml is missing after Git pull.
-    echo.
-    pause
-    exit /b 1
-)
-
-:: [3/5] Rebuilding Docker image...
-echo [3/5] Rebuilding Docker image...
-docker compose -f docker-compose.yml build --pull
-if %ERRORLEVEL% neq 0 (
-    echo [WARNING] Build with --pull failed, attempting standard build...
-    docker compose -f docker-compose.yml build
-    if %ERRORLEVEL% neq 0 (
-        echo [ERROR] Docker image build failed.
-        echo Review the error messages above for details.
-        echo.
+    if !errorlevel! equ 0 (
+        echo [OK] Created shared Docker network.
+    ) else (
+        echo [ERROR] Failed to create Docker network.
         pause
         exit /b 1
     )
+) else (
+    echo [OK] Existing Docker network detected and preserved.
 )
+
 echo.
 
-:: [4/5] Restarting FamilyCal...
-echo [4/5] Restarting FamilyCal...
-docker compose -f docker-compose.yml up -d
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Failed to restart FamilyCal containers.
+:: 5. Environment and persistent storage
+echo [4/7] Preparing environment and persistent storage...
+
+if not exist ".env" (
+    if exist ".env.example" (
+        copy .env.example .env >nul
+    ) else (
+        echo APP_ENV=production > .env
+        echo PORT=3000 >> .env
+    )
+    echo [OK] Created .env.
+) else (
+    echo [OK] Existing .env preserved.
+)
+
+if not exist "data" mkdir data
+if not exist "data\uploads" mkdir data\uploads
+if not exist "data\uploads\profile_pictures" mkdir data\uploads\profile_pictures
+
+echo [OK] Persistent storage verified.
+echo.
+
+:: 6. Build and force deployment
+echo [5/7] Building production image from GitHub code...
+echo.
+
+%DOCKER_COMPOSE_CMD% build
+if !errorlevel! neq 0 (
+    echo.
+    echo [ERROR] Docker build failed.
+    echo Existing production container was NOT changed.
     echo.
     pause
     exit /b 1
 )
 
-docker image prune -f >nul 2>&1
-echo FamilyCal container restarted successfully.
+echo.
+echo [OK] Production image built successfully.
 echo.
 
-:: [5/5] Checking health...
-echo [5/5] Checking FamilyCal health...
-set "HEALTHY=0"
+echo [6/7] Deploying newly built image...
+echo.
+
+%DOCKER_COMPOSE_CMD% down
+if !errorlevel! neq 0 (
+    echo.
+    echo [ERROR] Failed to stop existing services.
+    pause
+    exit /b 1
+)
+
+%DOCKER_COMPOSE_CMD% up -d --force-recreate --remove-orphans
+if !errorlevel! neq 0 (
+    echo.
+    echo [ERROR] Failed to start production services.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [OK] New GitHub code is now deployed.
+echo.
+
+:: 7. Health check
+echo [7/7] Waiting for Yimly Home Assistant to become ready...
+
+set "HEALTH_TIMEOUT=40"
 set "ELAPSED=0"
 
 :HEALTH_LOOP
-if !ELAPSED! geq 60 goto HEALTH_FAILED
 
-set /a "ELAPSED+=5"
-echo Waiting for FamilyCal health... !ELAPSED!s
-timeout /t 5 >nul
-
-for /f "delims=" %%s in ('docker inspect --format="{{.State.Health.Status}}" yimly-familycal 2^>nul') do (
-    if "%%s"=="healthy" (
-        set "HEALTHY=1"
-        goto HEALTH_PASSED
-    )
-    if "%%s"=="unhealthy" (
-        goto HEALTH_FAILED
-    )
+if !ELAPSED! geq !HEALTH_TIMEOUT! (
+    echo.
+    echo [WARNING] Health check timed out after !HEALTH_TIMEOUT! seconds.
+    echo.
+    %DOCKER_COMPOSE_CMD% ps
+    echo.
+    %DOCKER_COMPOSE_CMD% logs --tail=25
+    echo.
+    pause
+    exit /b 1
 )
 
+docker exec yimly-assistant curl -s -f http://localhost:3000/api/setup/status >nul 2>&1
+
+if !errorlevel! equ 0 (
+    goto HEALTHY
+)
+
+timeout /t 2 /nobreak >nul
+set /a ELAPSED+=2
+
+echo Waiting for backend... (!ELAPSED!s/!HEALTH_TIMEOUT!s)
 goto HEALTH_LOOP
 
-:HEALTH_FAILED
-echo.
-echo FamilyCal health check: FAILED
-echo.
-docker compose -f docker-compose.yml ps
-echo.
-docker compose -f docker-compose.yml logs --tail=100 yimly-familycal
-echo.
-pause
-exit /b 1
+:HEALTHY
 
-:HEALTH_PASSED
 echo.
-echo FamilyCal health check: HEALTHY
+echo ===============================================================================
+echo       SUCCESS! GITHUB CODE DEPLOYED - YIMLY HOME ASSISTANT IS LIVE
+echo ===============================================================================
 echo.
-echo ========================================
-echo FamilyCal update complete.
-echo ========================================
+echo  GitHub Repository:
+echo  https://github.com/azn106/Yimly-Assistant
 echo.
-docker compose -f docker-compose.yml ps
+echo  Public URL:
+echo  https://yimha.robinhort.link
 echo.
-echo FamilyCal Networking Summary:
-echo - Compose Service: yimly-familycal
-echo - Docker Network: cloudflared_bridge
-echo - Network Alias: familycal
-echo - Internal Port: 3000
-echo - Published Host Ports: None
-echo - Cloudflare Tunnel Target: http://familycal:3000
+echo  Local URL:
+echo  http://localhost:3000
 echo.
+echo  Persistent data:
+echo  ./data
+echo.
+echo  The deployment now uses GitHub main as the source of truth.
+echo ===============================================================================
+echo.
+
 pause
+endlocal
+```
