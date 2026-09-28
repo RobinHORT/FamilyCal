@@ -8,7 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Priority, Task, TaskRecurrenceRule, TaskAssignmentMode } from '../../types';
 import { getNotificationPermission, requestNotificationPermission, NotificationPermissionState } from '../../utils/taskNotifications';
 import { getPastelColorInfo } from '../../utils/colors';
-import { getTaskAssignedMemberIds, canMemberToggleTask, isAdultOrAdminRole } from '../../utils/taskPermissions';
+import { getTaskAssignedMemberIds, canMemberToggleTask, isAdultOrAdminRole, filterEligibleChildMembers } from '../../utils/taskPermissions';
 
 export const TaskModal: React.FC = () => {
   const {
@@ -27,7 +27,7 @@ export const TaskModal: React.FC = () => {
   const { family, members } = useFamily();
   const { user, memberProfile, isViewer } = useAuth();
 
-  const activeMembers = members.filter((m) => m.is_active === 1);
+  const eligibleChildMembers = filterEligibleChildMembers(members);
   const currentMemberId = memberProfile?.id || members.find((m) => m.user_id === user?.id || m.id === user?.id)?.id || user?.id;
   const isAdultOrAdmin = isAdultOrAdminRole(user, memberProfile);
   const canDelete =
@@ -43,7 +43,12 @@ export const TaskModal: React.FC = () => {
   const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
   const [recurringRule, setRecurringRule] = useState<TaskRecurrenceRule>('none');
   const [recurringInterval, setRecurringInterval] = useState<number>(1);
-  const [recurringUnit, setRecurringUnit] = useState<'day' | 'week' | 'month'>('day');
+  const [recurringUnit, setRecurringUnit] = useState<'day' | 'week' | 'month' | 'year'>('day');
+  const [recurringEndType, setRecurringEndType] = useState<'never' | 'date' | 'count'>('never');
+  const [recurringEndDate, setRecurringEndDate] = useState<string>('');
+  const [recurringEndCount, setRecurringEndCount] = useState<number>(10);
+  const [recurringScope, setRecurringScope] = useState<'single' | 'following' | 'series'>('series');
+  const [deleteScope, setDeleteScope] = useState<'single' | 'following' | 'series'>('single');
   const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
   const [assignmentMode, setAssignmentMode] = useState<TaskAssignmentMode>('assigned');
   const [claimLimit, setClaimLimit] = useState<number>(1); // 1 = single person, 0 = multiple people
@@ -73,7 +78,12 @@ export const TaskModal: React.FC = () => {
         );
         setRecurringRule(editingTask.recurring_rule || 'none');
         setRecurringInterval(editingTask.recurring_interval ? Number(editingTask.recurring_interval) : 1);
-        setRecurringUnit(editingTask.recurring_unit || 'day');
+        setRecurringUnit((editingTask.recurring_unit as any) || 'day');
+        setRecurringEndType((editingTask.recurring_end_type as any) || 'never');
+        setRecurringEndDate(editingTask.recurring_end_date ? editingTask.recurring_end_date.slice(0, 10) : '');
+        setRecurringEndCount(editingTask.recurring_end_count ? Number(editingTask.recurring_end_count) : 10);
+        setRecurringScope('series');
+        setDeleteScope('single');
 
         setAssignmentMode(editingTask.assignment_mode || 'assigned');
         setClaimLimit(editingTask.claim_limit !== undefined && editingTask.claim_limit !== null ? Number(editingTask.claim_limit) : 1);
@@ -95,10 +105,10 @@ export const TaskModal: React.FC = () => {
 
         if (existingIds.length > 0) {
           setAssignedMemberIds(existingIds);
-        } else if (currentMemberId) {
-          setAssignedMemberIds([currentMemberId]);
+        } else if (eligibleChildMembers.length > 0) {
+          setAssignedMemberIds([eligibleChildMembers[0].id]);
         } else {
-          setAssignedMemberIds(activeMembers.map((m) => m.id));
+          setAssignedMemberIds([]);
         }
 
         setPriority(editingTask.priority || 'medium');
@@ -114,16 +124,19 @@ export const TaskModal: React.FC = () => {
         setRecurringRule('none');
         setRecurringInterval(1);
         setRecurringUnit('day');
+        setRecurringEndType('never');
+        setRecurringEndDate('');
+        setRecurringEndCount(10);
+        setRecurringScope('series');
+        setDeleteScope('single');
 
         setAssignmentMode('assigned');
         setClaimLimit(1);
         setPoints(isAdultOrAdmin ? 10 : 0);
         setPointsAwarded(0);
 
-        if (currentMemberId) {
-          setAssignedMemberIds([currentMemberId]);
-        } else if (activeMembers.length > 0) {
-          setAssignedMemberIds([activeMembers[0].id]);
+        if (eligibleChildMembers.length > 0) {
+          setAssignedMemberIds([eligibleChildMembers[0].id]);
         } else {
           setAssignedMemberIds([]);
         }
@@ -184,14 +197,17 @@ export const TaskModal: React.FC = () => {
         due_date: dueDate,
         due_time: dueTime || null,
         reminder_minutes: reminderMinutes,
-        assigned_member_ids: assignmentMode === 'open' ? [] : (assignmentMode === 'everyone' ? activeMembers.map((m) => m.id) : assignedMemberIds),
-        assigned_member_id: assignmentMode === 'open' ? null : (assignmentMode === 'everyone' ? (activeMembers[0]?.id || null) : (assignedMemberIds[0] || null)),
+        assigned_member_ids: assignmentMode === 'open' ? [] : (assignmentMode === 'everyone' ? eligibleChildMembers.map((m) => m.id) : assignedMemberIds),
+        assigned_member_id: assignmentMode === 'open' ? null : (assignmentMode === 'everyone' ? (eligibleChildMembers[0]?.id || null) : (assignedMemberIds[0] || null)),
         priority,
         is_archived: isArchived ? 1 : 0,
         completed: isCompleted,
         recurring_rule: recurringRule,
         recurring_interval: recurringRule === 'custom' ? recurringInterval : 1,
         recurring_unit: recurringRule === 'custom' ? recurringUnit : 'day',
+        recurring_end_type: recurringRule !== 'none' ? recurringEndType : 'never',
+        recurring_end_date: recurringRule !== 'none' && recurringEndType === 'date' ? recurringEndDate || null : null,
+        recurring_end_count: recurringRule !== 'none' && recurringEndType === 'count' ? recurringEndCount || null : null,
         assignment_mode: assignmentMode,
         claim_limit: assignmentMode === 'open' ? claimLimit : 1,
         points: isAdultOrAdmin ? Math.max(0, points || 0) : 0,
@@ -199,7 +215,10 @@ export const TaskModal: React.FC = () => {
       };
 
       if (editingTask) {
-        await updateTask(editingTask.id, taskData);
+        await updateTask(editingTask.id, taskData, {
+          scope: recurringScope,
+          occurrenceDate: editingTask.due_date ? editingTask.due_date.slice(0, 10) : dueDate,
+        });
       } else {
         await createTask(taskData);
       }
@@ -223,7 +242,12 @@ export const TaskModal: React.FC = () => {
     setIsSubmitting(true);
     setError(null);
     try {
-      await deleteTask(editingTask.id, { allInGroup: true });
+      const isRecurring = Boolean(editingTask.recurring_rule && editingTask.recurring_rule !== 'none');
+      await deleteTask(editingTask.id, {
+        allInGroup: true,
+        scope: isRecurring ? deleteScope : 'series',
+        occurrenceDate: editingTask.due_date ? editingTask.due_date.slice(0, 10) : undefined,
+      });
       setShowDeleteConfirm(false);
       closeTaskModal();
     } catch (err: any) {
@@ -379,52 +403,172 @@ export const TaskModal: React.FC = () => {
             </div>
           </div>
 
-          {/* Repeat Option */}
-          <div>
-            <label htmlFor="task-repeat" className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-1.5">
-              <Repeat className="w-3.5 h-3.5 text-emerald-600" />
-              Repeat
-            </label>
-            <select
-              id="task-repeat"
-              value={recurringRule}
-              onChange={(e) => setRecurringRule(e.target.value as TaskRecurrenceRule)}
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-gray-900 transition-colors cursor-pointer font-medium"
-            >
-              <option value="none">None</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="fortnightly">Fortnightly</option>
-              <option value="monthly">Monthly</option>
-              <option value="custom">Custom</option>
-            </select>
+            {/* Repeat Option */}
+            <div>
+              <label htmlFor="task-repeat" className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-1.5">
+                <Repeat className="w-3.5 h-3.5 text-emerald-600" />
+                Repeat
+              </label>
+              <select
+                id="task-repeat"
+                value={recurringRule}
+                onChange={(e) => setRecurringRule(e.target.value as TaskRecurrenceRule)}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-gray-900 transition-colors cursor-pointer font-medium"
+              >
+                <option value="none">None</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="fortnightly">Fortnightly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+                <option value="custom">Custom</option>
+              </select>
 
-            {/* Custom Repeat Configuration */}
-            {recurringRule === 'custom' && (
-              <div className="mt-2.5 p-3 bg-emerald-50/60 border border-emerald-100 rounded-xl flex items-center gap-2 text-xs">
-                <span className="font-semibold text-slate-700 whitespace-nowrap">Repeat every</span>
-                <input
-                  id="task-custom-interval"
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={recurringInterval}
-                  onChange={(e) => setRecurringInterval(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-16 px-2.5 py-1.5 bg-white border border-emerald-200 rounded-lg text-slate-800 text-sm text-center font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                />
-                <select
-                  id="task-custom-unit"
-                  value={recurringUnit}
-                  onChange={(e) => setRecurringUnit(e.target.value as 'day' | 'week' | 'month')}
-                  className="px-3 py-1.5 bg-white border border-emerald-200 rounded-lg text-slate-800 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/30 cursor-pointer"
-                >
-                  <option value="day">{recurringInterval === 1 ? 'Day' : 'Days'}</option>
-                  <option value="week">{recurringInterval === 1 ? 'Week' : 'Weeks'}</option>
-                  <option value="month">{recurringInterval === 1 ? 'Month' : 'Months'}</option>
-                </select>
-              </div>
-            )}
-          </div>
+              {/* Custom Repeat Configuration */}
+              {recurringRule === 'custom' && (
+                <div className="mt-2.5 p-3 bg-emerald-50/60 border border-emerald-100 rounded-xl flex items-center gap-2 text-xs">
+                  <span className="font-semibold text-slate-700 whitespace-nowrap">Repeat every</span>
+                  <input
+                    id="task-custom-interval"
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={recurringInterval}
+                    onChange={(e) => setRecurringInterval(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-16 px-2.5 py-1.5 bg-white border border-emerald-200 rounded-lg text-slate-800 text-sm text-center font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                  />
+                  <select
+                    id="task-custom-unit"
+                    value={recurringUnit}
+                    onChange={(e) => setRecurringUnit(e.target.value as 'day' | 'week' | 'month' | 'year')}
+                    className="px-3 py-1.5 bg-white border border-emerald-200 rounded-lg text-slate-800 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/30 cursor-pointer"
+                  >
+                    <option value="day">{recurringInterval === 1 ? 'Day' : 'Days'}</option>
+                    <option value="week">{recurringInterval === 1 ? 'Week' : 'Weeks'}</option>
+                    <option value="month">{recurringInterval === 1 ? 'Month' : 'Months'}</option>
+                    <option value="year">{recurringInterval === 1 ? 'Year' : 'Years'}</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Recurrence End Conditions (Never, Specific Date, After N occurrences) */}
+              {recurringRule !== 'none' && (
+                <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">
+                    End Repeat
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRecurringEndType('never')}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                        recurringEndType === 'never'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-500/20'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      Never
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRecurringEndType('date')}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                        recurringEndType === 'date'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-500/20'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      On Date
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRecurringEndType('count')}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                        recurringEndType === 'count'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-500/20'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      After Count
+                    </button>
+                  </div>
+
+                  {recurringEndType === 'date' && (
+                    <div className="pt-1">
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        End Date
+                      </label>
+                      <input
+                        type="date"
+                        value={recurringEndDate}
+                        onChange={(e) => setRecurringEndDate(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                        required={recurringEndType === 'date'}
+                      />
+                    </div>
+                  )}
+
+                  {recurringEndType === 'count' && (
+                    <div className="pt-1 flex items-center gap-2">
+                      <span className="text-xs text-slate-600 font-semibold">Ends after</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="500"
+                        value={recurringEndCount || 10}
+                        onChange={(e) => setRecurringEndCount(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-20 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-center font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
+                      />
+                      <span className="text-xs text-slate-600 font-semibold">occurrences</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Edit Scope Options when Editing an existing recurring task */}
+              {editingTask && editingTask.recurring_rule && editingTask.recurring_rule !== 'none' && (
+                <div className="mt-3 p-3 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2">
+                  <label className="block text-xs font-bold text-blue-900">
+                    Apply Changes To:
+                  </label>
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-2 text-xs text-blue-950 font-medium cursor-pointer">
+                      <input
+                        type="radio"
+                        name="recurringScope"
+                        value="single"
+                        checked={recurringScope === 'single'}
+                        onChange={() => setRecurringScope('single')}
+                        className="text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>This task occurrence only</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-blue-950 font-medium cursor-pointer">
+                      <input
+                        type="radio"
+                        name="recurringScope"
+                        value="following"
+                        checked={recurringScope === 'following'}
+                        onChange={() => setRecurringScope('following')}
+                        className="text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>This and following occurrences</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-blue-950 font-medium cursor-pointer">
+                      <input
+                        type="radio"
+                        name="recurringScope"
+                        value="series"
+                        checked={recurringScope === 'series'}
+                        onChange={() => setRecurringScope('series')}
+                        className="text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Entire recurring series</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
 
           {/* Device Reminder Settings */}
           <div>
@@ -555,104 +699,87 @@ export const TaskModal: React.FC = () => {
             <div className="p-3.5 bg-purple-50/70 border border-purple-200/80 rounded-xl space-y-1.5">
               <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900">
                 <Users className="w-4 h-4 text-purple-600" />
-                <span>Individual tasks for all {activeMembers.length} family members</span>
+                <span>Individual tasks for all {eligibleChildMembers.length} eligible child {eligibleChildMembers.length === 1 ? 'member' : 'members'}</span>
               </div>
               <p className="text-[11px] text-purple-700">
-                A completely separate task entry will automatically be created for each active family member using their own real profile and mapped colour.
+                A separate task entry will automatically be created for each eligible child family member.
               </p>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {activeMembers.map((m) => {
-                  const mColor = getPastelColorInfo(m.color);
-                  return (
-                    <span
-                      key={m.id}
-                      style={{
-                        backgroundColor: mColor.hex,
-                        borderColor: mColor.borderHex,
-                        color: mColor.textHex,
-                      }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border"
-                    >
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: mColor.dotHex }} />
-                      {m.name}
-                    </span>
-                  );
-                })}
-              </div>
+              {eligibleChildMembers.length === 0 ? (
+                <p className="text-xs text-amber-700 italic pt-1">
+                  No active child members found in this family. Please add a child family member in Family settings.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {eligibleChildMembers.map((m) => {
+                    const mColor = getPastelColorInfo(m.color);
+                    return (
+                      <span
+                        key={m.id}
+                        style={{
+                          backgroundColor: mColor.hex,
+                          borderColor: mColor.borderHex,
+                          color: mColor.textHex,
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border"
+                      >
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: mColor.dotHex }} />
+                        {m.name}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ) : (
-            /* Assign Member Chips */
+            /* Assign Child Member Chips (Single Selected Child) */
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-xs font-bold text-gray-700">
-                  Assign Family Members *
+                  Assign Child *
                 </label>
                 <span className="text-[11px] font-semibold text-gray-400">
-                  {assignedMemberIds.length} selected
+                  Only Child accounts can be assigned tasks
                 </span>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                {/* All Members Toggle */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (assignedMemberIds.length === activeMembers.length) {
-                      if (activeMembers.length > 0) {
-                        setAssignedMemberIds([activeMembers[0].id]);
-                      }
-                    } else {
-                      setAssignedMemberIds(activeMembers.map((m) => m.id));
-                    }
-                  }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                    assignedMemberIds.length === activeMembers.length
-                      ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
-                      : 'bg-gray-50 text-slate-700 border-gray-200 hover:bg-gray-100'
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>All Members</span>
-                  {assignedMemberIds.length === activeMembers.length && <Check className="w-3 h-3 stroke-[3]" />}
-                </button>
+              {eligibleChildMembers.length === 0 ? (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+                  No child members found. Tasks can only be assigned to child accounts.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {eligibleChildMembers.map((m) => {
+                    const isSelected = assignedMemberIds.includes(m.id);
+                    const mColor = getPastelColorInfo(m.color);
 
-                {/* Individual Family Members */}
-                {activeMembers.map((m) => {
-                  const isSelected = assignedMemberIds.includes(m.id);
-                  const mColor = getPastelColorInfo(m.color);
-
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => {
-                        if (isSelected) {
-                          if (assignedMemberIds.length > 1) {
-                            setAssignedMemberIds(assignedMemberIds.filter((id) => id !== m.id));
-                          }
-                        } else {
-                          setAssignedMemberIds([...assignedMemberIds, m.id]);
-                        }
-                      }}
-                      style={{
-                        backgroundColor: isSelected ? mColor.hex : '#F8FAFC',
-                        borderColor: isSelected ? mColor.borderHex : '#E2E8F0',
-                        color: isSelected ? mColor.textHex : '#64748B',
-                      }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
-                        isSelected ? 'ring-2 ring-emerald-500/30 font-extrabold' : 'hover:border-gray-300 font-medium'
-                      }`}
-                    >
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: mColor.dotHex }}
-                      />
-                      <span>{m.name}</span>
-                      {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                    </button>
-                  );
-                })}
-              </div>
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          // Assigned: one selected child
+                          setAssignedMemberIds([m.id]);
+                        }}
+                        style={{
+                          backgroundColor: isSelected ? mColor.hex : '#F8FAFC',
+                          borderColor: isSelected ? mColor.borderHex : '#E2E8F0',
+                          color: isSelected ? mColor.textHex : '#64748B',
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                          isSelected ? 'ring-2 ring-emerald-500/30 font-extrabold' : 'hover:border-gray-300 font-medium'
+                        }`}
+                      >
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: mColor.dotHex }}
+                        />
+                        <span>{m.name}</span>
+                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -840,6 +967,49 @@ export const TaskModal: React.FC = () => {
                 ? ' This will delete the task for all assigned family members.'
                 : ''}
             </p>
+
+            {editingTask.recurring_rule && editingTask.recurring_rule !== 'none' && (
+              <div className="p-3 bg-red-50/60 border border-red-100 rounded-xl space-y-2">
+                <label className="block text-xs font-bold text-red-950">
+                  Delete Scope:
+                </label>
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-2 text-xs text-red-900 font-medium cursor-pointer">
+                    <input
+                      type="radio"
+                      name="deleteScope"
+                      value="single"
+                      checked={deleteScope === 'single'}
+                      onChange={() => setDeleteScope('single')}
+                      className="text-red-600 focus:ring-red-500"
+                    />
+                    <span>This occurrence only</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-red-900 font-medium cursor-pointer">
+                    <input
+                      type="radio"
+                      name="deleteScope"
+                      value="following"
+                      checked={deleteScope === 'following'}
+                      onChange={() => setDeleteScope('following')}
+                      className="text-red-600 focus:ring-red-500"
+                    />
+                    <span>This and following occurrences</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-red-900 font-medium cursor-pointer">
+                    <input
+                      type="radio"
+                      name="deleteScope"
+                      value="series"
+                      checked={deleteScope === 'series'}
+                      onChange={() => setDeleteScope('series')}
+                      className="text-red-600 focus:ring-red-500"
+                    />
+                    <span>Entire series</span>
+                  </label>
+                </div>
+              </div>
+            )}
 
             {error && (
               <div className="p-3 bg-red-50 text-red-700 text-xs rounded-xl flex items-start gap-2 border border-red-100">

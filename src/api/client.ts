@@ -17,6 +17,7 @@ import {
   ShoppingListItem,
   Reward,
   RewardExchange,
+  TaskApprovalItem,
 } from '../types';
 
 class ApiError extends Error {
@@ -257,11 +258,20 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  updateTask: (id: string, data: Partial<Task>) =>
-    fetchJson<Task>(`/api/tasks/${id}`, {
+  updateTask: (
+    id: string,
+    data: Partial<Task>,
+    options?: { scope?: 'single' | 'following' | 'series'; occurrenceDate?: string }
+  ) => {
+    const params = new URLSearchParams();
+    if (options?.scope) params.set('scope', options.scope);
+    if (options?.occurrenceDate) params.set('occurrenceDate', options.occurrenceDate);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return fetchJson<Task>(`/api/tasks/${id}${qs}`, {
       method: 'PUT',
       body: JSON.stringify(data),
-    }),
+    });
+  },
 
   toggleTask: (id: string, occurrenceDate?: string, clientDate?: string) =>
     fetchJson<Task>(`/api/tasks/${id}/toggle`, {
@@ -298,10 +308,38 @@ export const api = {
       body: options ? JSON.stringify(options) : undefined,
     }),
 
-  deleteTask: (id: string, options?: { allInGroup?: boolean }) =>
-    fetchJson<{ success: boolean }>(`/api/tasks/${id}${options?.allInGroup ? '?allInGroup=true' : ''}`, {
+  deleteTask: (
+    id: string,
+    options?: { allInGroup?: boolean; scope?: 'single' | 'following' | 'series'; occurrenceDate?: string }
+  ) => {
+    const params = new URLSearchParams();
+    if (options?.allInGroup) params.set('allInGroup', 'true');
+    if (options?.scope) params.set('scope', options.scope);
+    if (options?.occurrenceDate) params.set('occurrenceDate', options.occurrenceDate);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return fetchJson<{ success: boolean }>(`/api/tasks/${id}${qs}`, {
       method: 'DELETE',
-    }),
+    });
+  },
+
+  // Task Approvals (Adult/Admin)
+  getApprovals: () => fetchJson<TaskApprovalItem[]>('/api/tasks/approvals'),
+
+  approveTask: (id: string) =>
+    fetchJson<{ success: boolean; message: string; pointsAwarded: number; child_id: string; totalPoints: number }>(
+      `/api/tasks/approvals/${id}/approve`,
+      {
+        method: 'POST',
+      }
+    ),
+
+  rejectTask: (id: string) =>
+    fetchJson<{ success: boolean; message: string; task_id: string; child_id: string }>(
+      `/api/tasks/approvals/${id}/reject`,
+      {
+        method: 'POST',
+      }
+    ),
 
   // Birthdays
   getBirthdays: () => fetchJson<BirthdayItem[]>('/api/birthdays'),

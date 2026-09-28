@@ -85,13 +85,20 @@ interface CalendarContextType {
   updateEventType: (id: string, data: Partial<EventType>) => Promise<EventType>;
   deleteEventType: (id: string) => Promise<void>;
   createTask: (data: Partial<Task>) => Promise<Task>;
-  updateTask: (id: string, data: Partial<Task>) => Promise<Task>;
+  updateTask: (
+    id: string,
+    data: Partial<Task>,
+    options?: { scope?: 'single' | 'following' | 'series'; occurrenceDate?: string }
+  ) => Promise<Task>;
   toggleTask: (id: string, occurrenceDate?: string, clientDate?: string) => Promise<Task>;
   claimTask: (id: string, occurrenceDate?: string, clientDate?: string) => Promise<Task>;
   unclaimTask: (id: string) => Promise<any>;
   adjustTaskPoints: (id: string, data: { points_awarded: number; notes?: string }) => Promise<Task>;
   archiveTask: (id: string, options?: { allInGroup?: boolean }) => Promise<Task>;
-  deleteTask: (id: string, options?: { allInGroup?: boolean }) => Promise<void>;
+  deleteTask: (
+    id: string,
+    options?: { allInGroup?: boolean; scope?: 'single' | 'following' | 'series'; occurrenceDate?: string }
+  ) => Promise<void>;
   triggerGoogleSync: () => Promise<{ success: boolean; eventsSynced: number }>;
 }
 
@@ -363,9 +370,13 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     return newTask;
   };
 
-  const updateTask = async (id: string, data: Partial<Task>) => {
-    const updated = await api.updateTask(id, data);
-    setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+  const updateTask = async (
+    id: string,
+    data: Partial<Task>,
+    options?: { scope?: 'single' | 'following' | 'series'; occurrenceDate?: string }
+  ) => {
+    const updated = await api.updateTask(id, data, options);
+    await fetchCalendarData();
     return updated;
   };
 
@@ -402,9 +413,12 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     return updated;
   };
 
-  const deleteTask = async (id: string, options?: { allInGroup?: boolean }) => {
+  const deleteTask = async (
+    id: string,
+    options?: { allInGroup?: boolean; scope?: 'single' | 'following' | 'series'; occurrenceDate?: string }
+  ) => {
     await api.deleteTask(id, options);
-    setTasks((prev) => prev.filter((t) => t.id !== id));
+    await fetchCalendarData();
   };
 
   const triggerGoogleSync = async () => {

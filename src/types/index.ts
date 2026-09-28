@@ -140,7 +140,8 @@ export interface CalendarEvent {
 }
 
 export type Priority = 'low' | 'medium' | 'high';
-export type TaskRecurrenceRule = 'none' | 'daily' | 'weekly' | 'fortnightly' | 'monthly' | 'custom';
+export type TaskRecurrenceRule = 'none' | 'daily' | 'weekly' | 'fortnightly' | 'monthly' | 'yearly' | 'custom';
+export type TaskRecurrenceEndType = 'never' | 'date' | 'count';
 export type TaskAssignmentMode = 'assigned' | 'open' | 'everyone';
 
 export interface TaskCompletion {
@@ -148,6 +149,23 @@ export interface TaskCompletion {
   member_id: string;
   occurrence_date: string;
   points_awarded: number;
+  status?: 'pending' | 'approved' | 'rejected';
+}
+
+export interface TaskApprovalItem {
+  id: string; // approval_id / task_points_records.id
+  task_id: string;
+  occurrence_date: string;
+  completed_at: string;
+  status: string;
+  title: string;
+  description?: string | null;
+  points: number;
+  assignment_mode: TaskAssignmentMode;
+  child_id: string;
+  child_name: string;
+  child_color?: string | null;
+  child_avatar?: string | null;
 }
 
 export interface Task {
@@ -177,7 +195,12 @@ export interface Task {
   priority: Priority;
   recurring_rule?: TaskRecurrenceRule | null;
   recurring_interval?: number | null;
-  recurring_unit?: 'day' | 'week' | 'month' | null;
+  recurring_unit?: 'day' | 'week' | 'month' | 'year' | null;
+  recurring_end_type?: TaskRecurrenceEndType | null;
+  recurring_end_date?: string | null;
+  recurring_end_count?: number | null;
+  recurring_exceptions?: string[] | null;
+  occurrence_date?: string | null;
   created_at?: string;
   updated_at?: string;
   completions?: TaskCompletion[];
@@ -351,7 +374,7 @@ export interface SystemStats {
   serverTime: string;
 }
 
-export type CalendarViewMode = 'month' | 'week' | 'day' | 'agenda' | 'rewards';
+export type CalendarViewMode = 'month' | 'week' | 'day' | 'agenda' | 'rewards' | 'approvals';
 
 export interface Reward {
   id: string;

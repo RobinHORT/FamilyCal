@@ -159,6 +159,10 @@ export function initDatabase() {
       recurring_rule TEXT DEFAULT 'none', -- none, daily, weekly, fortnightly, monthly, custom
       recurring_interval INTEGER DEFAULT 1,
       recurring_unit TEXT DEFAULT 'day',
+      recurring_end_type TEXT DEFAULT 'never', -- never, date, count
+      recurring_end_date TEXT,
+      recurring_end_count INTEGER,
+      recurring_exceptions TEXT DEFAULT '[]',
       assignment_mode TEXT DEFAULT 'assigned', -- assigned, open, everyone
       claim_limit INTEGER DEFAULT 1, -- 1 = single person, 0 = multiple people
       points INTEGER DEFAULT 0,
@@ -518,6 +522,12 @@ export function initDatabase() {
     const todayStr = new Date().toISOString().split('T')[0];
 
     for (const t of tasksToUpdate) {
+      // Explicitly detect Open Tasks: NEVER migrate, assign, mutate, or clone an Open Task.
+      // Leave it exactly as assignment_mode = 'open', assigned_member_id = null, assigned_member_ids = '[]'
+      if (t.assignment_mode === 'open') {
+        continue;
+      }
+
       let ids: string[] = [];
       try {
         if (t.assigned_member_ids) {
@@ -653,6 +663,30 @@ export function initDatabase() {
       console.log('Migration applied: added claimed_by column to tasks table.');
     }
 
+    const hasRecurringEndType = taskCols.some((col) => col.name === 'recurring_end_type');
+    if (!hasRecurringEndType) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN recurring_end_type TEXT DEFAULT 'never';`).run();
+      console.log('Migration applied: added recurring_end_type column to tasks table.');
+    }
+
+    const hasRecurringEndDate = taskCols.some((col) => col.name === 'recurring_end_date');
+    if (!hasRecurringEndDate) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN recurring_end_date TEXT;`).run();
+      console.log('Migration applied: added recurring_end_date column to tasks table.');
+    }
+
+    const hasRecurringEndCount = taskCols.some((col) => col.name === 'recurring_end_count');
+    if (!hasRecurringEndCount) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN recurring_end_count INTEGER;`).run();
+      console.log('Migration applied: added recurring_end_count column to tasks table.');
+    }
+
+    const hasRecurringExceptions = taskCols.some((col) => col.name === 'recurring_exceptions');
+    if (!hasRecurringExceptions) {
+      db.prepare(`ALTER TABLE tasks ADD COLUMN recurring_exceptions TEXT DEFAULT '[]';`).run();
+      console.log('Migration applied: added recurring_exceptions column to tasks table.');
+    }
+
     // Safe startup migration: Ensure points column exists on family_members
     const memberCols = db.prepare(`PRAGMA table_info(family_members);`).all() as Array<{ name: string }>;
     const hasMemberPoints = memberCols.some((col) => col.name === 'points');
@@ -691,8 +725,46 @@ export function initDatabase() {
         console.warn('Could not drop old task points index:', e);
       }
     }
+
+    const hasStatus = pointsCols.some((col) => col.name === 'status');
+    if (!hasStatus) {
+      db.prepare(`ALTER TABLE task_points_records ADD COLUMN status TEXT DEFAULT 'approved';`).run();
+      console.log('Migration applied: added status column to task_points_records.');
+    }
+
+    const hasApprovedAt = pointsCols.some((col) => col.name === 'approved_at');
+    if (!hasApprovedAt) {
+      db.prepare(`ALTER TABLE task_points_records ADD COLUMN approved_at TEXT;`).run();
+      console.log('Migration applied: added approved_at column to task_points_records.');
+    }
+
+    const hasApprovedBy = pointsCols.some((col) => col.name === 'approved_by');
+    if (!hasApprovedBy) {
+      db.prepare(`ALTER TABLE task_points_records ADD COLUMN approved_by TEXT;`).run();
+      console.log('Migration applied: added approved_by column to task_points_records.');
+    }
+
     db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_points_member_task_occ ON task_points_records(member_id, task_id, occurrence_date);`).run();
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_task_points_family_member ON task_points_records(family_id, member_id);`).run();
+
+    // Permanent points transactions table for Kids Tasks + Rewards
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS point_transactions (
+        id TEXT PRIMARY KEY,
+        family_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        task_id TEXT,
+        task_title TEXT,
+        occurrence_date TEXT,
+        points INTEGER NOT NULL,
+        type TEXT NOT NULL, -- 'task_approved', 'reward_redeemed', 'adjustment'
+        created_at TEXT NOT NULL,
+        created_by TEXT,
+        FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+        FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE
+      );
+    `).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_point_transactions_fam_mem ON point_transactions(family_id, member_id);`).run();
   } catch (pointsMigErr) {
     console.warn('Points & assignment migration check warning:', pointsMigErr);
   }
@@ -1330,11 +1402,18 @@ function seedInitialDataIfEmpty() {
 
 export function reconcileMemberPoints(familyId: string, memberId: string): number {
   try {
-    const earnedResult = db.prepare(`
+    const txResult = db.prepare(`
+      SELECT COALESCE(SUM(points), 0) as total
+      FROM point_transactions
+      WHERE family_id = ? AND member_id = ? AND type = 'task_approved'
+    `).get(familyId, memberId) as any;
+
+    const legacyEarned = db.prepare(`
       SELECT COALESCE(SUM(points_awarded), 0) as total
       FROM task_points_records
-      WHERE family_id = ? AND member_id = ? AND completed = 1
-    `).get(familyId, memberId) as any;
+      WHERE family_id = ? AND member_id = ? AND completed = 1 AND status = 'approved'
+        AND task_id NOT IN (SELECT task_id FROM point_transactions WHERE family_id = ? AND member_id = ?)
+    `).get(familyId, memberId, familyId, memberId) as any;
 
     const spentResult = db.prepare(`
       SELECT COALESCE(SUM(points_cost * quantity), 0) as total
@@ -1342,7 +1421,7 @@ export function reconcileMemberPoints(familyId: string, memberId: string): numbe
       WHERE family_id = ? AND member_id = ?
     `).get(familyId, memberId) as any;
 
-    const totalEarned = earnedResult ? Number(earnedResult.total) || 0 : 0;
+    const totalEarned = (txResult ? Number(txResult.total) || 0 : 0) + (legacyEarned ? Number(legacyEarned.total) || 0 : 0);
     const totalSpent = spentResult ? Number(spentResult.total) || 0 : 0;
     const netPoints = Math.max(0, totalEarned - totalSpent);
 

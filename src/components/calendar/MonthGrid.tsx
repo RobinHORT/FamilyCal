@@ -15,6 +15,7 @@ import {
 import { CalendarEvent, FamilyMember, EventType, Task } from '../../types';
 import { MultiDayEventBar, MultiDayTaskBar } from './EventCard';
 import { isEventOnDay, isEventMultiDay } from '../../utils/calendarDateUtils';
+import { isTaskOccurrenceCompleted, isTaskOccurrenceOnDay } from '../../utils/taskPermissions';
 
 interface MonthGridProps {
   currentDate: Date;
@@ -83,58 +84,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
 
   const getTasksForDay = (dayDate: Date) => {
     if (!tasks || tasks.length === 0) return [];
-    const dayStr = format(dayDate, 'yyyy-MM-dd');
-
-    return tasks.filter((t) => {
-      if (t.is_archived) return false;
-
-      const sStr = (t as any).start_date || (t as any).start_time;
-      const eStr = (t as any).end_date || (t as any).end_time || t.due_date;
-
-      if (sStr && eStr) {
-        const s = parseISO(sStr.slice(0, 10));
-        const e = parseISO(eStr.slice(0, 10));
-        if (isSameDay(s, dayDate) || (dayDate >= s && dayDate <= e)) return true;
-      } else if (t.due_date && t.due_date.slice(0, 10) === dayStr) {
-        return true;
-      }
-
-      if (!t.due_date) return false;
-      // Spawned child tasks are tied to a single occurrence date and never project recurrence
-      if (t.parent_task_id) return false;
-
-      const due = parseISO(t.due_date.slice(0, 10));
-      if (dayDate < due) return false;
-      // Completed recurring tasks should not project forward into future dates
-      if (t.completed && dayDate > due) return false;
-
-      const rule = t.recurring_rule;
-      if (!rule || rule === 'none') return false;
-
-      const interval = Math.max(1, Number(t.recurring_interval) || 1);
-      const diffDays = differenceInCalendarDays(dayDate, due);
-
-      if (rule === 'daily') {
-        return diffDays % interval === 0;
-      }
-      if (rule === 'weekly') {
-        return dayDate.getDay() === due.getDay() && Math.floor(diffDays / 7) % interval === 0;
-      }
-      if (rule === 'fortnightly') {
-        return diffDays >= 0 && diffDays % 14 === 0;
-      }
-      if (rule === 'monthly') {
-        return dayDate.getDate() === due.getDate();
-      }
-      if (rule === 'custom') {
-        const unit = t.recurring_unit || 'day';
-        if (unit === 'day') return diffDays % interval === 0;
-        if (unit === 'week') return dayDate.getDay() === due.getDay() && Math.floor(diffDays / 7) % interval === 0;
-        if (unit === 'month') return dayDate.getDate() === due.getDate();
-      }
-
-      return false;
-    });
+    return tasks.filter((t) => isTaskOccurrenceOnDay(t, dayDate));
   };
 
   const isEventMultiDay = (evt: CalendarEvent) => {
@@ -175,10 +125,11 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
 
           // Process Events
           weekDays.forEach((dayDate, colIdx) => {
+            const dayStr = format(dayDate, 'yyyy-MM-dd');
             const dayEvts = getEventsForDay(dayDate);
             dayEvts.forEach((evt) => {
               const multi = isEventMultiDay(evt);
-              const key = `evt-${evt.id}`;
+              const key = multi ? `evt-${evt.id}` : `evt-${evt.id}-${dayStr}`;
               if (!weekItemsMap.has(key)) {
                 let startCol = colIdx;
                 let endCol = colIdx;
@@ -212,7 +163,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
 
                 weekItemsMap.set(key, {
                   type: 'event',
-                  id: evt.id,
+                  id: key,
                   event: evt,
                   startCol,
                   endCol,
@@ -232,10 +183,11 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
 
           // Process Tasks
           weekDays.forEach((dayDate, colIdx) => {
+            const dayStr = format(dayDate, 'yyyy-MM-dd');
             const dayTasks = getTasksForDay(dayDate);
             dayTasks.forEach((task) => {
               const multi = isTaskMultiDay(task);
-              const key = `task-${task.id}`;
+              const key = multi ? `task-${task.id}` : `task-${task.id}-${dayStr}`;
               if (!weekItemsMap.has(key)) {
                 let startCol = colIdx;
                 let endCol = colIdx;
@@ -263,11 +215,16 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
 
                 const isStartOfWeek = multi && startCol === 0 && taskStart < weekDays[0];
                 const isEndOfWeek = multi && endCol === 6 && taskEnd >= addDays(weekDays[6], 1);
+                const isComp = isTaskOccurrenceCompleted(task, dayStr);
 
                 weekItemsMap.set(key, {
                   type: 'task',
-                  id: task.id,
-                  task,
+                  id: key,
+                  task: {
+                    ...task,
+                    due_date: dayStr,
+                    completed: isComp,
+                  },
                   startCol,
                   endCol,
                   isStartOfWeek,
@@ -385,7 +342,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                         if (type === 'event' && event) {
                           return (
                             <MultiDayEventBar
-                              key={`evt-${event.id}-${slotIdx}`}
+                              key={`evt-${slotInfo.id}-${slotIdx}`}
                               event={event}
                               startCol={startCol}
                               endCol={endCol}
@@ -401,7 +358,7 @@ export const MonthGrid: React.FC<MonthGridProps> = ({
                         if (type === 'task' && task) {
                           return (
                             <MultiDayTaskBar
-                              key={`task-${task.id}-${slotIdx}`}
+                              key={`task-${slotInfo.id}-${slotIdx}`}
                               task={task}
                               startCol={startCol}
                               endCol={endCol}

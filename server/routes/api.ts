@@ -1873,6 +1873,16 @@ function formatTaskRow(t: any, familyTimezone?: any) {
     recurring_rule: t.recurring_rule || 'none',
     recurring_interval: t.recurring_interval ? Number(t.recurring_interval) : 1,
     recurring_unit: t.recurring_unit || 'day',
+    recurring_end_type: t.recurring_end_type || 'never',
+    recurring_end_date: t.recurring_end_date || null,
+    recurring_end_count: t.recurring_end_count !== undefined && t.recurring_end_count !== null ? Number(t.recurring_end_count) : null,
+    recurring_exceptions: (() => {
+      try {
+        return typeof t.recurring_exceptions === 'string' ? JSON.parse(t.recurring_exceptions) : (Array.isArray(t.recurring_exceptions) ? t.recurring_exceptions : []);
+      } catch {
+        return [];
+      }
+    })(),
   };
 }
 
@@ -1949,6 +1959,9 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
     ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
 
     const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
+    if (!isAdultAdmin) {
+      return res.status(403).json({ error: 'Only Adult and Administrator accounts can create tasks.' });
+    }
     const family = db.prepare('SELECT timezone FROM families WHERE id = ?').get(req.user!.family_id) as any;
     const todayStr = getEffectiveTodayDate(family?.timezone);
 
@@ -1965,6 +1978,10 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       recurring_rule,
       recurring_interval,
       recurring_unit,
+      recurring_end_type,
+      recurring_end_date,
+      recurring_end_count,
+      recurring_exceptions,
       assignment_mode,
       claim_limit,
       points,
@@ -1982,14 +1999,18 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
     const rule = recurring_rule || 'none';
     const interval = recurring_interval ? Math.max(1, Number(recurring_interval)) : 1;
     const unit = recurring_unit || 'day';
+    const cleanEndType = recurring_end_type === 'date' || recurring_end_type === 'count' ? recurring_end_type : 'never';
+    const cleanEndDate = cleanEndType === 'date' && recurring_end_date ? recurring_end_date.split('T')[0] : null;
+    const cleanEndCount = cleanEndType === 'count' && recurring_end_count ? Math.max(1, parseInt(recurring_end_count, 10)) : null;
+    const cleanExceptions = Array.isArray(recurring_exceptions) ? JSON.stringify(recurring_exceptions) : (typeof recurring_exceptions === 'string' ? recurring_exceptions : '[]');
 
     // Points and assignment mode logic:
-    // Only Admin or Adult can set points or use open/everyone mode.
-    // Children can only create assigned tasks with 0 points.
+    // Open tasks always remain open (child-created open tasks have 0 points).
+    // Only Admin or Adult can set points or use everyone mode.
     const cleanPoints = isAdultAdmin ? Math.max(0, parseInt(points, 10) || 0) : 0;
-    const cleanMode: 'assigned' | 'open' | 'everyone' = isAdultAdmin && (assignment_mode === 'open' || assignment_mode === 'everyone')
-      ? assignment_mode
-      : 'assigned';
+    const cleanMode: 'assigned' | 'open' | 'everyone' = assignment_mode === 'open'
+      ? 'open'
+      : (isAdultAdmin && assignment_mode === 'everyone' ? 'everyone' : 'assigned');
 
     const cleanClaimLimit = cleanMode === 'open'
       ? (claim_limit === 0 || claim_limit === 'multiple' || claim_limit === null ? 0 : 1)
@@ -2004,10 +2025,11 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
         INSERT INTO tasks (
           id, family_id, task_group_id, title, description, due_date, due_time, reminder_minutes,
           completed, completed_at, is_archived, assigned_member_id, assigned_member_ids, priority,
-          recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit, points,
+          recurring_rule, recurring_interval, recurring_unit, recurring_end_type, recurring_end_date,
+          recurring_end_count, recurring_exceptions, assignment_mode, claim_limit, points,
           points_awarded, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, NULL, '[]', ?, ?, ?, ?, 'open', ?, ?, 0, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, NULL, '[]', ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 0, ?, ?)
       `).run(
         taskId,
         req.user!.family_id,
@@ -2022,6 +2044,10 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
         rule,
         interval,
         unit,
+        cleanEndType,
+        cleanEndDate,
+        cleanEndCount,
+        cleanExceptions,
         cleanClaimLimit,
         cleanPoints,
         now,
@@ -2041,30 +2067,38 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
     let targetMemberIds: string[] = [];
 
     if (cleanMode === 'everyone') {
-      const activeMembers = db.prepare(
-        `SELECT id FROM family_members WHERE family_id = ? AND is_active = 1`
+      // Only active child accounts receive tasks
+      const activeChildMembers = db.prepare(
+        `SELECT id FROM family_members WHERE family_id = ? AND is_active = 1 AND role = 'child'`
       ).all(req.user!.family_id) as any[];
 
-      targetMemberIds = activeMembers.map((m: any) => m.id);
+      targetMemberIds = activeChildMembers.map((m: any) => m.id);
       if (targetMemberIds.length === 0) {
-        return res.status(400).json({ error: 'No active family members found.' });
+        return res.status(400).json({ error: 'No active child family members found to assign tasks to.' });
       }
     } else {
       if (Array.isArray(assigned_member_ids) && assigned_member_ids.length > 0) {
         targetMemberIds = Array.from(new Set(assigned_member_ids.filter(Boolean)));
       } else if (assigned_member_id) {
         targetMemberIds = [assigned_member_id];
-      } else if (currentMember?.id) {
-        targetMemberIds = [currentMember.id];
       } else {
-        const activeMembers = db.prepare(
-          `SELECT id FROM family_members WHERE family_id = ? AND is_active = 1`
+        const activeChildMembers = db.prepare(
+          `SELECT id FROM family_members WHERE family_id = ? AND is_active = 1 AND role = 'child'`
         ).all(req.user!.family_id) as any[];
-        targetMemberIds = activeMembers.map((m: any) => m.id);
+        targetMemberIds = activeChildMembers.length > 0 ? [activeChildMembers[0].id] : [];
       }
 
       if (targetMemberIds.length === 0) {
-        return res.status(400).json({ error: 'Please select at least one family member.' });
+        return res.status(400).json({ error: 'Please select an eligible child family member.' });
+      }
+
+      // Enforce: only Child accounts can be task recipients
+      const nonChildMembers = db.prepare(
+        `SELECT id, name, role FROM family_members WHERE id IN (${targetMemberIds.map(() => '?').join(',')}) AND role != 'child'`
+      ).all(...targetMemberIds) as any[];
+
+      if (nonChildMembers.length > 0) {
+        return res.status(400).json({ error: 'Tasks can only be assigned to child family members.' });
       }
     }
 
@@ -2076,10 +2110,11 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
       INSERT INTO tasks (
         id, family_id, task_group_id, title, description, due_date, due_time, reminder_minutes,
         completed, completed_at, is_archived, assigned_member_id, assigned_member_ids, priority,
-        recurring_rule, recurring_interval, recurring_unit, assignment_mode, claim_limit, points,
+        recurring_rule, recurring_interval, recurring_unit, recurring_end_type, recurring_end_date,
+        recurring_end_count, recurring_exceptions, assignment_mode, claim_limit, points,
         points_awarded, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?)
     `);
 
     for (const memberId of targetMemberIds) {
@@ -2102,6 +2137,10 @@ router.post('/tasks', authenticateToken, (req: AuthRequest, res: Response) => {
         rule,
         interval,
         unit,
+        cleanEndType,
+        cleanEndDate,
+        cleanEndCount,
+        cleanExceptions,
         cleanMode,
         cleanPoints,
         now,
@@ -2147,11 +2186,9 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
 
     const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
 
-    // Permission enforcement for children
+    // Children cannot edit tasks
     if (!isAdultAdmin) {
-      if (task.assigned_member_id !== currentMember?.id) {
-        return res.status(403).json({ error: 'You can only edit tasks assigned to you.' });
-      }
+      return res.status(403).json({ error: 'Only Adult and Administrator accounts can edit tasks.' });
     }
 
     const {
@@ -2204,6 +2241,126 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
     const newClaimLimit = isAdultAdmin && claim_limit !== undefined
       ? (claim_limit === 0 || claim_limit === 'multiple' || claim_limit === null ? 0 : 1)
       : task.claim_limit;
+
+    const editScope = (req.query.scope as string) || req.body?.scope || 'series';
+    const reqOccDate = req.query.occurrenceDate || req.body?.occurrenceDate || req.body?.occurrence_date;
+    const occDateStr = reqOccDate ? String(reqOccDate).trim().slice(0, 10) : (cleanDueDate || todayStr);
+
+    if (task.recurring_rule && task.recurring_rule !== 'none') {
+      if (editScope === 'single' && occDateStr) {
+        // 1. Add occDateStr to master's recurring_exceptions
+        let exceptions: string[] = [];
+        try {
+          exceptions = JSON.parse(task.recurring_exceptions || '[]');
+        } catch {
+          exceptions = [];
+        }
+        if (!exceptions.includes(occDateStr)) {
+          exceptions.push(occDateStr);
+          db.prepare('UPDATE tasks SET recurring_exceptions = ?, updated_at = ? WHERE id = ? AND family_id = ?').run(
+            JSON.stringify(exceptions),
+            now,
+            id,
+            req.user!.family_id
+          );
+        }
+
+        // 2. Create an independent single task for this occurrence
+        const singleTaskId = 'tsk_' + uuidv4().slice(0, 8);
+        db.prepare(`
+          INSERT INTO tasks (
+            id, family_id, task_group_id, title, description, due_date, due_time, reminder_minutes,
+            completed, completed_at, is_archived, assigned_member_id, assigned_member_ids, priority,
+            recurring_rule, recurring_interval, recurring_unit, recurring_end_type, recurring_end_date,
+            recurring_end_count, recurring_exceptions, assignment_mode, claim_limit, points,
+            points_awarded, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, ?, ?, ?, 'none', 1, 'day', 'never', NULL, NULL, '[]', ?, ?, ?, 0, ?, ?)
+        `).run(
+          singleTaskId,
+          req.user!.family_id,
+          task.task_group_id || singleTaskId,
+          cleanTitle,
+          cleanDesc,
+          occDateStr,
+          cleanDueTime,
+          newReminder,
+          task.assigned_member_id,
+          task.assigned_member_ids || '[]',
+          cleanPriority,
+          task.assignment_mode || 'assigned',
+          newClaimLimit,
+          newPoints,
+          now,
+          now
+        );
+
+        const createdSingle = db.prepare(`
+          SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+          FROM tasks t
+          LEFT JOIN family_members m ON t.assigned_member_id = m.id
+          WHERE t.id = ?
+        `).get(singleTaskId) as any;
+
+        return res.json(formatTaskRow(createdSingle));
+      } else if (editScope === 'following' && occDateStr) {
+        // 1. Cap previous series to day before occDateStr
+        const d = new Date(occDateStr + 'T12:00:00Z');
+        d.setUTCDate(d.getUTCDate() - 1);
+        const dayBefore = d.toISOString().slice(0, 10);
+
+        db.prepare(`
+          UPDATE tasks
+          SET recurring_end_type = 'date', recurring_end_date = ?, updated_at = ?
+          WHERE id = ? AND family_id = ?
+        `).run(dayBefore, now, id, req.user!.family_id);
+
+        // 2. Create new recurring series starting from occDateStr
+        const newSeriesId = 'tsk_' + uuidv4().slice(0, 8);
+        db.prepare(`
+          INSERT INTO tasks (
+            id, family_id, task_group_id, title, description, due_date, due_time, reminder_minutes,
+            completed, completed_at, is_archived, assigned_member_id, assigned_member_ids, priority,
+            recurring_rule, recurring_interval, recurring_unit, recurring_end_type, recurring_end_date,
+            recurring_end_count, recurring_exceptions, assignment_mode, claim_limit, points,
+            points_awarded, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, 0, ?, ?)
+        `).run(
+          newSeriesId,
+          req.user!.family_id,
+          task.task_group_id || newSeriesId,
+          cleanTitle,
+          cleanDesc,
+          occDateStr,
+          cleanDueTime,
+          newReminder,
+          task.assigned_member_id,
+          task.assigned_member_ids || '[]',
+          cleanPriority,
+          newRule,
+          newInterval,
+          newUnit,
+          req.body?.recurring_end_type || 'never',
+          req.body?.recurring_end_date || null,
+          req.body?.recurring_end_count || null,
+          task.assignment_mode || 'assigned',
+          newClaimLimit,
+          newPoints,
+          now,
+          now
+        );
+
+        const createdSeries = db.prepare(`
+          SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+          FROM tasks t
+          LEFT JOIN family_members m ON t.assigned_member_id = m.id
+          WHERE t.id = ?
+        `).get(newSeriesId) as any;
+
+        return res.json(formatTaskRow(createdSeries));
+      }
+    }
 
     // If this is an open task without assigned member, handle update directly
     if (task.assignment_mode === 'open' && !task.assigned_member_id) {
@@ -2270,6 +2427,15 @@ router.put('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response) =>
 
     if (finalMemberIds.length === 0 && task.assigned_member_id) {
       finalMemberIds = [task.assigned_member_id];
+    }
+
+    if (finalMemberIds.length > 0) {
+      const nonChildMembers = db.prepare(
+        `SELECT id FROM family_members WHERE id IN (${finalMemberIds.map(() => '?').join(',')}) AND role != 'child'`
+      ).all(...finalMemberIds) as any[];
+      if (nonChildMembers.length > 0) {
+        return res.status(400).json({ error: 'Tasks can only be assigned to child family members.' });
+      }
     }
 
     // If member assignments are being modified by an adult
@@ -2493,16 +2659,27 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
     if (!currentMemberId) {
       return res.status(400).json({ error: 'Active family member profile not found.' });
     }
-    const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
+
+    // Only Child accounts can claim and complete tasks
+    if (currentMember?.role !== 'child') {
+      return res.status(403).json({ error: 'Only child family members can claim and complete tasks. Adult and Admin accounts approve completions.' });
+    }
 
     const family = db.prepare('SELECT timezone FROM families WHERE id = ?').get(req.user!.family_id) as any;
     const todayStr = getEffectiveTodayDate(family?.timezone);
 
     // Determine the occurrence date we are toggling
-    const reqOccDate = req.body?.occurrence_date || req.body?.due_date;
+    const reqOccDate = req.body?.occurrenceDate || req.body?.occurrence_date || req.body?.due_date;
     const occurrenceDateStr = reqOccDate
       ? String(reqOccDate).trim().slice(0, 10)
       : (task.due_date ? String(task.due_date).trim().slice(0, 10) : todayStr);
+
+    // A child can only claim/complete a task during its scheduled task day/active occurrence
+    if (occurrenceDateStr !== todayStr) {
+      return res.status(400).json({
+        error: `Tasks can only be completed on their scheduled task day (${occurrenceDateStr}).`,
+      });
+    }
 
     // Determine assigned member IDs
     let assignedIds: string[] = [];
@@ -2519,14 +2696,15 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
 
     const isOpenMode = task.assignment_mode === 'open';
 
-    // Check if there is an existing completion record for this date/occurrence
-    let existingCompQuery = 'SELECT * FROM task_points_records WHERE task_id = ? AND occurrence_date = ? AND completed = 1';
-    let queryParams: any[] = [id, occurrenceDateStr];
-    if (isOpenMode) {
-      existingCompQuery += ' AND member_id = ?';
-      queryParams.push(currentMemberId);
+    // For Assigned: Child can only complete if assigned to them
+    if (!isOpenMode && !assignedIds.includes(currentMemberId)) {
+      return res.status(403).json({ error: 'Only the assigned child family member can complete this task.' });
     }
-    const existingComp = db.prepare(existingCompQuery).get(...queryParams) as any;
+
+    // Check if there is an existing completion record for this date/occurrence
+    const existingComp = db.prepare(
+      'SELECT * FROM task_points_records WHERE task_id = ? AND occurrence_date = ? AND member_id = ?'
+    ).get(id, occurrenceDateStr, currentMemberId) as any;
 
     const isCompleted = Boolean(existingComp);
     const willComplete = !isCompleted;
@@ -2534,42 +2712,26 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
     const now = new Date().toISOString();
 
     if (willComplete) {
-      // 1. COMPLETION LAWS
-      // Due date validation: Tasks cannot be completed before their due date or outside their scheduled due date
-      if (occurrenceDateStr > todayStr) {
-        return res.status(400).json({
-          error: `Tasks cannot be completed before their due date (${occurrenceDateStr}).`,
-        });
-      }
-      if (occurrenceDateStr < todayStr) {
-        return res.status(400).json({
-          error: `Tasks can only be completed on their scheduled due date (${occurrenceDateStr}).`,
-        });
-      }
-
-      // Assigned validation: Normal members can only complete tasks assigned to them
-      if (!isAdultAdmin) {
-        if (!isOpenMode && !assignedIds.includes(currentMemberId)) {
-          return res.status(403).json({ error: 'Only the assigned family member can complete this task.' });
-        }
-      }
-
-      // Determine target member to reward
-      const targetMemberId = isOpenMode ? currentMemberId : (task.assigned_member_id || assignedIds[0] || currentMemberId);
-
-      // Create completion and award points
-      const pointsToAward = Number(task.points) || 0;
-      recordTaskCompletionPoints(
+      // Child marks a task complete.
+      // Completion does not immediately award points.
+      // The completed task appears in Approvals for Adult/Admin.
+      const compId = 'tpr_' + uuidv4().slice(0, 8);
+      db.prepare(`
+        INSERT INTO task_points_records (
+          id, family_id, member_id, task_id, occurrence_date, points_awarded, status, completed, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, 0, 'pending', 1, ?, ?)
+      `).run(
+        compId,
         req.user!.family_id,
-        targetMemberId,
+        currentMemberId,
         task.id,
-        pointsToAward,
-        true,
-        undefined,
-        occurrenceDateStr
+        occurrenceDateStr,
+        now,
+        now
       );
 
-      // If non-recurring, keep completed state on task itself for easy indexing
+      // If non-recurring, mark completed state on task itself
       if (!task.recurring_rule || task.recurring_rule === 'none') {
         db.prepare(`
           UPDATE tasks
@@ -2579,15 +2741,13 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
       }
 
     } else {
-      // Reopen (Untick)
-      // Determine target member
-      const targetMemberId = existingComp.member_id;
+      // Reopen (Untick) before approval
+      if (existingComp.status === 'approved') {
+        return res.status(400).json({ error: 'Approved completions cannot be unticked by children.' });
+      }
 
-      // Delete completion record
+      // Delete pending completion record
       db.prepare('DELETE FROM task_points_records WHERE id = ?').run(existingComp.id);
-
-      // Reconcile points
-      reconcileMemberPoints(req.user!.family_id, targetMemberId);
 
       // If non-recurring, revert completed state on task itself
       if (!task.recurring_rule || task.recurring_rule === 'none') {
@@ -2601,7 +2761,7 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
 
     // Return the updated task including its completions array
     const completions = db.prepare(`
-      SELECT id, member_id, task_id, occurrence_date, points_awarded
+      SELECT id, member_id, task_id, occurrence_date, points_awarded, status
       FROM task_points_records
       WHERE task_id = ? AND completed = 1
     `).all(id) as any[];
@@ -2618,23 +2778,257 @@ router.post('/tasks/:id/toggle', authenticateToken, (req: AuthRequest, res: Resp
       member_id: c.member_id,
       occurrence_date: c.occurrence_date || '',
       points_awarded: c.points_awarded,
+      status: c.status || 'pending',
     }));
 
     // Personalize completed for current member and main due_date
     const mainDueDate = formattedTask.due_date ? formattedTask.due_date.slice(0, 10) : '';
-    if (formattedTask.assignment_mode === 'open') {
-      formattedTask.completed = completions.some(
-        (c) => c.occurrence_date === mainDueDate && c.member_id === currentMemberId
-      );
-    } else {
-      formattedTask.completed = completions.some(
-        (c) => c.occurrence_date === mainDueDate
-      );
-    }
+    formattedTask.completed = completions.some(
+      (c) => c.occurrence_date === mainDueDate && (isOpenMode ? c.member_id === currentMemberId : true)
+    );
 
     return res.json(formattedTask);
   } catch (err: any) {
     console.error('TOGGLE ERROR STACK:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// 5B. APPROVALS FOR ADULT / ADMIN & POINTS API
+// ==========================================
+
+const handleGetApprovals = (req: AuthRequest, res: Response) => {
+  try {
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    if (!isReqAdultOrAdmin(req, currentMember)) {
+      return res.status(403).json({ error: 'Only Adult and Administrator accounts can access approvals.' });
+    }
+
+    const pending = db.prepare(`
+      SELECT tpr.id as id, tpr.id as approval_id, tpr.task_id, tpr.occurrence_date, tpr.created_at as completed_at, tpr.status,
+             t.title, t.description, t.points, t.assignment_mode,
+             m.id as child_id, m.id as member_id, m.name as child_name, m.name as member_name, m.color as child_color, m.avatar_url as child_avatar
+      FROM task_points_records tpr
+      JOIN tasks t ON tpr.task_id = t.id
+      JOIN family_members m ON tpr.member_id = m.id
+      WHERE tpr.family_id = ? AND tpr.status = 'pending'
+      ORDER BY tpr.created_at DESC
+    `).all(req.user!.family_id) as any[];
+
+    res.json(pending);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const handleApproveCompletion = (req: AuthRequest, res: Response) => {
+  try {
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    if (!isReqAdultOrAdmin(req, currentMember)) {
+      return res.status(403).json({ error: 'Only Adult and Administrator accounts can approve completions.' });
+    }
+
+    const { id } = req.params;
+    const occDate = req.body?.occurrenceDate || req.body?.occurrence_date || null;
+
+    let record = db.prepare(`
+      SELECT tpr.*, t.title as task_title, t.points as task_points
+      FROM task_points_records tpr
+      JOIN tasks t ON tpr.task_id = t.id
+      WHERE tpr.id = ? AND tpr.family_id = ? AND tpr.status = 'pending'
+    `).get(id, req.user!.family_id) as any;
+
+    if (!record) {
+      // Try resolving by task_id
+      if (occDate) {
+        record = db.prepare(`
+          SELECT tpr.*, t.title as task_title, t.points as task_points
+          FROM task_points_records tpr
+          JOIN tasks t ON tpr.task_id = t.id
+          WHERE tpr.task_id = ? AND tpr.occurrence_date = ? AND tpr.family_id = ? AND tpr.status = 'pending'
+        `).get(id, occDate, req.user!.family_id) as any;
+      } else {
+        record = db.prepare(`
+          SELECT tpr.*, t.title as task_title, t.points as task_points
+          FROM task_points_records tpr
+          JOIN tasks t ON tpr.task_id = t.id
+          WHERE tpr.task_id = ? AND tpr.family_id = ? AND tpr.status = 'pending'
+          ORDER BY tpr.created_at DESC LIMIT 1
+        `).get(id, req.user!.family_id) as any;
+      }
+    }
+
+    if (!record) {
+      return res.status(404).json({ error: 'Approval item not found or already processed.' });
+    }
+
+    const now = new Date().toISOString();
+    const pointsToAward = Math.max(0, Number(record.task_points) || 0);
+
+    // 1. Mark task_points_records as approved
+    db.prepare(`
+      UPDATE task_points_records
+      SET status = 'approved', points_awarded = ?, approved_at = ?, approved_by = ?, updated_at = ?
+      WHERE id = ?
+    `).run(pointsToAward, now, currentMember?.id || req.user!.id, now, record.id);
+
+    // 2. Record permanent point transaction
+    const txId = 'ptx_' + uuidv4().slice(0, 8);
+    db.prepare(`
+      INSERT INTO point_transactions (
+        id, family_id, member_id, task_id, task_title, occurrence_date, points, type, created_at, created_by
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'task_approved', ?, ?)
+    `).run(
+      txId,
+      req.user!.family_id,
+      record.member_id,
+      record.task_id,
+      record.task_title,
+      record.occurrence_date || '',
+      pointsToAward,
+      now,
+      currentMember?.id || req.user!.id
+    );
+
+    // 3. Update child's points total
+    const newPoints = reconcileMemberPoints(req.user!.family_id, record.member_id);
+
+    res.json({
+      success: true,
+      message: 'Task completion approved and points awarded.',
+      points_awarded: pointsToAward,
+      pointsAwarded: pointsToAward,
+      child_id: record.member_id,
+      totalPoints: newPoints,
+      approved: true,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const handleRejectCompletion = (req: AuthRequest, res: Response) => {
+  try {
+    const currentMember = db.prepare(
+      'SELECT * FROM family_members WHERE (user_id = ? OR id = ?) AND family_id = ?'
+    ).get(req.user!.id, req.user!.id, req.user!.family_id) as any;
+
+    if (!isReqAdultOrAdmin(req, currentMember)) {
+      return res.status(403).json({ error: 'Only Adult and Administrator accounts can reject completions.' });
+    }
+
+    const { id } = req.params;
+    const occDate = req.body?.occurrenceDate || req.body?.occurrence_date || null;
+
+    let record = db.prepare(`
+      SELECT tpr.*, t.recurring_rule
+      FROM task_points_records tpr
+      JOIN tasks t ON tpr.task_id = t.id
+      WHERE tpr.id = ? AND tpr.family_id = ? AND tpr.status = 'pending'
+    `).get(id, req.user!.family_id) as any;
+
+    if (!record) {
+      // Try resolving by task_id
+      if (occDate) {
+        record = db.prepare(`
+          SELECT tpr.*, t.recurring_rule
+          FROM task_points_records tpr
+          JOIN tasks t ON tpr.task_id = t.id
+          WHERE tpr.task_id = ? AND tpr.occurrence_date = ? AND tpr.family_id = ? AND tpr.status = 'pending'
+        `).get(id, occDate, req.user!.family_id) as any;
+      } else {
+        record = db.prepare(`
+          SELECT tpr.*, t.recurring_rule
+          FROM task_points_records tpr
+          JOIN tasks t ON tpr.task_id = t.id
+          WHERE tpr.task_id = ? AND tpr.family_id = ? AND tpr.status = 'pending'
+          ORDER BY tpr.created_at DESC LIMIT 1
+        `).get(id, req.user!.family_id) as any;
+      }
+    }
+
+    if (!record) {
+      return res.status(404).json({ error: 'Approval item not found or already processed.' });
+    }
+
+    // Remove pending completion tick, return task to incomplete
+    db.prepare('DELETE FROM task_points_records WHERE id = ?').run(record.id);
+
+    // If non-recurring task, revert completed flag on task
+    if (!record.recurring_rule || record.recurring_rule === 'none') {
+      db.prepare('UPDATE tasks SET completed = 0, completed_at = NULL, updated_at = ? WHERE id = ?').run(
+        new Date().toISOString(),
+        record.task_id
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Task completion rejected and returned to incomplete.',
+      task_id: record.task_id,
+      child_id: record.member_id,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+router.get('/tasks/approvals', authenticateToken, handleGetApprovals);
+router.get('/approvals', authenticateToken, handleGetApprovals);
+
+router.post('/tasks/approvals/:id/approve', authenticateToken, handleApproveCompletion);
+router.post('/tasks/approvals/:id/confirm', authenticateToken, handleApproveCompletion);
+router.post('/approvals/:id/approve', authenticateToken, handleApproveCompletion);
+router.post('/approvals/:id/confirm', authenticateToken, handleApproveCompletion);
+
+router.post('/tasks/approvals/:id/reject', authenticateToken, handleRejectCompletion);
+router.post('/approvals/:id/reject', authenticateToken, handleRejectCompletion);
+
+router.get('/members/:id/points', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const member = db.prepare('SELECT id, points FROM family_members WHERE id = ? AND family_id = ?').get(
+      id,
+      req.user!.family_id
+    ) as any;
+
+    if (!member) {
+      return res.status(404).json({ error: 'Member not found.' });
+    }
+
+    res.json({
+      member_id: member.id,
+      points: member.points || 0,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/members/:id/points/history', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const history = db.prepare(`
+      SELECT pt.*, m.name as approver_name
+      FROM point_transactions pt
+      LEFT JOIN family_members m ON pt.created_by = m.id OR pt.created_by = m.user_id
+      WHERE pt.member_id = ? AND pt.family_id = ?
+      ORDER BY pt.created_at DESC
+    `).all(id, req.user!.family_id) as any[];
+
+    res.json(history.map(h => ({
+      ...h,
+      approved_by: h.created_by,
+    })));
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -2746,6 +3140,8 @@ router.delete('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response)
 
     const { id } = req.params;
     const allInGroup = req.query.allInGroup === 'true' || req.query.allInGroup === '1';
+    const scope = (req.query.scope as string) || (req.body?.scope as string) || 'series';
+    const reqOccDate = req.query.occurrenceDate || req.body?.occurrenceDate || req.body?.occurrence_date;
 
     const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND family_id = ?').get(
       id,
@@ -2762,22 +3158,86 @@ router.delete('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response)
 
     const isAdultAdmin = isReqAdultOrAdmin(req, currentMember);
 
-    // If not adult or admin, member can only delete tasks directly assigned to them
+    // Children cannot delete tasks
     if (!isAdultAdmin) {
-      let assignedMemberIds: string[] = [];
+      return res.status(403).json({ error: 'Only Adult and Administrator accounts can delete tasks.' });
+    }
+
+    const now = new Date().toISOString();
+
+    // 1. Single occurrence deletion on a recurring task
+    if (scope === 'single' && reqOccDate && task.recurring_rule && task.recurring_rule !== 'none') {
+      const occDateStr = String(reqOccDate).trim().slice(0, 10);
+      let exceptions: string[] = [];
       try {
-        if (task.assigned_member_ids) {
-          assignedMemberIds = JSON.parse(task.assigned_member_ids);
-        }
-      } catch {}
-
-      const isAssigned =
-        (task.assigned_member_id && task.assigned_member_id === currentMember?.id) ||
-        (currentMember?.id && assignedMemberIds.includes(currentMember.id));
-
-      if (!isAssigned) {
-        return res.status(403).json({ error: 'You do not have permission to delete this task.' });
+        exceptions = JSON.parse(task.recurring_exceptions || '[]');
+      } catch {
+        exceptions = [];
       }
+      if (!exceptions.includes(occDateStr)) {
+        exceptions.push(occDateStr);
+      }
+      db.prepare('UPDATE tasks SET recurring_exceptions = ?, updated_at = ? WHERE id = ? AND family_id = ?').run(
+        JSON.stringify(exceptions),
+        now,
+        id,
+        req.user!.family_id
+      );
+
+      // Clean up any pending (not approved) record for that occurrence
+      db.prepare("DELETE FROM task_points_records WHERE task_id = ? AND occurrence_date = ? AND status = 'pending'").run(
+        id,
+        occDateStr
+      );
+
+      const updated = db.prepare(`
+        SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+        FROM tasks t
+        LEFT JOIN family_members m ON t.assigned_member_id = m.id
+        WHERE t.id = ?
+      `).get(id) as any;
+
+      return res.json({
+        success: true,
+        message: `Occurrence on ${occDateStr} removed.`,
+        task: formatTaskRow(updated),
+        recurring_exceptions: exceptions,
+      });
+    }
+
+    // 2. "This and following" occurrences deletion on a recurring task
+    if (scope === 'following' && reqOccDate && task.recurring_rule && task.recurring_rule !== 'none') {
+      const occDateStr = String(reqOccDate).trim().slice(0, 10);
+      const d = new Date(occDateStr + 'T12:00:00Z');
+      d.setUTCDate(d.getUTCDate() - 1);
+      const dayBefore = d.toISOString().slice(0, 10);
+
+      db.prepare(`
+        UPDATE tasks
+        SET recurring_end_type = 'date', recurring_end_date = ?, updated_at = ?
+        WHERE id = ? AND family_id = ?
+      `).run(dayBefore, now, id, req.user!.family_id);
+
+      // Clean up pending records for this and future occurrences
+      db.prepare("DELETE FROM task_points_records WHERE task_id = ? AND occurrence_date >= ? AND status = 'pending'").run(
+        id,
+        occDateStr
+      );
+
+      const updated = db.prepare(`
+        SELECT t.*, m.name as member_name, m.color as member_color, m.avatar_url as member_avatar
+        FROM tasks t
+        LEFT JOIN family_members m ON t.assigned_member_id = m.id
+        WHERE t.id = ?
+      `).get(id) as any;
+
+      return res.json({
+        success: true,
+        message: `Occurrences from ${occDateStr} onward removed.`,
+        task: formatTaskRow(updated),
+        recurring_end_date: dayBefore,
+        recurring_end_type: 'date',
+      });
     }
 
     // Only adults and admins can delete across the whole group
@@ -2789,16 +3249,23 @@ router.delete('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response)
       ).all(task.task_group_id, req.user!.family_id) as any[];
 
       for (const t of affectedTasks) {
-        db.prepare('DELETE FROM task_points_records WHERE task_id = ? AND family_id = ?').run(
+        // Only delete pending records; approved point transactions are preserved permanently
+        db.prepare("DELETE FROM task_points_records WHERE task_id = ? AND family_id = ? AND status = 'pending'").run(
           t.id,
           req.user!.family_id
         );
-      }
 
-      db.prepare('DELETE FROM tasks WHERE task_group_id = ? AND family_id = ?').run(
-        task.task_group_id,
-        req.user!.family_id
-      );
+        // Check if there are approved completions
+        const hasApproved = db.prepare(
+          "SELECT COUNT(*) as count FROM task_points_records WHERE task_id = ? AND status = 'approved'"
+        ).get(t.id) as any;
+
+        if (hasApproved && Number(hasApproved.count) > 0) {
+          db.prepare('UPDATE tasks SET is_archived = 1 WHERE id = ? AND family_id = ?').run(t.id, req.user!.family_id);
+        } else {
+          db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(t.id, req.user!.family_id);
+        }
+      }
 
       for (const t of affectedTasks) {
         if (t.assigned_member_id) {
@@ -2806,36 +3273,23 @@ router.delete('/tasks/:id', authenticateToken, (req: AuthRequest, res: Response)
         }
       }
     } else {
-      // If this task has child participant tasks (multi-person / everyone tasks)
-      const childTasks = db.prepare(
-        'SELECT id, assigned_member_id FROM tasks WHERE parent_task_id = ? AND family_id = ?'
-      ).all(id, req.user!.family_id) as any[];
-
-      if (childTasks.length > 0) {
-        for (const ct of childTasks) {
-          db.prepare('DELETE FROM task_points_records WHERE task_id = ? AND family_id = ?').run(
-            ct.id,
-            req.user!.family_id
-          );
-        }
-        db.prepare('DELETE FROM tasks WHERE parent_task_id = ? AND family_id = ?').run(
-          id,
-          req.user!.family_id
-        );
-        for (const ct of childTasks) {
-          if (ct.assigned_member_id) {
-            reconcileMemberPoints(req.user!.family_id, ct.assigned_member_id);
-          }
-        }
-      }
-
-      db.prepare('DELETE FROM task_points_records WHERE task_id = ? AND family_id = ?').run(
+      // Only delete pending records; approved point transactions are preserved permanently
+      db.prepare("DELETE FROM task_points_records WHERE task_id = ? AND family_id = ? AND status = 'pending'").run(
         id,
         req.user!.family_id
       );
 
+      const hasApproved = db.prepare(
+        "SELECT COUNT(*) as count FROM task_points_records WHERE task_id = ? AND status = 'approved'"
+      ).get(id) as any;
+
+      if (hasApproved && Number(hasApproved.count) > 0) {
+        db.prepare('UPDATE tasks SET is_archived = 1 WHERE id = ? AND family_id = ?').run(id, req.user!.family_id);
+      } else {
+        db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(id, req.user!.family_id);
+      }
+
       const memberId = task.assigned_member_id;
-      db.prepare('DELETE FROM tasks WHERE id = ? AND family_id = ?').run(id, req.user!.family_id);
       if (memberId) {
         reconcileMemberPoints(req.user!.family_id, memberId);
       }
