@@ -44,6 +44,7 @@ async function runRegressionSuite() {
   const testAdminMemberId = 'reg-mem-admin-' + uuidv4().slice(0, 8);
   const testAdultMemberId = 'reg-mem-adult-' + uuidv4().slice(0, 8);
   const testChildMemberId = 'reg-mem-child-' + uuidv4().slice(0, 8);
+  const testChild2MemberId = 'reg-mem-child2-' + uuidv4().slice(0, 8);
 
   const now = new Date().toISOString();
 
@@ -81,8 +82,13 @@ async function runRegressionSuite() {
 
   db.prepare(`
     INSERT INTO family_members (id, family_id, user_id, name, role, is_active, points, created_at)
-    VALUES (?, ?, ?, 'Child Member', 'child', 1, 0, ?)
+    VALUES (?, ?, ?, 'Child Member 1', 'child', 1, 0, ?)
   `).run(testChildMemberId, testFamilyId, testChildUserId, now);
+
+  db.prepare(`
+    INSERT INTO family_members (id, family_id, user_id, name, role, is_active, points, created_at)
+    VALUES (?, ?, NULL, 'Child Member 2', 'child', 1, 0, ?)
+  `).run(testChild2MemberId, testFamilyId, now);
 
   // 3. Generate auth tokens
   const adminToken = generateToken({
@@ -184,10 +190,10 @@ async function runRegressionSuite() {
     ).all(testFamilyId, 'Adult Everyone Task 🌟') as any[];
 
     record(
-      'A3. Adult can create an Everyone Task (1 task per active member = 3)',
-      'HTTP 201 with 3 tasks sharing group ID',
+      'A3. Adult can create an Everyone Task (1 task per active child = 2)',
+      'HTTP 201 with 2 tasks sharing group ID',
       `HTTP ${adultEveryoneRes.status}, count: ${dbAdultEveryone.length}`,
-      adultEveryoneRes.status === 201 && dbAdultEveryone.length === 3
+      adultEveryoneRes.status === 201 && dbAdultEveryone.length === 2
     );
 
     // =========================================================================
@@ -202,7 +208,7 @@ async function runRegressionSuite() {
         title: 'Admin Assigned Task 🎯',
         due_date: '2026-09-30',
         assignment_mode: 'assigned',
-        assigned_member_ids: [testAdultMemberId],
+        assigned_member_ids: [testChildMemberId],
       });
 
     const adminOpenRes = await request(app)
@@ -230,7 +236,7 @@ async function runRegressionSuite() {
         title: 'Admin Repeating Task 🔄',
         due_date: '2026-09-30',
         assignment_mode: 'assigned',
-        assigned_member_id: testAdminMemberId,
+        assigned_member_id: testChildMemberId,
         recurring_rule: 'weekly',
         recurring_interval: 1,
       });

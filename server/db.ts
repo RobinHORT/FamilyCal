@@ -911,6 +911,7 @@ export function initDatabase() {
   }
 
   seedInitialDataIfEmpty();
+  ensurePreviewUsersExist();
 }
 
 export function seedDefaultEventTypesForFamily(familyId: string) {
@@ -1398,6 +1399,100 @@ function seedInitialDataIfEmpty() {
 
   // Record initial points for member 3 (completed task)
   recordTaskCompletionPoints(familyId, member3Id, t3Id, 20, true, 'Initial seed task completion');
+}
+
+export function ensurePreviewUsersExist() {
+  try {
+    const mainFamily = db.prepare(
+      "SELECT * FROM families WHERE id NOT LIKE 'fam-sep-%' AND id NOT LIKE 'reg-fam-%' ORDER BY created_at ASC LIMIT 1"
+    ).get() as any;
+
+    if (!mainFamily) return;
+
+    const now = new Date().toISOString();
+
+    const previewAccounts = [
+      {
+        email: 'preview.admin@example.com',
+        username: 'previewadmin',
+        password: 'PreviewAdmin123!',
+        name: 'Preview Admin',
+        role: 'administrator' as const,
+        color: '#FF4FA3',
+        memberName: 'Alex',
+      },
+      {
+        email: 'preview.adult@example.com',
+        username: 'previewadult',
+        password: 'PreviewAdult123!',
+        name: 'Preview Adult',
+        role: 'adult' as const,
+        color: '#06B6D4',
+        memberName: 'Jordan',
+      },
+      {
+        email: 'preview.child@example.com',
+        username: 'previewchild',
+        password: 'PreviewChild123!',
+        name: 'Preview Child',
+        role: 'child' as const,
+        color: '#F59E0B',
+        memberName: 'Maya',
+      },
+    ];
+
+    for (const acc of previewAccounts) {
+      const passwordHash = bcrypt.hashSync(acc.password, 10);
+
+      // Check if user exists by email or username or role in this main family
+      let user = db.prepare(
+        "SELECT * FROM users WHERE family_id = ? AND (LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?))"
+      ).get(mainFamily.id, acc.email, acc.username) as any;
+
+      if (!user) {
+        user = db.prepare(
+          "SELECT * FROM users WHERE family_id = ? AND role = ?"
+        ).get(mainFamily.id, acc.role) as any;
+      }
+
+      if (!user) {
+        const newUserId = 'usr_prev_' + uuidv4().slice(0, 8);
+        db.prepare(`
+          INSERT INTO users (id, family_id, email, username, password_hash, name, role, color, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        `).run(newUserId, mainFamily.id, acc.email, acc.username, passwordHash, acc.name, acc.role, acc.color, now, now);
+
+        user = db.prepare('SELECT * FROM users WHERE id = ?').get(newUserId) as any;
+      } else {
+        db.prepare(`
+          UPDATE users
+          SET email = ?, username = ?, password_hash = ?, is_active = 1, updated_at = ?
+          WHERE id = ?
+        `).run(acc.email, acc.username, passwordHash, now, user.id);
+      }
+
+      // Link or ensure family_members row
+      let member = db.prepare(
+        'SELECT * FROM family_members WHERE family_id = ? AND (user_id = ? OR name = ? OR role = ?)'
+      ).get(mainFamily.id, user.id, acc.memberName, acc.role) as any;
+
+      if (member) {
+        db.prepare(`
+          UPDATE family_members
+          SET user_id = ?, role = ?, is_active = 1
+          WHERE id = ?
+        `).run(user.id, acc.role, member.id);
+      } else {
+        const newMemberId = 'mem_prev_' + uuidv4().slice(0, 8);
+        db.prepare(`
+          INSERT INTO family_members (id, family_id, user_id, name, role, color, is_active, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+        `).run(newMemberId, mainFamily.id, user.id, acc.name, acc.role, acc.color, now);
+      }
+    }
+  } catch (err) {
+    console.warn('ensurePreviewUsersExist warning:', err);
+  }
 }
 
 export function reconcileMemberPoints(familyId: string, memberId: string): number {

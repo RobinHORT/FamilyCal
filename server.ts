@@ -40,6 +40,11 @@ async function startServer() {
     });
   });
 
+  // Catch-all 404 handler for /api routes to prevent API requests from falling through to SPA HTML
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.originalUrl}` });
+  });
+
   // 4. Vite Frontend Middleware or Production Static Serving
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

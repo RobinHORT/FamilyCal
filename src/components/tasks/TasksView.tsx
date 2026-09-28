@@ -123,8 +123,9 @@ export const TasksView: React.FC = () => {
       setIsLoadingApprovals(true);
       const data = await api.getApprovals();
       setApprovals(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load approvals:', err);
+    } catch (err: any) {
+      console.error('Failed to load approvals:', err?.message || err);
+      setApprovals([]);
     } finally {
       setIsLoadingApprovals(false);
     }

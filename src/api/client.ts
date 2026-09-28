@@ -67,13 +67,27 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
     credentials: 'include',
   });
 
+  const contentType = response.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+
   if (!response.ok) {
     let errorMsg = `Request failed (${response.status})`;
-    try {
-      const errorJson = await response.json();
-      errorMsg = errorJson.error || errorJson.message || errorMsg;
-    } catch {
-      // ignore
+    if (isJson) {
+      try {
+        const errorJson = await response.json();
+        errorMsg = errorJson.error || errorJson.message || errorMsg;
+      } catch {
+        // ignore
+      }
+    } else {
+      try {
+        const text = await response.text();
+        if (text && text.length < 300) {
+          errorMsg = text;
+        }
+      } catch {
+        // ignore
+      }
     }
     if (response.status === 401 && !url.includes('/api/auth/login') && !url.includes('/api/auth/viewer-login')) {
       // Clean up stale token on 401
@@ -82,7 +96,16 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
     throw new ApiError(errorMsg, response.status);
   }
 
-  return response.json();
+  if (!isJson) {
+    const text = await response.text();
+    throw new ApiError(`Server returned non-JSON response (${response.status}) for ${url}: ${text.slice(0, 100)}`, response.status);
+  }
+
+  try {
+    return await response.json();
+  } catch (jsonErr: any) {
+    throw new ApiError(`Invalid JSON response from ${url}: ${jsonErr?.message || jsonErr}`, response.status);
+  }
 }
 
 export const api = {
