@@ -423,12 +423,41 @@ export interface RewardRedemptionToken {
   used_by_user_id?: string | null;
 }
 
-export const DEFAULT_MEMBER_PERMISSIONS: UserPermissions = {
+export const ADULT_MEMBER_PERMISSIONS: UserPermissions = {
+  // Calendars
+  calendar_view: true,
+  calendar_create: true,
+  calendar_edit: true,
+  calendar_delete: false,
+  calendar_assign: false,
+
+  // Events
+  event_view: true,
+  event_create: true,
+  event_edit_own: true,
+  event_edit_assigned: true,
+  event_edit_all: true,
+  event_delete_own: true,
+  event_delete_assigned: true,
+  event_delete_all: false,
+
+  // Family / Members
+  members_view: true,
+  members_manage: true,
+
+  // Integrations
+  google_calendar_manage: true,
+};
+
+export const CHILD_MEMBER_PERMISSIONS: UserPermissions = {
+  // Calendars
   calendar_view: true,
   calendar_create: false,
   calendar_edit: false,
   calendar_delete: false,
   calendar_assign: false,
+
+  // Events
   event_view: true,
   event_create: true,
   event_edit_own: true,
@@ -437,10 +466,16 @@ export const DEFAULT_MEMBER_PERMISSIONS: UserPermissions = {
   event_delete_own: true,
   event_delete_assigned: false,
   event_delete_all: false,
+
+  // Family / Members
   members_view: true,
   members_manage: false,
+
+  // Integrations
   google_calendar_manage: false,
 };
+
+export const DEFAULT_MEMBER_PERMISSIONS: UserPermissions = CHILD_MEMBER_PERMISSIONS;
 
 export const ADMIN_PERMISSIONS: UserPermissions = {
   calendar_view: true,

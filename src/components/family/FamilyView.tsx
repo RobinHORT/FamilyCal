@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { MemberGoogleCalendarSection } from './MemberGoogleCalendarSection';
@@ -10,6 +10,8 @@ import {
   PERMISSION_DEFINITIONS,
   DEFAULT_MEMBER_PERMISSIONS,
   ADMIN_PERMISSIONS,
+  ADULT_MEMBER_PERMISSIONS,
+  CHILD_MEMBER_PERMISSIONS,
 } from '../../types';
 import {
   Users,
@@ -52,9 +54,17 @@ export const FamilyView: React.FC = () => {
   // Household settings edit state
   const [isEditingHousehold, setIsEditingHousehold] = useState(false);
   const [householdName, setHouseholdName] = useState(family?.name || '');
+  const [householdTimezone, setHouseholdTimezone] = useState(family?.timezone || 'Australia/Melbourne');
   const [viewerPassword, setViewerPassword] = useState('');
   const [showViewerPassword, setShowViewerPassword] = useState(false);
   const [householdSuccessMsg, setHouseholdSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (family) {
+      setHouseholdName(family.name || '');
+      setHouseholdTimezone(family.timezone || 'Australia/Melbourne');
+    }
+  }, [family]);
 
   // Member Modal State
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
@@ -127,7 +137,9 @@ export const FamilyView: React.FC = () => {
 
   const openPermissionsModal = (m: FamilyMember) => {
     setPermModalMember(m);
-    const base = m.role === 'administrator' ? ADMIN_PERMISSIONS : DEFAULT_MEMBER_PERMISSIONS;
+    const base = m.role === 'administrator'
+      ? ADMIN_PERMISSIONS
+      : (m.role === 'adult' ? ADULT_MEMBER_PERMISSIONS : CHILD_MEMBER_PERMISSIONS);
     const resolved = m.resolved_permissions || base;
     setMemberPermissions({ ...resolved });
     setPermError(null);
@@ -145,24 +157,9 @@ export const FamilyView: React.FC = () => {
     if (preset === 'admin') {
       setMemberPermissions({ ...ADMIN_PERMISSIONS });
     } else if (preset === 'child') {
-      setMemberPermissions({
-        ...DEFAULT_MEMBER_PERMISSIONS,
-        calendar_create: false,
-        calendar_edit: false,
-        calendar_delete: false,
-        calendar_assign: false,
-        event_create: true,
-        event_edit_all: false,
-        event_edit_assigned: true,
-        event_edit_own: true,
-        event_delete_all: false,
-        event_delete_assigned: false,
-        event_delete_own: true,
-        members_manage: false,
-        google_calendar_manage: false,
-      });
+      setMemberPermissions({ ...CHILD_MEMBER_PERMISSIONS });
     } else {
-      setMemberPermissions({ ...DEFAULT_MEMBER_PERMISSIONS });
+      setMemberPermissions({ ...ADULT_MEMBER_PERMISSIONS });
     }
   };
 
@@ -193,6 +190,7 @@ export const FamilyView: React.FC = () => {
     try {
       await updateHousehold({
         name: householdName.trim(),
+        timezone: householdTimezone,
         viewerPassword: viewerPassword.trim() || (viewerPassword === '' ? '' : undefined),
       });
       setHouseholdSuccessMsg('Household settings updated successfully.');
@@ -365,6 +363,33 @@ export const FamilyView: React.FC = () => {
             </div>
 
             <div>
+              <label htmlFor="household-timezone-select" className="block text-xs font-semibold text-gray-700 mb-1">
+                Household Timezone
+              </label>
+              <select
+                id="household-timezone-select"
+                value={householdTimezone}
+                onChange={(e) => setHouseholdTimezone(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 font-medium"
+              >
+                <option value="Australia/Melbourne">Melbourne (Australia/Melbourne)</option>
+                <option value="Australia/Sydney">Sydney (Australia/Sydney)</option>
+                <option value="Australia/Adelaide">Adelaide (Australia/Adelaide)</option>
+                <option value="Australia/Brisbane">Brisbane (Australia/Brisbane)</option>
+                <option value="Australia/Perth">Perth (Australia/Perth)</option>
+                <option value="Europe/London">London (Europe/London)</option>
+                <option value="Europe/Paris">Paris (Europe/Paris)</option>
+                <option value="America/New_York">New York (America/New_York)</option>
+                <option value="America/Chicago">Chicago (America/Chicago)</option>
+                <option value="America/Denver">Denver (America/Denver)</option>
+                <option value="America/Los_Angeles">Los Angeles (America/Los_Angeles)</option>
+                <option value="Asia/Singapore">Singapore (Asia/Singapore)</option>
+                <option value="Asia/Tokyo">Tokyo (Asia/Tokyo)</option>
+                <option value="UTC">Coordinated Universal Time (UTC)</option>
+              </select>
+            </div>
+
+            <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center justify-between">
                 <span>Household Viewer Password</span>
                 {family?.has_viewer_password && (
@@ -442,6 +467,11 @@ export const FamilyView: React.FC = () => {
                 <Lock className="w-3 h-3 text-gray-400" />
                 Viewer Password: {family?.has_viewer_password ? 'Set' : 'Not Set'}
               </span>
+              <span>•</span>
+              <span className="flex items-center gap-1">
+                <Globe className="w-3.5 h-3.5 text-gray-400" />
+                Timezone: {family?.timezone || 'Australia/Melbourne'}
+              </span>
             </p>
           </div>
 
@@ -450,6 +480,7 @@ export const FamilyView: React.FC = () => {
               <button
                 onClick={() => {
                   setHouseholdName(family?.name || '');
+                  setHouseholdTimezone(family?.timezone || 'Australia/Melbourne');
                   setViewerPassword('');
                   setIsEditingHousehold(true);
                 }}

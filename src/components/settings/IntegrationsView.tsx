@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { GoogleConfigResponse, GoogleAccount, GoogleSyncLog, SystemStats } from '../../types';
 import { useCalendar } from '../../context/CalendarContext';
 import { useFamily } from '../../context/FamilyContext';
+import { useAuth } from '../../context/AuthContext';
 import {
   Globe,
   RefreshCw,
@@ -34,6 +35,7 @@ interface IntegrationsViewProps {
 }
 
 export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab = 'integrations' }) => {
+  const { user } = useAuth();
   const { calendars, updateCalendar, fetchCalendarData } = useCalendar();
   const { family, members, colorSoftness, updateColorSoftness } = useFamily();
   const [subTab, setSubTab] = useState<SettingsSubTab>(initialTab);
@@ -280,8 +282,13 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab =
             max="100"
             step="5"
             value={colorSoftness}
+            disabled={user?.role === 'child' || user?.isViewer}
             onChange={(e) => updateColorSoftness(parseInt(e.target.value, 10))}
-            className="w-full accent-pink-600 cursor-pointer h-2.5 bg-gray-200 rounded-lg appearance-none"
+            className={`w-full accent-pink-600 h-2.5 bg-gray-200 rounded-lg appearance-none ${
+              user?.role === 'child' || user?.isViewer
+                ? 'opacity-50 cursor-not-allowed pointer-events-none'
+                : 'cursor-pointer'
+            }`}
           />
         </div>
 

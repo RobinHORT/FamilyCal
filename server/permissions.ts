@@ -37,7 +37,33 @@ export const ALL_PERMISSION_KEYS: PermissionKey[] = [
   'google_calendar_manage',
 ];
 
-export const DEFAULT_MEMBER_PERMISSIONS: UserPermissions = {
+export const ADULT_MEMBER_PERMISSIONS: UserPermissions = {
+  // Calendars
+  calendar_view: true,
+  calendar_create: true,
+  calendar_edit: true,
+  calendar_delete: false,
+  calendar_assign: false,
+
+  // Events
+  event_view: true,
+  event_create: true,
+  event_edit_own: true,
+  event_edit_assigned: true,
+  event_edit_all: true,
+  event_delete_own: true,
+  event_delete_assigned: true,
+  event_delete_all: false,
+
+  // Family / Members
+  members_view: true,
+  members_manage: true,
+
+  // Integrations
+  google_calendar_manage: true,
+};
+
+export const CHILD_MEMBER_PERMISSIONS: UserPermissions = {
   // Calendars
   calendar_view: true,
   calendar_create: false,
@@ -62,6 +88,8 @@ export const DEFAULT_MEMBER_PERMISSIONS: UserPermissions = {
   // Integrations
   google_calendar_manage: false,
 };
+
+export const DEFAULT_MEMBER_PERMISSIONS: UserPermissions = CHILD_MEMBER_PERMISSIONS;
 
 export const ADMIN_PERMISSIONS: UserPermissions = {
   calendar_view: true,
@@ -201,6 +229,8 @@ export function resolveUserPermissions(
     return { ...ADMIN_PERMISSIONS };
   }
 
+  const baseline = role === 'adult' ? ADULT_MEMBER_PERMISSIONS : CHILD_MEMBER_PERMISSIONS;
+
   let custom: Partial<UserPermissions> = {};
   if (rawPermissions) {
     if (typeof rawPermissions === 'string') {
@@ -214,10 +244,24 @@ export function resolveUserPermissions(
     }
   }
 
-  return {
-    ...DEFAULT_MEMBER_PERMISSIONS,
+  const resolved = {
+    ...baseline,
     ...custom,
   };
+
+  // Safe Role-Change Enforcement: A child must NEVER have these keys override to true
+  if (role === 'child') {
+    resolved.calendar_create = false;
+    resolved.calendar_edit = false;
+    resolved.calendar_delete = false;
+    resolved.calendar_assign = false;
+    resolved.members_manage = false;
+    resolved.google_calendar_manage = false;
+    resolved.event_edit_all = false;
+    resolved.event_delete_all = false;
+  }
+
+  return resolved;
 }
 
 export function isCustomPermissions(
@@ -232,9 +276,10 @@ export function isCustomPermissions(
     return false;
   }
 
+  const baseline = role === 'adult' ? ADULT_MEMBER_PERMISSIONS : CHILD_MEMBER_PERMISSIONS;
   const resolved = resolveUserPermissions(role, rawPermissions);
   for (const key of ALL_PERMISSION_KEYS) {
-    if (resolved[key] !== DEFAULT_MEMBER_PERMISSIONS[key]) {
+    if (resolved[key] !== baseline[key]) {
       return true;
     }
   }

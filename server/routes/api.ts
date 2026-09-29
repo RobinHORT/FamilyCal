@@ -469,6 +469,12 @@ router.put('/family', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     const { name, timezone, viewerPassword, colorSoftness, color_softness } = req.body;
+
+    const isUpdatingFamilyDetails = name !== undefined || timezone !== undefined || viewerPassword !== undefined;
+    if (isUpdatingFamilyDetails && !hasPermission(req.user, 'members_manage')) {
+      return res.status(403).json({ error: 'You do not have permission to modify household settings.' });
+    }
+
     const now = new Date().toISOString();
     const softnessVal = colorSoftness !== undefined ? colorSoftness : color_softness;
 
