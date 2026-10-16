@@ -122,7 +122,17 @@ export const EventModal: React.FC = () => {
         setSelectedCalendarOption('SELECTED_MEMBERS');
         setCalendarId(selectedEvent.calendar_id);
       }
-      setAssignedMemberIds(selectedEvent.assigned_member_ids || []);
+      let existingAssigned: string[] = [];
+      if (Array.isArray(selectedEvent.assigned_member_ids)) {
+        existingAssigned = selectedEvent.assigned_member_ids;
+      } else if (typeof selectedEvent.assigned_member_ids === 'string') {
+        try {
+          existingAssigned = JSON.parse(selectedEvent.assigned_member_ids);
+        } catch {
+          existingAssigned = [];
+        }
+      }
+      setAssignedMemberIds(existingAssigned);
 
       if (isEventAllDay) {
         const { startDate: sDateStr, endDate: eDateStr } = getInclusiveAllDayDates(selectedEvent);
@@ -160,10 +170,10 @@ export const EventModal: React.FC = () => {
       setRecurringUntil('');
       setReminderMinutes(1440);
 
-      // Default Calendar & Member assignment
+      // Default Calendar & Member assignment (select all family members by default for new events)
       setSelectedCalendarOption('SELECTED_MEMBERS');
       if (members.length > 0) {
-        setAssignedMemberIds([members[0].id]);
+        setAssignedMemberIds(members.map((m) => m.id));
         const matchingCal = calendars.find((c) => c.member_id === members[0].id);
         setCalendarId(matchingCal?.id || calendars.find((c) => c.name !== 'Family Hub')?.id || '');
       } else {
@@ -188,23 +198,7 @@ export const EventModal: React.FC = () => {
   );
 
 
-  const isWholeFamilySelected =
-    assignedMemberIds.length === members.length ||
-    (assignedMemberIds.length === 0 && members.length > 0);
 
-  const handleSelectWholeFamily = () => {
-    setAssignedMemberIds(members.map((m) => m.id));
-    setSelectedCalendarOption('SELECTED_MEMBERS');
-  };
-
-  const handleSelectSingleMember = (memberId: string) => {
-    setAssignedMemberIds([memberId]);
-    setSelectedCalendarOption('SELECTED_MEMBERS');
-    const matchingCal = calendars.find((c) => c.member_id === memberId);
-    if (matchingCal) {
-      setCalendarId(matchingCal.id);
-    }
-  };
 
   const toggleMemberAssignment = (memberId: string) => {
     setSelectedCalendarOption('SELECTED_MEMBERS');
@@ -506,143 +500,51 @@ export const EventModal: React.FC = () => {
             />
           </div>
 
-          {/* 1. FAMILY MEMBER SELECTOR (Determines full event-card pastel background colour) */}
-          <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/80 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-gray-900 flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-indigo-600" />
-                <span>1. Assign To</span>
-              </label>
-              <span className="text-[11px] font-medium text-gray-500">
-                {previewAssignment.isFamilyEvent
-                  ? 'Family event (divided member colours)'
-                  : 'Individual member colour'}
-              </span>
-            </div>
+          {/* 1. FAMILY MEMBER SELECTOR */}
+          <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/80 space-y-2.5">
+            <label className="text-xs font-bold text-gray-900 flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-indigo-600" />
+              <span>1. Assign To</span>
+            </label>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-0.5">
-              {/* Whole Family Option */}
-              <button
-                type="button"
-                disabled={!canSave}
-                onClick={handleSelectWholeFamily}
-                style={{
-                  background: isWholeFamilySelected
-                    ? previewAssignment.segmentedGradient
-                    : '#FFFFFF',
-                  borderColor: isWholeFamilySelected
-                    ? previewAssignment.adminColorInfo.borderHex
-                    : '#E2E8F0',
-                  color: '#0F172A',
-                }}
-                className={`relative flex items-center gap-2 p-2 rounded-xl text-xs border transition-all cursor-pointer shadow-2xs text-left overflow-hidden ${
-                  isWholeFamilySelected
-                    ? 'font-bold ring-2 ring-indigo-500/40 scale-[1.02]'
-                    : 'hover:border-gray-300 font-medium'
-                } disabled:opacity-70`}
-              >
-                {/* Visual section boundary indicators */}
-                {isWholeFamilySelected && (
-                  <div className="absolute inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0">
-                    {members.map((m, idx) => (
-                      <div
-                        key={m.id || idx}
-                        className="flex-1 h-full border-r border-black/8 last:border-r-0"
-                      />
-                    ))}
-                  </div>
-                )}
-
-                <div
-                  className="relative z-10 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 shadow-2xs"
-                  style={{ backgroundColor: previewAssignment.adminColorInfo.dotHex }}
-                >
-                  <Users className="w-3 h-3 stroke-[2.5]" />
-                </div>
-                <div className="relative z-10 truncate flex-1 flex flex-col">
-                  <span className="font-extrabold text-slate-900 leading-tight">Whole Family</span>
-                  <span className="text-[9px] text-slate-600 font-semibold leading-tight">
-                    All {members.length} members
-                  </span>
-                </div>
-                {isWholeFamilySelected && (
-                  <Check className="relative z-10 w-3.5 h-3.5 shrink-0 text-slate-900" />
-                )}
-              </button>
-
-              {/* Individual Family Members */}
-              {members.map((m) => {
-                const isSelected =
-                  !isWholeFamilySelected &&
-                  assignedMemberIds.length === 1 &&
-                  assignedMemberIds[0] === m.id;
-                const mColor = getPastelColorInfo(m.color);
-
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    disabled={!canSave}
-                    onClick={() => handleSelectSingleMember(m.id)}
-                    style={{
-                      backgroundColor: isSelected ? mColor.hex : '#FFFFFF',
-                      borderColor: isSelected ? mColor.borderHex : '#E2E8F0',
-                      color: isSelected ? mColor.textHex : '#334155',
-                    }}
-                    className={`flex items-center gap-2 p-2 rounded-xl text-xs border transition-all cursor-pointer shadow-2xs text-left ${
-                      isSelected
-                        ? 'font-bold ring-2 ring-indigo-500/30 scale-[1.02]'
-                        : 'hover:border-gray-300 font-medium'
-                    } disabled:opacity-70`}
-                  >
-                    <div
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 shadow-2xs"
-                      style={{ backgroundColor: mColor.dotHex }}
+            <div className="flex flex-wrap gap-2 pt-0.5">
+              {members.length === 0 ? (
+                <span className="text-xs text-gray-400 italic">No family members found</span>
+              ) : (
+                members.map((m) => {
+                  const isChecked = assignedMemberIds.includes(m.id);
+                  const mColor = getPastelColorInfo(m.color);
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => toggleMemberAssignment(m.id)}
+                      disabled={!canSave}
+                      style={{
+                        backgroundColor: isChecked ? mColor.hex : '#FFFFFF',
+                        borderColor: isChecked ? mColor.borderHex : '#E2E8F0',
+                        color: isChecked ? mColor.textHex : '#475569',
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-xs border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                        isChecked
+                          ? 'font-bold ring-2 ring-indigo-500/20'
+                          : 'hover:border-gray-300 font-medium'
+                      } disabled:opacity-70`}
                     >
-                      {m.name.slice(0, 1).toUpperCase()}
-                    </div>
-                    <span className="truncate flex-1">{m.name}</span>
-                    {isSelected && <Check className="w-3.5 h-3.5 shrink-0" />}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Multi-member toggle for custom subset of family members */}
-            {members.length > 2 && (
-              <div className="pt-1.5 flex items-center gap-2 text-[11px] text-gray-500 border-t border-slate-200/60 mt-2">
-                <span className="shrink-0 font-medium">Customize participating:</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {members.map((m) => {
-                    const isChecked = assignedMemberIds.includes(m.id);
-                    const mColor = getPastelColorInfo(m.color);
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => toggleMemberAssignment(m.id)}
-                        disabled={!canSave}
-                        style={{
-                          backgroundColor: isChecked ? mColor.hex : '#FFFFFF',
-                          borderColor: isChecked ? mColor.borderHex : '#E2E8F0',
-                        }}
-                        className={`px-2 py-0.5 rounded-full text-[10px] border transition-all cursor-pointer flex items-center gap-1 ${
-                          isChecked
-                            ? 'font-bold text-slate-900 shadow-2xs'
-                            : 'text-gray-500 hover:border-gray-300'
-                        }`}
-                      >
+                      {isChecked ? (
+                        <Check className="w-3.5 h-3.5 shrink-0" />
+                      ) : (
                         <span
-                          className="w-2 h-2 rounded-full shrink-0"
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
                           style={{ backgroundColor: mColor.dotHex }}
                         />
-                        <span>{m.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+                      )}
+                      <span>{m.name}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           {/* Event Type */}
