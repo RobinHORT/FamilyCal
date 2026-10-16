@@ -316,19 +316,32 @@ export const TaskModal: React.FC = () => {
 
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-3.5 mb-4 border-b border-gray-100">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-4 h-4 rounded-full shadow-2xs border shrink-0 bg-emerald-500 border-emerald-600" />
-            <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight font-serif">
+            <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight font-serif truncate">
               {editingTask ? 'Edit Task' : 'New Task'}
             </h3>
           </div>
-          <button
-            onClick={closeTaskModal}
-            className="p-1.5 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors cursor-pointer"
-            aria-label="Close modal"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="submit"
+              id="task-save-btn"
+              form="task-form"
+              disabled={isSubmitting}
+              className="px-4 py-1.5 sm:px-5 sm:py-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              {isSubmitting ? 'Saving...' : editingTask ? 'Update Task' : 'Create Task'}
+            </button>
+            <button
+              type="button"
+              onClick={closeTaskModal}
+              className="p-1.5 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors cursor-pointer"
+              title="Close window"
+              aria-label="Close modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -338,7 +351,7 @@ export const TaskModal: React.FC = () => {
         )}
 
         {/* Modal Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id="task-form" onSubmit={handleSubmit} className="space-y-4">
           {/* Task Title */}
           <div>
             <label className="block text-xs font-bold text-gray-700 mb-1">
@@ -887,8 +900,8 @@ export const TaskModal: React.FC = () => {
           </div>
 
           {/* Modal Actions */}
-          <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-            {editingTask ? (
+          {editingTask && (
+            <div className="flex items-center justify-start pt-3 border-t border-gray-100">
               <div className="flex items-center gap-1.5">
                 {canDelete && (
                   <button
@@ -913,29 +926,8 @@ export const TaskModal: React.FC = () => {
                   <span>{isArchived ? 'Restore' : 'Archive'}</span>
                 </button>
               </div>
-            ) : (
-              <div />
-            )}
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={closeTaskModal}
-                disabled={isSubmitting}
-                className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                id="task-save-btn"
-                disabled={isSubmitting}
-                className="px-5 py-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
-              >
-                {isSubmitting ? 'Saving...' : editingTask ? 'Update Task' : 'Create Task'}
-              </button>
             </div>
-          </div>
+          )}
         </form>
       </div>
 

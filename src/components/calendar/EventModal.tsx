@@ -16,14 +16,12 @@ import {
   Tag,
   Globe,
   Check,
-  Sparkles,
   Bell,
   BellOff,
 } from 'lucide-react';
 import {
   PREDEFINED_EVENT_TYPES,
   getPastelColorInfo,
-  getEventTypeInfo,
   getEventAssignmentInfo,
 } from '../../utils/colors';
 import {
@@ -73,7 +71,7 @@ export const EventModal: React.FC = () => {
   const [recurringRule, setRecurringRule] = useState<RecurrenceRule>('none');
   const [recurringUntil, setRecurringUntil] = useState('');
   const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
-  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(1440);
   const [permState, setPermState] = useState<NotificationPermissionState>('default');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,7 +110,7 @@ export const EventModal: React.FC = () => {
       setReminderMinutes(
         selectedEvent.reminder_minutes !== undefined && selectedEvent.reminder_minutes !== null
           ? Number(selectedEvent.reminder_minutes)
-          : null
+          : (selectedEvent.reminder_minutes === null ? null : 1440)
       );
 
       const isSharedCal = sharedCalendars.some((c) => c.id === selectedEvent.calendar_id);
@@ -159,7 +157,7 @@ export const EventModal: React.FC = () => {
       setAllDay(false);
       setRecurringRule('none');
       setRecurringUntil('');
-      setReminderMinutes(null);
+      setReminderMinutes(1440);
 
       // Default Calendar & Member assignment
       setSelectedCalendarOption('SELECTED_MEMBERS');
@@ -188,8 +186,6 @@ export const EventModal: React.FC = () => {
     members
   );
 
-  // Derive the event type info:
-  const currentEventTypeInfo = getEventTypeInfo(title, eventType, availableEventTypes as any);
 
   const isWholeFamilySelected =
     assignedMemberIds.length === members.length ||
@@ -418,43 +414,58 @@ export const EventModal: React.FC = () => {
         {/* Mobile Drag Indicator Bar */}
         <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-3 sm:hidden" />
 
-        {/* Modal Header */}
-        <div className="flex items-center justify-between pb-3.5 mb-4 border-b border-gray-100">
-          <div className="flex items-center gap-2.5">
-            <div
-              className="w-4 h-4 rounded-full shadow-2xs border shrink-0"
-              style={{
-                background: previewAssignment.isFamilyEvent
-                  ? previewAssignment.segmentedGradient
-                  : previewAssignment.primaryColorInfo.hex,
-                borderColor: previewAssignment.borderHex,
-              }}
-            />
-            <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight font-serif">
-              {selectedEvent ? (canSave ? 'Edit Event' : 'Event Details') : 'New Event'}
-            </h3>
-            {isGoogle && (
-              <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                <Globe className="w-2.5 h-2.5" /> Google
-              </span>
-            )}
-          </div>
-          <button
-            onClick={closeEventModal}
-            className="p-1.5 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {error && (
-          <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
-            {error}
-          </div>
-        )}
-
         {/* Modal Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id="event-form" onSubmit={handleSubmit} className="space-y-4">
+          {/* Modal Header */}
+          <div className="flex items-center justify-between pb-3.5 mb-1 border-b border-gray-100">
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <div
+                className="w-4 h-4 rounded-full shadow-2xs border shrink-0"
+                style={{
+                  background: previewAssignment.isFamilyEvent
+                    ? previewAssignment.segmentedGradient
+                    : previewAssignment.primaryColorInfo.hex,
+                  borderColor: previewAssignment.borderHex,
+                }}
+              />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight font-serif truncate">
+                {selectedEvent ? (canSave ? 'Edit Event' : 'Event Details') : 'New Event'}
+              </h3>
+              {isGoogle && (
+                <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                  <Globe className="w-2.5 h-2.5" /> Google
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {canSave && (
+                <button
+                  type="submit"
+                  id="event-save-btn"
+                  form="event-form"
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 sm:px-5 sm:py-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {isSubmitting ? 'Saving...' : selectedEvent ? 'Update Event' : 'Create Event'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={closeEventModal}
+                className="p-1.5 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors cursor-pointer"
+                title="Close window"
+                aria-label="Close window"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
+              {error}
+            </div>
+          )}
           {/* Title Input */}
           <div>
             <label className="block text-xs font-bold text-gray-700 mb-1">
@@ -663,110 +674,6 @@ export const EventModal: React.FC = () => {
             </div>
           </div>
 
-          {/* LIVE VISUAL PREVIEW OF EVENT CARD */}
-          <div className="p-3.5 rounded-2xl bg-white border border-gray-200 space-y-1.5 shadow-2xs">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-gray-500 px-0.5">
-              <span className="flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-500" /> Card Appearance Preview
-              </span>
-              <span className="text-[10px] text-gray-400">
-                {previewAssignment.isFamilyEvent
-                  ? 'Divided Family Colours + Event Type Badge'
-                  : 'Member Colour + Event Type Badge'}
-              </span>
-            </div>
-
-            <div
-              style={{
-                background: previewAssignment.isFamilyEvent
-                  ? previewAssignment.segmentedGradient
-                  : previewAssignment.primaryColorInfo.hex,
-                borderColor: previewAssignment.borderHex,
-              }}
-              className="relative p-3.5 rounded-2xl border shadow-2xs flex flex-col gap-2 transition-all overflow-hidden"
-            >
-              {/* Visible boundary dividers for multi-colour Family event card */}
-              {previewAssignment.isFamilyEvent && (
-                <div className="absolute inset-0 flex pointer-events-none rounded-[inherit] overflow-hidden -z-0">
-                  {previewAssignment.participatingMembers.map((m, idx) => (
-                    <div
-                      key={m.id || idx}
-                      className="flex-1 h-full border-r border-black/8 last:border-r-0"
-                    />
-                  ))}
-                </div>
-              )}
-
-              <div className="relative z-10 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  {previewAssignment.isFamilyEvent ? (
-                    <>
-                      <div
-                        className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-2xs shrink-0"
-                        style={{ backgroundColor: previewAssignment.adminColorInfo.dotHex }}
-                        title="Whole Family"
-                      >
-                        <Users className="w-3 h-3 stroke-[2.5]" />
-                      </div>
-                      <span className="text-xs font-extrabold text-slate-900 tracking-tight">
-                        Family
-                      </span>
-                      <div className="flex -space-x-1 items-center ml-0.5">
-                        {previewAssignment.participatingMembers.map((m) => {
-                          const mColor = getPastelColorInfo(m.color);
-                          return (
-                            <span
-                              key={m.id}
-                              title={m.name}
-                              className="w-3.5 h-3.5 rounded-full border border-white/90 shadow-2xs shrink-0 flex items-center justify-center text-[7px] font-bold text-white"
-                              style={{ backgroundColor: mColor.dotHex }}
-                            >
-                              {m.name.slice(0, 1).toUpperCase()}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div
-                        className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-2xs shrink-0"
-                        style={{ backgroundColor: previewAssignment.primaryColorInfo.dotHex }}
-                      >
-                        {previewAssignment.label.slice(0, 1).toUpperCase()}
-                      </div>
-                      <span className="text-xs font-bold text-slate-800 truncate">
-                        {previewAssignment.label}
-                      </span>
-                    </>
-                  )}
-                </div>
-
-                {/* Preassigned Event Type Badge */}
-                <div
-                  className="px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white flex items-center gap-1 shadow-2xs shrink-0"
-                  style={{ backgroundColor: currentEventTypeInfo.bgHex }}
-                >
-                  <span>{currentEventTypeInfo.icon}</span>
-                  <span>{currentEventTypeInfo.name}</span>
-                </div>
-              </div>
-
-              <div className="relative z-10 text-sm font-bold text-slate-900 truncate">
-                {title.trim() || 'Family School Event'}
-              </div>
-
-              <div className="relative z-10 text-xs font-semibold text-slate-700 opacity-90 flex items-center gap-2 truncate">
-                <span>{allDay ? 'All Day' : `${startTime} – ${endTime}`}</span>
-                {location.trim() && (
-                  <>
-                    <span>•</span>
-                    <span className="truncate">{location}</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
 
           {/* Date & Time Row */}
           <div className="space-y-2.5 pt-1">
@@ -895,13 +802,13 @@ export const EventModal: React.FC = () => {
               }}
               className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-gray-900 cursor-pointer disabled:opacity-70 font-medium"
             >
+              <option value="1440">1 day before (default)</option>
               <option value="">No reminder</option>
               <option value="0">At start of event</option>
               <option value="5">5 minutes before</option>
               <option value="15">15 minutes before</option>
               <option value="30">30 minutes before</option>
               <option value="60">1 hour before</option>
-              <option value="1440">1 day before</option>
             </select>
 
             {reminderMinutes !== null && (
@@ -1006,8 +913,8 @@ export const EventModal: React.FC = () => {
           </div>
 
           {/* Modal Actions */}
-          <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-            {selectedEvent && canDelete ? (
+          {selectedEvent && canDelete && (
+            <div className="flex items-center justify-start pt-3 border-t border-gray-100">
               <button
                 type="button"
                 id="event-delete-btn"
@@ -1018,30 +925,8 @@ export const EventModal: React.FC = () => {
                 <Trash2 className="w-4 h-4" />
                 <span>Delete</span>
               </button>
-            ) : (
-              <div />
-            )}
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={closeEventModal}
-                className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold transition-colors cursor-pointer"
-              >
-                {canSave ? 'Cancel' : 'Close'}
-              </button>
-              {canSave && (
-                <button
-                  type="submit"
-                  id="event-save-btn"
-                  disabled={isSubmitting}
-                  className="px-5 py-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Saving...' : selectedEvent ? 'Update Event' : 'Create Event'}
-                </button>
-              )}
             </div>
-          </div>
+          )}
         </form>
       </div>
     </div>
