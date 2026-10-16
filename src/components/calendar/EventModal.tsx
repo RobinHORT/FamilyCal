@@ -18,11 +18,13 @@ import {
   Check,
   Bell,
   BellOff,
+  ChevronDown,
 } from 'lucide-react';
 import {
   PREDEFINED_EVENT_TYPES,
   getPastelColorInfo,
   getEventAssignmentInfo,
+  getEventTypeInfo,
 } from '../../utils/colors';
 import {
   getNotificationPermission,
@@ -81,6 +83,7 @@ export const EventModal: React.FC = () => {
 
   // Available event types (either loaded from database or predefined fallback)
   const availableEventTypes = eventTypes && eventTypes.length > 0 ? eventTypes : PREDEFINED_EVENT_TYPES;
+  const currentEventTypeInfo = getEventTypeInfo('', eventType, eventTypes);
 
   const sharedCalendars = calendars.filter(
     (c) => !c.member_id && c.name !== 'Family Hub' && c.name.toLowerCase() !== 'family hub'
@@ -625,7 +628,7 @@ export const EventModal: React.FC = () => {
           {/* 2. EVENT TYPE SELECTOR (Determines event-type colour badge) */}
           <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/80 space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-gray-900 flex items-center gap-1.5">
+              <label htmlFor="event-type-select" className="text-xs font-bold text-gray-900 flex items-center gap-1.5 cursor-pointer">
                 <Tag className="w-3.5 h-3.5 text-indigo-600" />
                 <span>2. Event Type</span>
               </label>
@@ -634,43 +637,34 @@ export const EventModal: React.FC = () => {
               </span>
             </div>
 
-            <div className="grid grid-cols-3 sm:grid-cols-3 gap-2 pt-0.5">
-              {availableEventTypes.map((et) => {
-                const isSelected = eventType.toLowerCase() === et.name.toLowerCase();
-                const badgeColor = et.color || (et as any).bgHex || '#64748B';
-                const badgeIcon = et.icon || '⭐';
-
-                return (
-                  <button
-                    key={et.name}
-                    type="button"
-                    disabled={!canSave}
-                    onClick={() => setEventType(et.name)}
-                    style={{
-                      borderColor: isSelected ? badgeColor : '#E2E8F0',
-                    }}
-                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-xs border transition-all cursor-pointer bg-white text-left ${
-                      isSelected
-                        ? 'font-bold ring-2 shadow-xs scale-[1.02]'
-                        : 'hover:border-gray-300 text-gray-700 font-medium'
-                    } disabled:opacity-70`}
-                  >
-                    <span
-                      className="w-5 h-5 rounded-full text-[10px] text-white flex items-center justify-center shrink-0 shadow-2xs"
-                      style={{ backgroundColor: badgeColor }}
-                    >
-                      {badgeIcon}
-                    </span>
-                    <span className="truncate flex-1 text-slate-800">{et.name}</span>
-                    {isSelected && (
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: badgeColor }}
-                      />
-                    )}
-                  </button>
-                );
-              })}
+            <div className="relative flex items-center">
+              <div className="absolute left-3 flex items-center gap-2 pointer-events-none z-10">
+                <span
+                  className="w-5 h-5 rounded-full text-[10px] text-white flex items-center justify-center shrink-0 shadow-2xs"
+                  style={{ backgroundColor: currentEventTypeInfo.bgHex }}
+                >
+                  {currentEventTypeInfo.icon}
+                </span>
+              </div>
+              <select
+                id="event-type-select"
+                value={eventType}
+                disabled={!canSave}
+                onChange={(e) => setEventType(e.target.value)}
+                className="w-full bg-white border border-gray-200 rounded-xl pl-10 pr-9 py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:border-gray-900 focus:ring-1 focus:ring-gray-900 cursor-pointer disabled:opacity-70 appearance-none shadow-2xs"
+              >
+                {availableEventTypes.map((et) => {
+                  const etInfo = getEventTypeInfo('', et.name, eventTypes);
+                  return (
+                    <option key={et.name} value={et.name}>
+                      {etInfo.icon}  {et.name}
+                    </option>
+                  );
+                })}
+              </select>
+              <div className="absolute right-3 pointer-events-none text-gray-400">
+                <ChevronDown className="w-4 h-4" />
+              </div>
             </div>
           </div>
 
