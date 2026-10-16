@@ -328,9 +328,31 @@ export const TaskModal: React.FC = () => {
               id="task-save-btn"
               form="task-form"
               disabled={isSubmitting}
-              className="px-4 py-1.5 sm:px-5 sm:py-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
+              aria-label={isSubmitting ? 'Saving...' : editingTask ? 'Update task' : 'Create task'}
+              title={isSubmitting ? 'Saving...' : editingTask ? 'Update task' : 'Create task'}
+              style={{
+                backgroundColor: '#D1FAE5',
+                borderColor: '#A7F3D0',
+              }}
+              className={`w-[48px] h-[48px] min-w-[48px] min-h-[48px] rounded-full flex items-center justify-center border transition-all cursor-pointer shadow-xs disabled:opacity-60 disabled:cursor-not-allowed ${
+                isSubmitting ? 'opacity-60' : 'hover:scale-105 active:scale-95'
+              }`}
             >
-              {isSubmitting ? 'Saving...' : editingTask ? 'Update Task' : 'Create Task'}
+              <svg
+                width="36"
+                height="36"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#167D68"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className={isSubmitting ? 'animate-spin' : ''}
+              >
+                <circle cx="12" cy="12" r="9" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
             </button>
             <button
               type="button"
