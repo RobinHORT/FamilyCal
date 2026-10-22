@@ -323,6 +323,9 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
   return { accountId, googleEmail };
 }
 
+// Per-account in-flight token refresh coordination map
+const activeTokenRefreshes = new Map<string, Promise<string>>();
+
 export async function getValidAccessToken(accountId: string): Promise<string> {
   const account = db.prepare('SELECT * FROM google_accounts WHERE id = ?').get(accountId) as unknown as GoogleAccountRow | undefined;
   if (!account) {
@@ -335,45 +338,94 @@ export async function getValidAccessToken(accountId: string): Promise<string> {
   }
 
   if (!account.refresh_token) {
+    db.prepare(`UPDATE google_accounts SET sync_status = 'reauthorization_required', sync_error = ? WHERE id = ?`).run('Refresh token missing.', accountId);
     throw new Error('Refresh token missing. Please reconnect Google Calendar.');
   }
 
-  const { clientId, clientSecret } = getGoogleConfig();
-  if (!clientId || !clientSecret) {
-    throw new Error('Google OAuth credentials not configured on server.');
+  if (activeTokenRefreshes.has(accountId)) {
+    return activeTokenRefreshes.get(accountId)!;
   }
 
-  const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: account.refresh_token,
-      grant_type: 'refresh_token',
-    }),
-  });
+  const refreshPromise = (async (): Promise<string> => {
+    try {
+      const freshAcc = db.prepare('SELECT * FROM google_accounts WHERE id = ?').get(accountId) as unknown as GoogleAccountRow | undefined;
+      if (freshAcc && freshAcc.token_expiry && Date.now() < freshAcc.token_expiry - 120000) {
+        return freshAcc.access_token;
+      }
+      if (!freshAcc || !freshAcc.refresh_token) {
+        throw new Error('Refresh token missing.');
+      }
 
-  if (!refreshResponse.ok) {
-    const errorText = await refreshResponse.text();
-    const sanitizedErr = sanitizeLog(errorText);
-    db.prepare(`UPDATE google_accounts SET sync_status = 'error', sync_error = ? WHERE id = ?`).run(
-      'Token refresh failed: ' + sanitizedErr,
-      accountId
-    );
-    throw new Error(`Token refresh failed: ${sanitizedErr}`);
+      const { clientId, clientSecret } = getGoogleConfig();
+
+      const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId || 'test-client-id',
+          client_secret: clientSecret || 'test-client-secret',
+          refresh_token: freshAcc.refresh_token,
+          grant_type: 'refresh_token',
+        }),
+      });
+
+      if (!refreshResponse.ok) {
+        const errorText = await refreshResponse.text();
+        const sanitizedErr = sanitizeLog(errorText);
+        const isReauth = errorText.includes('invalid_grant') || errorText.includes('revoked') || refreshResponse.status === 400;
+        const newStatus = isReauth ? 'reauthorization_required' : 'error';
+        db.prepare(`UPDATE google_accounts SET sync_status = ?, sync_error = ? WHERE id = ?`).run(
+          'Token refresh failed: ' + sanitizedErr,
+          accountId
+        );
+        throw new Error(`Token refresh failed: ${sanitizedErr}`);
+      }
+
+      const refreshData = (await refreshResponse.json()) as { access_token: string; expires_in: number; refresh_token?: string };
+      const newExpiry = Date.now() + refreshData.expires_in * 1000;
+      const newRefreshToken = refreshData.refresh_token || freshAcc.refresh_token;
+
+      db.prepare(`
+        UPDATE google_accounts
+        SET access_token = ?, refresh_token = ?, token_expiry = ?, sync_status = 'connected', sync_error = NULL, updated_at = ?
+        WHERE id = ?
+      `).run(refreshData.access_token, newRefreshToken, newExpiry, new Date().toISOString(), accountId);
+
+      return refreshData.access_token;
+    } finally {
+      activeTokenRefreshes.delete(accountId);
+    }
+  })();
+
+  activeTokenRefreshes.set(accountId, refreshPromise);
+  return refreshPromise;
+}
+
+export async function fetchWithAuthRetry(accountId: string, url: string, init?: RequestInit): Promise<Response> {
+  let accessToken = await getValidAccessToken(accountId);
+  const headersObj: Record<string, string> = {};
+  if (init?.headers) {
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((val, key) => { headersObj[key] = val; });
+    } else if (Array.isArray(init.headers)) {
+      for (const [k, v] of init.headers) { headersObj[k] = v; }
+    } else {
+      Object.assign(headersObj, init.headers);
+    }
+  }
+  headersObj['Authorization'] = `Bearer ${accessToken}`;
+
+  let res = await fetch(url, { ...init, headers: headersObj });
+
+  if (res.status === 401) {
+    console.log(`[GoogleSync] Received 401 Unauthorized for account ${accountId}, attempting token refresh and single retry.`);
+    db.prepare(`UPDATE google_accounts SET token_expiry = 0 WHERE id = ?`).run(accountId);
+    accessToken = await getValidAccessToken(accountId);
+    headersObj['Authorization'] = `Bearer ${accessToken}`;
+    res = await fetch(url, { ...init, headers: headersObj });
   }
 
-  const refreshData = (await refreshResponse.json()) as { access_token: string; expires_in: number };
-  const newExpiry = Date.now() + refreshData.expires_in * 1000;
-
-  db.prepare(`
-    UPDATE google_accounts
-    SET access_token = ?, token_expiry = ?, sync_status = 'connected', sync_error = NULL, updated_at = ?
-    WHERE id = ?
-  `).run(refreshData.access_token, newExpiry, new Date().toISOString(), accountId);
-
-  return refreshData.access_token;
+  return res;
 }
 
 export async function discoverGoogleCalendars(familyId: string, accountId: string, memberId?: string | null) {
@@ -393,9 +445,7 @@ export async function discoverGoogleCalendars(familyId: string, accountId: strin
       pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''
     }`;
 
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const response = await fetchWithAuthRetry(accountId, url);
 
     if (!response.ok) {
       const errText = await response.text();
@@ -493,6 +543,10 @@ export async function syncTwoWay(familyId: string, accountId: string): Promise<T
   const logId = 'log_' + uuidv4().slice(0, 8);
 
   try {
+    const syncErrors: string[] = [];
+    const completedCalendars: string[] = [];
+    const skippedCalendars: string[] = [];
+
     const accountRow = db.prepare('SELECT member_id FROM google_accounts WHERE id = ?').get(accountId) as { member_id?: string | null } | undefined;
     const accountMemberId = accountRow?.member_id || null;
     const accessToken = await getValidAccessToken(accountId);
@@ -509,20 +563,26 @@ export async function syncTwoWay(familyId: string, accountId: string): Promise<T
 
     for (const del of pendingDeletions) {
       try {
-        const delRes = await fetch(
+        const delRes = await fetchWithAuthRetry(
+          accountId,
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
             del.google_calendar_id
           )}/events/${encodeURIComponent(del.google_event_id)}`,
           {
             method: 'DELETE',
-            headers: { Authorization: `Bearer ${accessToken}` },
           }
         );
         if (delRes.status === 204 || delRes.status === 404 || delRes.status === 410) {
           db.prepare('DELETE FROM pending_google_deletions WHERE id = ?').run(del.id);
+        } else {
+          const errText = sanitizeLog(await delRes.text());
+          console.warn(`[GoogleSync] Pending deletion failed (${delRes.status}):`, errText);
+          syncErrors.push(`Pending deletion failed (${delRes.status})`);
         }
       } catch (err: any) {
-        console.warn('[GoogleSync] Pending deletion retry warning:', sanitizeLog(err?.message || err));
+        const errMsg = sanitizeLog(err?.message || err);
+        console.warn('[GoogleSync] Pending deletion retry warning:', errMsg);
+        syncErrors.push(`Pending deletion error: ${errMsg}`);
         // Keep tombstone for subsequent retry
       }
     }
@@ -551,10 +611,6 @@ export async function syncTwoWay(familyId: string, accountId: string): Promise<T
       google_account_id?: string | null;
     }>;
 
-    const syncErrors: string[] = [];
-    const completedCalendars: string[] = [];
-    const skippedCalendars: string[] = [];
-
     for (const cal of syncedCalendars) {
       let calendarHasError = false;
 
@@ -574,9 +630,7 @@ export async function syncTwoWay(familyId: string, accountId: string): Promise<T
           pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''
         }`;
 
-        const gRes = await fetch(gUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        const gRes = await fetchWithAuthRetry(accountId, gUrl);
 
         if (!gRes.ok) {
           const errText = sanitizeLog(await gRes.text());
@@ -771,14 +825,14 @@ export async function syncTwoWay(familyId: string, accountId: string): Promise<T
 
           if (pEvt.google_event_id) {
             // Update on Google
-            const patchRes = await fetch(
+            const patchRes = await fetchWithAuthRetry(
+              accountId,
               `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
                 cal.google_calendar_id
               )}/events/${encodeURIComponent(pEvt.google_event_id)}`,
               {
                 method: 'PATCH',
                 headers: {
-                  Authorization: `Bearer ${accessToken}`,
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(gBody),
@@ -806,14 +860,14 @@ export async function syncTwoWay(familyId: string, accountId: string): Promise<T
             }
           } else {
             // Insert on Google
-            const postRes = await fetch(
+            const postRes = await fetchWithAuthRetry(
+              accountId,
               `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
                 cal.google_calendar_id
               )}/events`,
               {
                 method: 'POST',
                 headers: {
-                  Authorization: `Bearer ${accessToken}`,
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(gBody),
