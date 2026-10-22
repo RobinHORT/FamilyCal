@@ -321,7 +321,6 @@ async function runGoogleSyncTests() {
 
   await syncTwoWay(familyId, accountAId);
   const updatedInboundEvt = db.prepare('SELECT * FROM events WHERE google_event_id = ?').get('inbound_evt_201') as any;
-  console.log('DEBUG Scenario 5 updatedInboundEvt:', updatedInboundEvt);
   record(
     5,
     'Inbound Event Update: Google updates reconciled into FamilyCal event',
@@ -910,6 +909,290 @@ async function runGoogleSyncTests() {
     'Retained',
     `Retained=${Boolean(tombstoneNetKept)}`,
     Boolean(tombstoneNetKept)
+  );
+
+  // -------------------------------------------------------------
+  // Scenario 27 (Fix 1): invalid_grant response persists reauthorization_required
+  // -------------------------------------------------------------
+  currentFetchHandler = async (url) => {
+    if (url.includes('oauth2.googleapis.com/token')) {
+      return new Response(
+        JSON.stringify({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  };
+  db.prepare('UPDATE google_accounts SET token_expiry = 0 WHERE id = ?').run(accountAId);
+  let caughtInvalidGrant = false;
+  try {
+    await getValidAccessToken(accountAId);
+  } catch {
+    caughtInvalidGrant = true;
+  }
+  const accAfterInvalidGrant = db.prepare('SELECT sync_status, sync_error FROM google_accounts WHERE id = ?').get(accountAId) as any;
+  record(
+    27,
+    'Token Refresh invalid_grant: Persists reauthorization_required and useful error',
+    'reauthorization_required & contains invalid_grant',
+    `${accAfterInvalidGrant?.sync_status} & ${accAfterInvalidGrant?.sync_error}`,
+    caughtInvalidGrant &&
+    accAfterInvalidGrant?.sync_status === 'reauthorization_required' &&
+    accAfterInvalidGrant?.sync_error?.includes('invalid_grant')
+  );
+
+  // -------------------------------------------------------------
+  // Scenario 28 (Fix 1): Transient refresh failure persists 'error'
+  // -------------------------------------------------------------
+  currentFetchHandler = async (url) => {
+    if (url.includes('oauth2.googleapis.com/token')) {
+      return new Response(
+        JSON.stringify({ error: 'internal_failure', error_description: 'Transient backend glitch' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  };
+  db.prepare('UPDATE google_accounts SET token_expiry = 0 WHERE id = ?').run(accountAId);
+  let caughtTransientError = false;
+  try {
+    await getValidAccessToken(accountAId);
+  } catch {
+    caughtTransientError = true;
+  }
+  const accAfterTransient = db.prepare('SELECT sync_status, sync_error FROM google_accounts WHERE id = ?').get(accountAId) as any;
+  record(
+    28,
+    'Transient Refresh Failure: Persists status error rather than reauthorization_required',
+    'error & contains Token refresh failed',
+    `${accAfterTransient?.sync_status} & ${accAfterTransient?.sync_error}`,
+    caughtTransientError &&
+    accAfterTransient?.sync_status === 'error' &&
+    accAfterTransient?.sync_error?.includes('Token refresh failed')
+  );
+
+  // -------------------------------------------------------------
+  // Scenario 29 (Fix 1): Subsequent refresh attempt succeeds after a failure
+  // -------------------------------------------------------------
+  currentFetchHandler = async (url) => {
+    if (url.includes('oauth2.googleapis.com/token')) {
+      return new Response(
+        JSON.stringify({ access_token: 'fresh_recovered_token_123', expires_in: 3600 }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  };
+  db.prepare('UPDATE google_accounts SET token_expiry = 0 WHERE id = ?').run(accountAId);
+  const recoveredAccToken = await getValidAccessToken(accountAId);
+  const accAfterRecovery = db.prepare('SELECT sync_status, sync_error FROM google_accounts WHERE id = ?').get(accountAId) as any;
+  record(
+    29,
+    'Subsequent Refresh Recovery: Succeeds and sets status connected with clear error',
+    'fresh_recovered_token_123 & connected & null error',
+    `${recoveredAccToken} & ${accAfterRecovery?.sync_status} & ${accAfterRecovery?.sync_error}`,
+    recoveredAccToken === 'fresh_recovered_token_123' &&
+    accAfterRecovery?.sync_status === 'connected' &&
+    accAfterRecovery?.sync_error === null
+  );
+
+  // -------------------------------------------------------------
+  // Scenario 30 (Fix 2): Inbound deletion receives 401, refreshes token, retries once, and succeeds
+  // -------------------------------------------------------------
+  const del401Id = 'del_inb_401_' + uuidv4().slice(0, 8);
+  db.prepare(`
+    INSERT INTO pending_google_deletions (id, family_id, google_calendar_id, google_event_id, google_account_id, created_at)
+    VALUES (?, ?, 'gcal_id_admin@group.calendar.google.com', 'inb_evt_del_401', ?, ?)
+  `).run(del401Id, familyId, accountAId, now);
+
+  let inboundDel401Attempts = 0;
+  let inboundDelRefreshCalled = false;
+  currentFetchHandler = async (url, init) => {
+    if (url.includes('oauth2.googleapis.com/token')) {
+      inboundDelRefreshCalled = true;
+      return new Response(JSON.stringify({ access_token: 'inb_del_refreshed_tok', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.includes('/events?') && url.includes('gcal_id_admin')) {
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'inb_evt_del_401',
+              summary: 'Deleted Event Reappearing Inbound',
+              status: 'confirmed',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/events/inb_evt_del_401') && init?.method === 'DELETE') {
+      inboundDel401Attempts++;
+      if (inboundDel401Attempts === 1) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      return new Response(null, { status: 204 });
+    }
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  };
+
+  const syncRes30 = await syncTwoWay(familyId, accountAId);
+  const tombstone30 = db.prepare('SELECT * FROM pending_google_deletions WHERE id = ?').get(del401Id);
+  const recreatedEvt30 = db.prepare('SELECT * FROM events WHERE google_event_id = ?').get('inb_evt_del_401');
+  record(
+    30,
+    'Inbound Deletion 401 Retry: Refreshes token, retries once, deletes tombstone on 204 without recreating event',
+    'Attempts=2, Refreshed=true, TombstoneCleared=true, NotRecreated=true',
+    `Attempts=${inboundDel401Attempts}, Refreshed=${inboundDelRefreshCalled}, TombstoneCleared=${!tombstone30}, NotRecreated=${!recreatedEvt30}`,
+    inboundDel401Attempts === 2 &&
+    inboundDelRefreshCalled &&
+    !tombstone30 &&
+    !recreatedEvt30 &&
+    syncRes30.success
+  );
+
+  // -------------------------------------------------------------
+  // Scenario 31 (Fix 2): Inbound deletion failed retry leaves deletion queued and reports sync error
+  // -------------------------------------------------------------
+  const del401FailId = 'del_inb_fail_' + uuidv4().slice(0, 8);
+  db.prepare(`
+    INSERT INTO pending_google_deletions (id, family_id, google_calendar_id, google_event_id, google_account_id, created_at)
+    VALUES (?, ?, 'gcal_id_admin@group.calendar.google.com', 'inb_evt_del_fail', ?, ?)
+  `).run(del401FailId, familyId, accountAId, now);
+
+  currentFetchHandler = async (url, init) => {
+    if (url.includes('oauth2.googleapis.com/token')) {
+      return new Response(JSON.stringify({ access_token: 'fresh_tok', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.includes('/events?') && url.includes('gcal_id_admin')) {
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'inb_evt_del_fail',
+              summary: 'Persisting Event',
+              status: 'confirmed',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/events/inb_evt_del_fail') && init?.method === 'DELETE') {
+      return new Response('Unauthorized', { status: 401 });
+    }
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  };
+
+  const syncRes31 = await syncTwoWay(familyId, accountAId);
+  const tombstone31 = db.prepare('SELECT * FROM pending_google_deletions WHERE id = ?').get(del401FailId);
+  const recreatedEvt31 = db.prepare('SELECT * FROM events WHERE google_event_id = ?').get('inb_evt_del_fail');
+  db.prepare('DELETE FROM pending_google_deletions WHERE id = ?').run(del401FailId);
+
+  record(
+    31,
+    'Inbound Deletion Failed Retry: Tombstone remains queued, sync reports error, event not recreated',
+    'TombstoneKept=true, Success=false, NotRecreated=true',
+    `TombstoneKept=${Boolean(tombstone31)}, Success=${syncRes31.success}, NotRecreated=${!recreatedEvt31}`,
+    Boolean(tombstone31) && !syncRes31.success && !recreatedEvt31
+  );
+
+  // -------------------------------------------------------------
+  // Scenario 32 (Fix 2): Unsuccessful non-auth response retains deletion and does not trigger refresh
+  // -------------------------------------------------------------
+  const del500Id = 'del_inb_500_' + uuidv4().slice(0, 8);
+  db.prepare(`
+    INSERT INTO pending_google_deletions (id, family_id, google_calendar_id, google_event_id, google_account_id, created_at)
+    VALUES (?, ?, 'gcal_id_admin@group.calendar.google.com', 'inb_evt_del_500', ?, ?)
+  `).run(del500Id, familyId, accountAId, now);
+
+  let refreshCalledOn500 = false;
+  currentFetchHandler = async (url, init) => {
+    if (url.includes('oauth2.googleapis.com/token')) {
+      refreshCalledOn500 = true;
+      return new Response(JSON.stringify({ access_token: 'fresh_tok', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.includes('/events?') && url.includes('gcal_id_admin')) {
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'inb_evt_del_500',
+              summary: 'Event 500',
+              status: 'confirmed',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/events/inb_evt_del_500') && init?.method === 'DELETE') {
+      return new Response('Internal Server Error', { status: 500 });
+    }
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  };
+
+  const syncRes32 = await syncTwoWay(familyId, accountAId);
+  const tombstone32 = db.prepare('SELECT * FROM pending_google_deletions WHERE id = ?').get(del500Id);
+  db.prepare('DELETE FROM pending_google_deletions WHERE id = ?').run(del500Id);
+
+  record(
+    32,
+    'Inbound Deletion 500 Non-Auth Error: Retains tombstone, does not trigger token refresh',
+    'TombstoneKept=true, RefreshCalled=false, Success=false',
+    `TombstoneKept=${Boolean(tombstone32)}, RefreshCalled=${refreshCalledOn500}, Success=${syncRes32.success}`,
+    Boolean(tombstone32) && !refreshCalledOn500 && !syncRes32.success
+  );
+
+  // -------------------------------------------------------------
+  // Scenario 33 (Fix 2): Inbound deletion 404/410 clears appropriate tombstone
+  // -------------------------------------------------------------
+  const del404Id = 'del_inb_404_' + uuidv4().slice(0, 8);
+  db.prepare(`
+    INSERT INTO pending_google_deletions (id, family_id, google_calendar_id, google_event_id, google_account_id, created_at)
+    VALUES (?, ?, 'gcal_id_admin@group.calendar.google.com', 'inb_evt_del_404', ?, ?)
+  `).run(del404Id, familyId, accountAId, now);
+
+  currentFetchHandler = async (url, init) => {
+    if (url.includes('/events?') && url.includes('gcal_id_admin')) {
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'inb_evt_del_404',
+              summary: 'Event 404',
+              status: 'confirmed',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/events/inb_evt_del_404') && init?.method === 'DELETE') {
+      return new Response('Not Found', { status: 404 });
+    }
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  };
+
+  const syncRes33 = await syncTwoWay(familyId, accountAId);
+  const tombstone33 = db.prepare('SELECT * FROM pending_google_deletions WHERE id = ?').get(del404Id);
+  const recreatedEvt33 = db.prepare('SELECT * FROM events WHERE google_event_id = ?').get('inb_evt_del_404');
+
+  record(
+    33,
+    'Inbound Deletion 404 Absent: Clears tombstone and does not recreate event locally',
+    'TombstoneCleared=true, NotRecreated=true, Success=true',
+    `TombstoneCleared=${!tombstone33}, NotRecreated=${!recreatedEvt33}, Success=${syncRes33.success}`,
+    !tombstone33 && !recreatedEvt33 && syncRes33.success
   );
 
   // Restore original fetch

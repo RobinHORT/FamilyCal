@@ -372,13 +372,25 @@ export async function getValidAccessToken(accountId: string): Promise<string> {
       if (!refreshResponse.ok) {
         const errorText = await refreshResponse.text();
         const sanitizedErr = sanitizeLog(errorText);
-        const isReauth = errorText.includes('invalid_grant') || errorText.includes('revoked') || refreshResponse.status === 400;
+        let errorData: any = null;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {}
+        const errorCode = errorData?.error || '';
+        const errorDesc = errorData?.error_description || '';
+        const isReauth =
+          errorCode === 'invalid_grant' ||
+          errorDesc.toLowerCase().includes('revoked') ||
+          errorDesc.toLowerCase().includes('expired') ||
+          errorText.includes('invalid_grant');
         const newStatus = isReauth ? 'reauthorization_required' : 'error';
-        db.prepare(`UPDATE google_accounts SET sync_status = ?, sync_error = ? WHERE id = ?`).run(
-          'Token refresh failed: ' + sanitizedErr,
-          accountId
-        );
-        throw new Error(`Token refresh failed: ${sanitizedErr}`);
+        const failureMessage = `Token refresh failed: ${sanitizedErr}`;
+        db.prepare(`
+          UPDATE google_accounts
+          SET sync_status = ?, sync_error = ?, updated_at = ?
+          WHERE id = ?
+        `).run(newStatus, failureMessage, new Date().toISOString(), accountId);
+        throw new Error(failureMessage);
       }
 
       const refreshData = (await refreshResponse.json()) as { access_token: string; expires_in: number; refresh_token?: string };
@@ -656,13 +668,13 @@ export async function syncTwoWay(familyId: string, accountId: string): Promise<T
         // If event was deleted in FamilyCal, delete it on Google and do NOT recreate it!
         if (remainingPendingDelIds.has(item.id)) {
           try {
-            const delRes = await fetch(
+            const delRes = await fetchWithAuthRetry(
+              accountId,
               `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
                 cal.google_calendar_id
               )}/events/${encodeURIComponent(item.id)}`,
               {
                 method: 'DELETE',
-                headers: { Authorization: `Bearer ${accessToken}` },
               }
             );
             if (delRes.status === 204 || delRes.status === 404 || delRes.status === 410) {
@@ -671,8 +683,22 @@ export async function syncTwoWay(familyId: string, accountId: string): Promise<T
                 item.id
               );
               remainingPendingDelIds.delete(item.id);
+            } else {
+              const errText = sanitizeLog(await delRes.text());
+              console.warn(`[GoogleSync] Inbound pending deletion failed (${delRes.status}):`, errText);
+              const errStr = `Pending deletion failed (${delRes.status})`;
+              if (!syncErrors.includes(errStr)) {
+                syncErrors.push(errStr);
+              }
             }
-          } catch {}
+          } catch (err: any) {
+            const errMsg = sanitizeLog(err?.message || err);
+            console.warn('[GoogleSync] Inbound pending deletion error:', errMsg);
+            const errStr = `Pending deletion error: ${errMsg}`;
+            if (!syncErrors.includes(errStr)) {
+              syncErrors.push(errStr);
+            }
+          }
           continue;
         }
 
