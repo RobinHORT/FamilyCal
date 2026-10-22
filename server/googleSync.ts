@@ -43,6 +43,18 @@ export interface GoogleEventApiItem {
   updated?: string;
 }
 
+export interface TwoWaySyncResult {
+  success: boolean;
+  eventsSynced: number;
+  syncedAt: string;
+  inProgress?: boolean;
+  partial?: boolean;
+  errors?: string[];
+  completedCalendars?: string[];
+  skippedCalendars?: string[];
+  message?: string;
+}
+
 // In-memory concurrency locks to prevent race conditions and duplicate event creation
 const activeEventSyncs = new Set<string>();
 const activeAccountSyncs = new Set<string>();
@@ -461,11 +473,18 @@ export async function discoverGoogleCalendars(familyId: string, accountId: strin
   return allItems;
 }
 
-export async function syncTwoWay(familyId: string, accountId: string) {
+export async function syncTwoWay(familyId: string, accountId: string): Promise<TwoWaySyncResult> {
   const syncKey = `${familyId}:${accountId}`;
   if (activeAccountSyncs.has(syncKey)) {
     console.log(`[GoogleSync] Two-way sync already running for account ${accountId}, skipping duplicate invocation.`);
-    return { success: true, eventsSynced: 0, syncedAt: new Date().toISOString(), inProgress: true };
+    return {
+      success: false,
+      inProgress: true,
+      eventsSynced: 0,
+      syncedAt: new Date().toISOString(),
+      message: 'Sync in progress',
+      errors: ['Sync is already in progress for this account.'],
+    };
   }
 
   activeAccountSyncs.add(syncKey);
@@ -532,7 +551,13 @@ export async function syncTwoWay(familyId: string, accountId: string) {
       google_account_id?: string | null;
     }>;
 
+    const syncErrors: string[] = [];
+    const completedCalendars: string[] = [];
+    const skippedCalendars: string[] = [];
+
     for (const cal of syncedCalendars) {
+      let calendarHasError = false;
+
       // 1. Inbound: Fetch from Google Calendar API with full pagination and showDeleted=true
       const timeMin = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(); // Past 60 days
       const timeMax = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(); // Future 180 days
@@ -554,7 +579,11 @@ export async function syncTwoWay(familyId: string, accountId: string) {
         });
 
         if (!gRes.ok) {
-          console.warn(`Sync failed for calendar ${cal.name}:`, sanitizeLog(await gRes.text()));
+          const errText = sanitizeLog(await gRes.text());
+          console.warn(`Sync failed for calendar ${cal.name}:`, errText);
+          syncErrors.push(`Calendar "${cal.name}": inbound request failed (${gRes.status})`);
+          skippedCalendars.push(cal.id);
+          calendarHasError = true;
           break;
         }
 
@@ -564,6 +593,10 @@ export async function syncTwoWay(familyId: string, accountId: string) {
         }
         pageToken = gData.nextPageToken;
       } while (pageToken);
+
+      if (calendarHasError) {
+        continue;
+      }
 
       for (const item of gEvents) {
         // If event was deleted in FamilyCal, delete it on Google and do NOT recreate it!
@@ -765,6 +798,11 @@ export async function syncTwoWay(familyId: string, accountId: string) {
                 now,
                 pEvt.id
               );
+            } else {
+              const errText = sanitizeLog(await patchRes.text());
+              console.warn(`[GoogleSync] Outbound PATCH failed for event ${pEvt.id}:`, errText);
+              syncErrors.push(`Event "${pEvt.title || pEvt.id}": update failed (${patchRes.status})`);
+              calendarHasError = true;
             }
           } else {
             // Insert on Google
@@ -790,26 +828,55 @@ export async function syncTwoWay(familyId: string, accountId: string) {
                   WHERE id = ?
                 `).run(resData.id, cal.google_calendar_id, resData.etag || null, now, pEvt.id);
               }
+            } else {
+              const errText = sanitizeLog(await postRes.text());
+              console.warn(`[GoogleSync] Outbound POST failed for event ${pEvt.id}:`, errText);
+              syncErrors.push(`Event "${pEvt.title || pEvt.id}": create failed (${postRes.status})`);
+              calendarHasError = true;
             }
           }
         }
       }
+
+      if (!calendarHasError) {
+        completedCalendars.push(cal.id);
+      }
     }
 
-    // Update last sync on account
+    const hasErrors = syncErrors.length > 0;
+    const finalSyncStatus = hasErrors ? 'error' : 'connected';
+    const finalSyncError = hasErrors ? syncErrors.join('; ') : null;
+
+    // Update account sync status
     db.prepare(`
       UPDATE google_accounts
-      SET sync_status = 'connected', sync_error = NULL, last_synced_at = ?, updated_at = ?
+      SET sync_status = ?, sync_error = ?, last_synced_at = ?, updated_at = ?
       WHERE id = ?
-    `).run(now, now, accountId);
+    `).run(finalSyncStatus, finalSyncError, now, now, accountId);
 
-    // Record success log
+    // Record log
     db.prepare(`
       INSERT INTO google_sync_logs (id, family_id, account_id, sync_type, status, events_synced, details, created_at)
-      VALUES (?, ?, ?, 'full', 'success', ?, ?, ?)
-    `).run(logId, familyId, accountId, totalEventsSynced, `Synchronized ${totalEventsSynced} events across calendars.`, now);
+      VALUES (?, ?, ?, 'full', ?, ?, ?, ?)
+    `).run(
+      logId,
+      familyId,
+      accountId,
+      hasErrors ? (totalEventsSynced > 0 ? 'partial' : 'failed') : 'success',
+      totalEventsSynced,
+      hasErrors ? `Sync encountered errors: ${finalSyncError}` : `Synchronized ${totalEventsSynced} events across calendars.`,
+      now
+    );
 
-    return { success: true, eventsSynced: totalEventsSynced, syncedAt: now };
+    return {
+      success: !hasErrors,
+      partial: hasErrors && totalEventsSynced > 0,
+      eventsSynced: totalEventsSynced,
+      syncedAt: now,
+      errors: hasErrors ? syncErrors : undefined,
+      completedCalendars,
+      skippedCalendars,
+    };
   } catch (err: any) {
     const errorMsg = sanitizeLog(err?.message || String(err));
     db.prepare(`
@@ -823,9 +890,99 @@ export async function syncTwoWay(familyId: string, accountId: string) {
       VALUES (?, ?, ?, 'full', 'failed', ?, ?, ?)
     `).run(logId, familyId, accountId, 0, `Sync failed: ${errorMsg}`, now);
 
-    throw err;
+    return {
+      success: false,
+      eventsSynced: 0,
+      syncedAt: now,
+      errors: [errorMsg],
+      completedCalendars: [],
+      skippedCalendars: [],
+    };
   } finally {
     activeAccountSyncs.delete(syncKey);
+  }
+}
+
+// Background Periodic Sync Scheduler
+let periodicSyncTimer: NodeJS.Timeout | null = null;
+let isPeriodicSyncRunning = false;
+
+export async function runPeriodicSyncOnce(): Promise<{
+  accountsAttempted: number;
+  accountsSucceeded: number;
+  accountsFailed: number;
+}> {
+  if (isPeriodicSyncRunning) {
+    console.log('[GoogleSync Scheduler] Previous periodic sync cycle is still running; skipping iteration.');
+    return { accountsAttempted: 0, accountsSucceeded: 0, accountsFailed: 0 };
+  }
+
+  isPeriodicSyncRunning = true;
+  let accountsAttempted = 0;
+  let accountsSucceeded = 0;
+  let accountsFailed = 0;
+
+  try {
+    const accounts = db.prepare(`
+      SELECT id, family_id, google_email
+      FROM google_accounts
+      WHERE sync_status != 'disconnected'
+    `).all() as Array<{ id: string; family_id: string; google_email: string }>;
+
+    for (const acc of accounts) {
+      accountsAttempted++;
+      try {
+        const result = await syncTwoWay(acc.family_id, acc.id);
+        if (result.success) {
+          accountsSucceeded++;
+        } else {
+          accountsFailed++;
+        }
+      } catch (err: any) {
+        accountsFailed++;
+        console.warn(`[GoogleSync Scheduler] Error syncing account ${acc.google_email}:`, sanitizeLog(err?.message || err));
+      }
+    }
+  } catch (err: any) {
+    console.error('[GoogleSync Scheduler] Error during periodic sync iteration:', sanitizeLog(err?.message || err));
+  } finally {
+    isPeriodicSyncRunning = false;
+  }
+
+  return { accountsAttempted, accountsSucceeded, accountsFailed };
+}
+
+export function startPeriodicSync(intervalMs?: number): NodeJS.Timeout {
+  if (periodicSyncTimer) {
+    clearInterval(periodicSyncTimer);
+    periodicSyncTimer = null;
+  }
+
+  const interval = intervalMs ?? (
+    process.env.GOOGLE_SYNC_INTERVAL_MS
+      ? parseInt(process.env.GOOGLE_SYNC_INTERVAL_MS, 10)
+      : 5 * 60 * 1000 // 5 minutes default
+  );
+
+  console.log(`[GoogleSync Scheduler] Starting periodic sync with interval ${interval}ms`);
+  periodicSyncTimer = setInterval(() => {
+    runPeriodicSyncOnce().catch((err) => {
+      console.error('[GoogleSync Scheduler] Uncaught error in periodic sync cycle:', sanitizeLog(err?.message || err));
+    });
+  }, interval);
+
+  if (periodicSyncTimer.unref) {
+    periodicSyncTimer.unref();
+  }
+
+  return periodicSyncTimer;
+}
+
+export function stopPeriodicSync(): void {
+  if (periodicSyncTimer) {
+    console.log('[GoogleSync Scheduler] Stopping periodic sync scheduler.');
+    clearInterval(periodicSyncTimer);
+    periodicSyncTimer = null;
   }
 }
 

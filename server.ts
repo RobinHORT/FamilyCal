@@ -5,10 +5,24 @@ import cookieParser from 'cookie-parser';
 import { createServer as createViteServer } from 'vite';
 import { initDatabase } from './server/db.js';
 import { router as apiRouter } from './server/routes/api.js';
+import { startPeriodicSync, stopPeriodicSync } from './server/googleSync.js';
 
 async function startServer() {
   // 1. Initialize SQLite Database & Tables
   initDatabase();
+
+  // Start background Google Calendar periodic sync scheduler (every 5 mins)
+  startPeriodicSync();
+
+  process.on('SIGTERM', () => {
+    stopPeriodicSync();
+    process.exit(0);
+  });
+
+  process.on('SIGINT', () => {
+    stopPeriodicSync();
+    process.exit(0);
+  });
 
   const app = express();
   const PORT = 3000;

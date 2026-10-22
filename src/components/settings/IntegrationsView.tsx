@@ -109,8 +109,15 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ initialTab =
     setIsSyncing(true);
     setSyncMessage(null);
     try {
-      const res = await api.syncGoogle(accountId);
-      setSyncMessage(`Successfully synced ${res.eventsSynced} events with Google Calendar!`);
+      const res = await api.syncGoogle(accountId) as any;
+      if (res.success) {
+        setSyncMessage(`Successfully synced ${res.eventsSynced} events with Google Calendar!`);
+      } else if (res.partial) {
+        setSyncMessage(`Partial sync completed: ${res.eventsSynced} events synced. Some items encountered errors.`);
+      } else {
+        setSyncMessage(`Sync failed: ${res.errors?.join(', ') || res.message || 'Unknown sync error'}`);
+      }
+      await fetchCalendarData();
       await loadAll();
     } catch (err: any) {
       setSyncMessage(`Sync failed: ${err?.message || 'Error communicating with Google API'}`);
