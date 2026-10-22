@@ -1,11 +1,11 @@
 import { db } from './db.js';
 import { v4 as uuidv4 } from 'uuid';
 
-interface GoogleAccountRow {
+export interface GoogleAccountRow {
   id: string;
   user_id: string;
   family_id: string;
-  member_id?: string;
+  member_id?: string | null;
   google_email: string;
   google_user_id?: string;
   access_token: string;
@@ -15,9 +15,11 @@ interface GoogleAccountRow {
   sync_status: string;
   sync_error?: string;
   last_synced_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
-interface GoogleCalendarApiItem {
+export interface GoogleCalendarApiItem {
   id: string;
   summary: string;
   description?: string;
@@ -27,7 +29,7 @@ interface GoogleCalendarApiItem {
   accessRole?: string;
 }
 
-interface GoogleEventApiItem {
+export interface GoogleEventApiItem {
   id: string;
   summary?: string;
   description?: string;
@@ -40,6 +42,10 @@ interface GoogleEventApiItem {
   etag?: string;
   updated?: string;
 }
+
+// In-memory concurrency locks to prevent race conditions and duplicate event creation
+const activeEventSyncs = new Set<string>();
+const activeAccountSyncs = new Set<string>();
 
 // Standard Google Calendar Color Palette Mapping
 const GOOGLE_COLOR_MAP: Record<string, string> = {
@@ -56,13 +62,71 @@ const GOOGLE_COLOR_MAP: Record<string, string> = {
   '11': '#D50000', // Tomato
 };
 
-function formatGoogleAllDayEndDate(startStr: string, endStr: string): string {
+export function sanitizeLog(input: any): string {
+  if (!input) return '';
+  const str = typeof input === 'string' ? input : JSON.stringify(input);
+  return str
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [REDACTED]')
+    .replace(/"access_token"\s*:\s*"[^"]+"/gi, '"access_token":"[REDACTED]"')
+    .replace(/"refresh_token"\s*:\s*"[^"]+"/gi, '"refresh_token":"[REDACTED]"')
+    .replace(/client_secret=[^&\s]+/gi, 'client_secret=[REDACTED]');
+}
+
+export function formatGoogleAllDayEndDate(startStr: string, endStr: string): string {
   const s = startStr.slice(0, 10);
   const e = endStr.slice(0, 10);
   const base = e >= s ? e : s;
   const d = new Date(base + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+export function formatGoogleRecurrence(rule?: string, until?: string): string[] | undefined {
+  if (!rule || rule === 'none') return undefined;
+  let freq: string;
+  switch (rule) {
+    case 'daily': freq = 'DAILY'; break;
+    case 'weekly': freq = 'WEEKLY'; break;
+    case 'fortnightly':
+      return ['RRULE:FREQ=WEEKLY;INTERVAL=2' + (until ? `;UNTIL=${until.replace(/[-:]/g, '').slice(0, 8)}T235959Z` : '')];
+    case 'monthly': freq = 'MONTHLY'; break;
+    case 'yearly': freq = 'YEARLY'; break;
+    default: return undefined;
+  }
+  let rrule = `RRULE:FREQ=${freq}`;
+  if (until) {
+    const cleanUntil = until.replace(/[-:]/g, '').slice(0, 8);
+    rrule += `;UNTIL=${cleanUntil}T235959Z`;
+  }
+  return [rrule];
+}
+
+export function parseGoogleRecurrence(rruleList?: string[]): { rule: string; until?: string } {
+  if (!rruleList || rruleList.length === 0) return { rule: 'none' };
+  const rrule = rruleList.find((r) => r.startsWith('RRULE:')) || rruleList[0];
+  if (!rrule) return { rule: 'none' };
+
+  let rule = 'none';
+  if (rrule.includes('INTERVAL=2') && rrule.includes('FREQ=WEEKLY')) {
+    rule = 'fortnightly';
+  } else if (rrule.includes('FREQ=DAILY')) {
+    rule = 'daily';
+  } else if (rrule.includes('FREQ=WEEKLY')) {
+    rule = 'weekly';
+  } else if (rrule.includes('FREQ=MONTHLY')) {
+    rule = 'monthly';
+  } else if (rrule.includes('FREQ=YEARLY')) {
+    rule = 'yearly';
+  }
+
+  let until: string | undefined = undefined;
+  const untilMatch = rrule.match(/UNTIL=([0-9]{8})/);
+  if (untilMatch && untilMatch[1]) {
+    const raw = untilMatch[1];
+    until = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  }
+
+  return { rule, until };
 }
 
 export function getGoogleConfig() {
@@ -80,7 +144,7 @@ export function getGoogleConfig() {
 }
 
 export function generateAuthUrl(userId: string, familyId: string, memberId?: string | null): { url: string; state: string } {
-  const { clientId, redirectUri, isConfigured } = getGoogleConfig();
+  const { clientId, redirectUri } = getGoogleConfig();
   
   const state = uuidv4();
   const expiresAt = Date.now() + 15 * 60 * 1000; // 15 mins
@@ -121,31 +185,22 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
   } | undefined;
 
   if (!stateRow) {
-    throw new Error('Invalid or expired OAuth state parameter (CSRF protection failed).');
+    throw new Error('Invalid or expired OAuth state token.');
   }
 
   if (Date.now() > stateRow.expires_at) {
     db.prepare('DELETE FROM oauth_states WHERE state_token = ?').run(stateToken);
-    throw new Error('OAuth authorization session expired. Please retry.');
+    throw new Error('OAuth authorization flow expired. Please try connecting again.');
   }
 
   db.prepare('DELETE FROM oauth_states WHERE state_token = ?').run(stateToken);
-
-  let memberId = stateRow.member_id;
-  if (!memberId) {
-    const mem = db.prepare('SELECT id FROM family_members WHERE user_id = ? AND family_id = ? LIMIT 1').get(
-      stateRow.user_id,
-      stateRow.family_id
-    ) as { id: string } | undefined;
-    memberId = mem?.id || null;
-  }
 
   const { clientId, clientSecret, redirectUri } = getGoogleConfig();
   if (!clientId || !clientSecret) {
     throw new Error('Google OAuth credentials not configured on server.');
   }
 
-  // 1. Exchange code for access & refresh tokens
+  // 1. Exchange authorization code for access and refresh tokens
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -160,7 +215,7 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
 
   if (!tokenResponse.ok) {
     const errorText = await tokenResponse.text();
-    throw new Error(`Google Token Exchange Failed: ${errorText}`);
+    throw new Error(`Google token exchange failed (${tokenResponse.status}): ${sanitizeLog(errorText)}`);
   }
 
   const tokenData = (await tokenResponse.json()) as {
@@ -172,32 +227,36 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
 
   const tokenExpiry = Date.now() + tokenData.expires_in * 1000;
 
-  // 2. Fetch Google User Profile
-  const profileResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-    headers: { Authorization: `Bearer ${tokenData.access_token}` },
-  });
-
-  let googleEmail = 'google-calendar@user';
-  let googleUserId = '';
-  if (profileResponse.ok) {
-    const profile = (await profileResponse.json()) as { email: string; id: string };
-    googleEmail = profile.email || googleEmail;
-    googleUserId = profile.id || '';
+  // 2. Fetch authenticated user's email address
+  let googleEmail = 'google-user@familycal.app';
+  let googleUserId: string | null = null;
+  try {
+    const userinfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    if (userinfoResponse.ok) {
+      const userInfo = (await userinfoResponse.json()) as { email?: string; id?: string };
+      if (userInfo.email) googleEmail = userInfo.email;
+      if (userInfo.id) googleUserId = userInfo.id;
+    }
+  } catch (err: any) {
+    console.warn('Could not fetch user profile email:', sanitizeLog(err?.message || err));
   }
 
-  // 3. Save or update Google Account
+  // 3. Store or update account in database
+  const memberId = stateRow.member_id || null;
   let existingAccount: GoogleAccountRow | undefined;
+
   if (memberId) {
-    existingAccount = db.prepare('SELECT * FROM google_accounts WHERE family_id = ? AND (google_email = ? OR member_id = ?)').get(
-      stateRow.family_id,
-      googleEmail,
-      memberId
-    ) as unknown as GoogleAccountRow | undefined;
-  } else {
-    existingAccount = db.prepare('SELECT * FROM google_accounts WHERE family_id = ? AND google_email = ?').get(
-      stateRow.family_id,
-      googleEmail
-    ) as unknown as GoogleAccountRow | undefined;
+    existingAccount = db.prepare(
+      'SELECT * FROM google_accounts WHERE family_id = ? AND member_id = ?'
+    ).get(stateRow.family_id, memberId) as unknown as GoogleAccountRow | undefined;
+  }
+
+  if (!existingAccount) {
+    existingAccount = db.prepare(
+      'SELECT * FROM google_accounts WHERE family_id = ? AND google_email = ?'
+    ).get(stateRow.family_id, googleEmail) as unknown as GoogleAccountRow | undefined;
   }
 
   let accountId: string;
@@ -245,8 +304,8 @@ export async function handleOAuthCallback(code: string, stateToken: string) {
   // 4. Initial Discovery of Google Calendars
   try {
     await discoverGoogleCalendars(stateRow.family_id, accountId, memberId);
-  } catch (err) {
-    console.error('Initial calendar discovery warning:', err);
+  } catch (err: any) {
+    console.error('Initial calendar discovery warning:', sanitizeLog(err?.message || err));
   }
 
   return { accountId, googleEmail };
@@ -285,11 +344,12 @@ export async function getValidAccessToken(accountId: string): Promise<string> {
 
   if (!refreshResponse.ok) {
     const errorText = await refreshResponse.text();
+    const sanitizedErr = sanitizeLog(errorText);
     db.prepare(`UPDATE google_accounts SET sync_status = 'error', sync_error = ? WHERE id = ?`).run(
-      'Token refresh failed: ' + errorText,
+      'Token refresh failed: ' + sanitizedErr,
       accountId
     );
-    throw new Error(`Token refresh failed: ${errorText}`);
+    throw new Error(`Token refresh failed: ${sanitizedErr}`);
   }
 
   const refreshData = (await refreshResponse.json()) as { access_token: string; expires_in: number };
@@ -312,43 +372,61 @@ export async function discoverGoogleCalendars(familyId: string, accountId: strin
 
   const accessToken = await getValidAccessToken(accountId);
 
-  const response = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  // Paginated retrieval of calendarList
+  const allItems: GoogleCalendarApiItem[] = [];
+  let pageToken: string | undefined = undefined;
 
-  if (!response.ok) {
-    throw new Error(`Google Calendar list retrieval failed (${response.status}): ${await response.text()}`);
-  }
+  do {
+    const url = `https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250${
+      pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''
+    }`;
 
-  const data = (await response.json()) as { items: GoogleCalendarApiItem[] };
-  const items = data.items || [];
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Google Calendar list retrieval failed (${response.status}): ${sanitizeLog(errText)}`);
+    }
+
+    const data = (await response.json()) as { items?: GoogleCalendarApiItem[]; nextPageToken?: string };
+    if (data.items) {
+      allItems.push(...data.items);
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
   const now = new Date().toISOString();
+  const discoveredCalIds = new Set(allItems.map((i) => i.id));
 
   const insertCal = db.prepare(`
-    INSERT INTO calendars (id, family_id, member_id, name, color, description, is_default, source, google_calendar_id, is_read_only, sync_enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 0, 'google', ?, ?, 1, ?, ?)
+    INSERT INTO calendars (id, family_id, member_id, name, color, description, is_default, source, google_calendar_id, google_account_id, is_read_only, sync_enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 'google', ?, ?, ?, 1, ?, ?)
   `);
 
-  for (const item of items) {
-    const existing = db.prepare('SELECT id, member_id FROM calendars WHERE family_id = ? AND google_calendar_id = ?').get(
-      familyId,
-      item.id
-    ) as { id: string; member_id?: string | null } | undefined;
+  for (const item of allItems) {
+    const existing = db.prepare(
+      'SELECT id, member_id, google_account_id FROM calendars WHERE family_id = ? AND google_calendar_id = ?'
+    ).get(familyId, item.id) as { id: string; member_id?: string | null; google_account_id?: string | null } | undefined;
 
     const isReadOnly = item.accessRole === 'reader' || item.accessRole === 'freeBusyReader' ? 1 : 0;
     const color = item.backgroundColor || '#4285F4';
 
     if (existing) {
-      if (memberId && !existing.member_id) {
-        db.prepare('UPDATE calendars SET member_id = ?, is_read_only = ?, updated_at = ? WHERE id = ?').run(
-          memberId,
-          isReadOnly,
-          now,
-          existing.id
-        );
-      } else {
-        db.prepare('UPDATE calendars SET is_read_only = ?, updated_at = ? WHERE id = ?').run(isReadOnly, now, existing.id);
-      }
+      db.prepare(`
+        UPDATE calendars
+        SET name = ?, color = COALESCE(?, color), is_read_only = ?, google_account_id = ?, member_id = COALESCE(?, member_id), updated_at = ?
+        WHERE id = ?
+      `).run(
+        item.summary || 'Google Calendar',
+        color,
+        isReadOnly,
+        accountId,
+        memberId || null,
+        now,
+        existing.id
+      );
     } else {
       const calId = 'gcal_' + uuidv4().slice(0, 8);
       insertCal.run(
@@ -359,6 +437,7 @@ export async function discoverGoogleCalendars(familyId: string, accountId: strin
         color,
         item.description || 'Imported from Google Calendar',
         item.id,
+        accountId,
         isReadOnly,
         now,
         now
@@ -366,21 +445,44 @@ export async function discoverGoogleCalendars(familyId: string, accountId: strin
     }
   }
 
-  return items;
+  // Vanished calendar handling: if a calendar was previously synced for this account but vanished from Google,
+  // disable sync_enabled without deleting local data
+  const existingAccountCals = db.prepare(`
+    SELECT id, google_calendar_id FROM calendars
+    WHERE family_id = ? AND source = 'google' AND google_account_id = ?
+  `).all(familyId, accountId) as Array<{ id: string; google_calendar_id: string }>;
+
+  for (const cal of existingAccountCals) {
+    if (cal.google_calendar_id && !discoveredCalIds.has(cal.google_calendar_id)) {
+      db.prepare('UPDATE calendars SET sync_enabled = 0, updated_at = ? WHERE id = ?').run(now, cal.id);
+    }
+  }
+
+  return allItems;
 }
 
 export async function syncTwoWay(familyId: string, accountId: string) {
+  const syncKey = `${familyId}:${accountId}`;
+  if (activeAccountSyncs.has(syncKey)) {
+    console.log(`[GoogleSync] Two-way sync already running for account ${accountId}, skipping duplicate invocation.`);
+    return { success: true, eventsSynced: 0, syncedAt: new Date().toISOString(), inProgress: true };
+  }
+
+  activeAccountSyncs.add(syncKey);
   const now = new Date().toISOString();
   let totalEventsSynced = 0;
   const logId = 'log_' + uuidv4().slice(0, 8);
 
   try {
+    const accountRow = db.prepare('SELECT member_id FROM google_accounts WHERE id = ?').get(accountId) as { member_id?: string | null } | undefined;
+    const accountMemberId = accountRow?.member_id || null;
     const accessToken = await getValidAccessToken(accountId);
 
-    // 0. Drain any pending deletions from Google before synchronizing
+    // 0. Drain pending deletions for this account (or unassigned account tombstones)
     const pendingDeletions = db.prepare(`
-      SELECT * FROM pending_google_deletions WHERE family_id = ?
-    `).all(familyId) as Array<{
+      SELECT * FROM pending_google_deletions
+      WHERE family_id = ? AND (google_account_id = ? OR google_account_id IS NULL)
+    `).all(familyId, accountId) as Array<{
       id: string;
       google_calendar_id: string;
       google_event_id: string;
@@ -401,7 +503,8 @@ export async function syncTwoWay(familyId: string, accountId: string) {
           db.prepare('DELETE FROM pending_google_deletions WHERE id = ?').run(del.id);
         }
       } catch (err: any) {
-        console.warn('[GoogleSync] Pending deletion retry warning:', err?.message || err);
+        console.warn('[GoogleSync] Pending deletion retry warning:', sanitizeLog(err?.message || err));
+        // Keep tombstone for subsequent retry
       }
     }
 
@@ -411,45 +514,62 @@ export async function syncTwoWay(familyId: string, accountId: string) {
       ).map((r) => r.google_event_id)
     );
 
-    // Find all google calendars with sync enabled for this family
+    // Find all google calendars with sync enabled for THIS account
     const syncedCalendars = db.prepare(`
-      SELECT id, name, color, google_calendar_id, is_read_only, member_id FROM calendars
+      SELECT id, name, color, google_calendar_id, is_read_only, member_id, google_account_id FROM calendars
       WHERE family_id = ? AND source = 'google' AND sync_enabled = 1 AND google_calendar_id IS NOT NULL
-    `).all(familyId) as Array<{
+        AND (
+          google_account_id = ? OR
+          (google_account_id IS NULL AND (? IS NULL OR member_id = ? OR member_id IS NULL))
+        )
+    `).all(familyId, accountId, accountMemberId, accountMemberId) as Array<{
       id: string;
       name: string;
       color: string;
       google_calendar_id: string;
       is_read_only: number;
       member_id?: string | null;
+      google_account_id?: string | null;
     }>;
 
     for (const cal of syncedCalendars) {
-      // 1. Inbound: Fetch from Google Calendar API
+      // 1. Inbound: Fetch from Google Calendar API with full pagination and showDeleted=true
       const timeMin = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(); // Past 60 days
       const timeMax = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(); // Future 180 days
 
-      const gUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
-        cal.google_calendar_id
-      )}/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&maxResults=250`;
+      let pageToken: string | undefined = undefined;
+      const gEvents: GoogleEventApiItem[] = [];
 
-      const gRes = await fetch(gUrl, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      do {
+        const gUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+          cal.google_calendar_id
+        )}/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(
+          timeMax
+        )}&singleEvents=true&showDeleted=true&maxResults=250${
+          pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''
+        }`;
 
-      if (!gRes.ok) {
-        console.warn(`Sync failed for calendar ${cal.name}:`, await gRes.text());
-        continue;
-      }
+        const gRes = await fetch(gUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
 
-      const gData = (await gRes.json()) as { items: GoogleEventApiItem[] };
-      const gEvents = gData.items || [];
+        if (!gRes.ok) {
+          console.warn(`Sync failed for calendar ${cal.name}:`, sanitizeLog(await gRes.text()));
+          break;
+        }
+
+        const gData = (await gRes.json()) as { items?: GoogleEventApiItem[]; nextPageToken?: string };
+        if (gData.items) {
+          gEvents.push(...gData.items);
+        }
+        pageToken = gData.nextPageToken;
+      } while (pageToken);
 
       for (const item of gEvents) {
-        // If event was deleted in FamilyCal, do NOT recreate it!
+        // If event was deleted in FamilyCal, delete it on Google and do NOT recreate it!
         if (remainingPendingDelIds.has(item.id)) {
           try {
-            await fetch(
+            const delRes = await fetch(
               `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
                 cal.google_calendar_id
               )}/events/${encodeURIComponent(item.id)}`,
@@ -458,17 +578,19 @@ export async function syncTwoWay(familyId: string, accountId: string) {
                 headers: { Authorization: `Bearer ${accessToken}` },
               }
             );
-            db.prepare('DELETE FROM pending_google_deletions WHERE family_id = ? AND google_event_id = ?').run(
-              familyId,
-              item.id
-            );
-            remainingPendingDelIds.delete(item.id);
+            if (delRes.status === 204 || delRes.status === 404 || delRes.status === 410) {
+              db.prepare('DELETE FROM pending_google_deletions WHERE family_id = ? AND google_event_id = ?').run(
+                familyId,
+                item.id
+              );
+              remainingPendingDelIds.delete(item.id);
+            }
           } catch {}
           continue;
         }
 
+        // If event was deleted in Google Calendar, remove it locally in FamilyCal
         if (item.status === 'cancelled') {
-          // Remove cancelled event locally
           db.prepare('DELETE FROM events WHERE family_id = ? AND google_event_id = ?').run(familyId, item.id);
           continue;
         }
@@ -493,14 +615,35 @@ export async function syncTwoWay(familyId: string, accountId: string) {
         }
         const color = (item.colorId && GOOGLE_COLOR_MAP[item.colorId]) || cal.color || '#4285F4';
 
-        const existing = db.prepare('SELECT id FROM events WHERE family_id = ? AND google_event_id = ?').get(
-          familyId,
-          item.id
-        ) as { id: string } | undefined;
+        const existing = db.prepare(`
+          SELECT id, updated_at, etag, sync_status, assigned_member_ids
+          FROM events
+          WHERE family_id = ? AND google_event_id = ? AND (calendar_id = ? OR google_calendar_id = ?)
+        `).get(familyId, item.id, cal.id, cal.google_calendar_id) as {
+          id: string;
+          updated_at: string;
+          etag?: string | null;
+          sync_status: string;
+          assigned_member_ids?: string | null;
+        } | undefined;
 
         const targetAssignedMemberIds = cal.member_id ? JSON.stringify([cal.member_id]) : '[]';
 
         if (existing) {
+          // Conflict Detection: If local has unsynced pending changes, don't silently overwrite them with older Google data!
+          if (existing.sync_status === 'pending') {
+            const googleUnchanged = Boolean(item.etag && existing.etag && item.etag === existing.etag);
+            const localUpdatedAt = new Date(existing.updated_at).getTime();
+            const googleUpdatedAt = item.updated ? new Date(item.updated).getTime() : 0;
+            const localIsNewer = !isNaN(localUpdatedAt) && !isNaN(googleUpdatedAt) && localUpdatedAt >= googleUpdatedAt;
+
+            if (googleUnchanged || localIsNewer) {
+              // Local changes take precedence. Keep local edits and pending status so outbound sync pushes them.
+              continue;
+            }
+          }
+
+          // Google changes take precedence (or event is not pending)
           db.prepare(`
             UPDATE events
             SET title = ?, description = ?, location = ?, color = ?, start_time = ?, end_time = ?, all_day = ?, etag = ?, sync_status = 'synced', updated_at = ?
@@ -518,7 +661,7 @@ export async function syncTwoWay(familyId: string, accountId: string) {
             existing.id
           );
 
-          // If the calendar is assigned to a member, ensure existing event is mapped to that member
+          // If the calendar is assigned to a member, ensure existing event retains/maps to that member if currently unassigned
           if (cal.member_id) {
             db.prepare(`
               UPDATE events
@@ -553,31 +696,31 @@ export async function syncTwoWay(familyId: string, accountId: string) {
         totalEventsSynced++;
       }
 
-      // 2. Outbound: Push local events marked as 'pending' on this Google calendar (if not read-only)
+      // 2. Outbound: Push local events marked as 'pending' destined specifically for this Google calendar (if not read-only)
       if (cal.is_read_only === 0) {
-        const pendingEvents = db.prepare(`
+        const candidatePendingEvents = db.prepare(`
           SELECT * FROM events
-          WHERE family_id = ? AND sync_status = 'pending' AND (
-            calendar_id = ? OR
-            (? IS NOT NULL AND assigned_member_ids LIKE ?)
-          )
-        `).all(familyId, cal.id, cal.member_id || null, `%"${cal.member_id}"%`) as Array<{
-          id: string;
-          title: string;
-          description?: string;
-          location?: string;
-          color?: string;
-          start_time: string;
-          end_time: string;
-          all_day: number;
-          google_event_id?: string;
-        }>;
+          WHERE family_id = ? AND sync_status = 'pending'
+        `).all(familyId) as any[];
 
-        for (const pEvt of pendingEvents) {
+        for (const pEvt of candidatePendingEvents) {
+          let memberIds: string[] = [];
+          try {
+            memberIds = JSON.parse(pEvt.assigned_member_ids || '[]');
+          } catch {
+            memberIds = [];
+          }
+
+          const target = resolveGoogleCalendarForEvent(familyId, pEvt.calendar_id, memberIds);
+          if (!target || target.calendarId !== cal.id) {
+            // This event does NOT belong to this calendar; skip to prevent cross-calendar event hijacking
+            continue;
+          }
+
           const gBody: any = {
-            summary: pEvt.title,
-            description: pEvt.description,
-            location: pEvt.location,
+            summary: pEvt.title || '(Untitled Event)',
+            description: pEvt.description || undefined,
+            location: pEvt.location || undefined,
           };
 
           if (pEvt.all_day) {
@@ -586,6 +729,11 @@ export async function syncTwoWay(familyId: string, accountId: string) {
           } else {
             gBody.start = { dateTime: pEvt.start_time };
             gBody.end = { dateTime: pEvt.end_time };
+          }
+
+          const recurrence = formatGoogleRecurrence(pEvt.recurring_rule, pEvt.recurring_until);
+          if (recurrence) {
+            gBody.recurrence = recurrence;
           }
 
           if (pEvt.google_event_id) {
@@ -603,6 +751,13 @@ export async function syncTwoWay(familyId: string, accountId: string) {
                 body: JSON.stringify(gBody),
               }
             );
+
+            if (patchRes.status === 404 || patchRes.status === 410) {
+              // Event was deleted in Google Calendar. Do NOT resurrect with POST! Delete locally.
+              db.prepare('DELETE FROM events WHERE id = ?').run(pEvt.id);
+              continue;
+            }
+
             if (patchRes.ok) {
               const resData = (await patchRes.json()) as { etag?: string };
               db.prepare(`UPDATE events SET sync_status = 'synced', etag = ?, updated_at = ? WHERE id = ?`).run(
@@ -627,12 +782,14 @@ export async function syncTwoWay(familyId: string, accountId: string) {
               }
             );
             if (postRes.ok) {
-              const resData = (await postRes.json()) as { id: string; etag?: string };
-              db.prepare(`
-                UPDATE events
-                SET google_event_id = ?, google_calendar_id = ?, etag = ?, sync_status = 'synced', updated_at = ?
-                WHERE id = ?
-              `).run(resData.id, cal.google_calendar_id, resData.etag || null, now, pEvt.id);
+              const resData = (await postRes.json()) as { id?: string; etag?: string };
+              if (resData.id) {
+                db.prepare(`
+                  UPDATE events
+                  SET google_event_id = ?, google_calendar_id = ?, etag = ?, sync_status = 'synced', updated_at = ?
+                  WHERE id = ?
+                `).run(resData.id, cal.google_calendar_id, resData.etag || null, now, pEvt.id);
+              }
             }
           }
         }
@@ -654,7 +811,7 @@ export async function syncTwoWay(familyId: string, accountId: string) {
 
     return { success: true, eventsSynced: totalEventsSynced, syncedAt: now };
   } catch (err: any) {
-    const errorMsg = err?.message || String(err);
+    const errorMsg = sanitizeLog(err?.message || String(err));
     db.prepare(`
       UPDATE google_accounts
       SET sync_status = 'error', sync_error = ?, updated_at = ?
@@ -667,31 +824,35 @@ export async function syncTwoWay(familyId: string, accountId: string) {
     `).run(logId, familyId, accountId, 0, `Sync failed: ${errorMsg}`, now);
 
     throw err;
+  } finally {
+    activeAccountSyncs.delete(syncKey);
   }
 }
 
 export function disconnectGoogle(familyId: string, accountId?: string, memberId?: string) {
-  if (accountId) {
-    db.prepare('DELETE FROM google_accounts WHERE family_id = ? AND id = ?').run(familyId, accountId);
-  } else if (memberId) {
-    db.prepare('DELETE FROM google_accounts WHERE family_id = ? AND member_id = ?').run(familyId, memberId);
-  } else {
-    db.prepare('DELETE FROM google_accounts WHERE family_id = ?').run(familyId);
+  let targetAccountId = accountId;
+  if (!targetAccountId && memberId) {
+    const acc = db.prepare('SELECT id FROM google_accounts WHERE family_id = ? AND member_id = ?').get(familyId, memberId) as { id: string } | undefined;
+    targetAccountId = acc?.id;
   }
 
-  // Optionally keep the imported events or mark them as local_only
-  if (memberId) {
+  if (targetAccountId) {
+    db.prepare('DELETE FROM google_accounts WHERE family_id = ? AND id = ?').run(familyId, targetAccountId);
     db.prepare(`
       UPDATE events
       SET sync_status = 'local_only', google_event_id = NULL
-      WHERE family_id = ? AND calendar_id IN (SELECT id FROM calendars WHERE family_id = ? AND member_id = ? AND source = 'google')
-    `).run(familyId, familyId, memberId);
+      WHERE family_id = ? AND calendar_id IN (
+        SELECT id FROM calendars WHERE family_id = ? AND (google_account_id = ? OR member_id = ?) AND source = 'google'
+      )
+    `).run(familyId, familyId, targetAccountId, memberId || null);
 
-    db.prepare(`UPDATE calendars SET sync_enabled = 0 WHERE family_id = ? AND member_id = ? AND source = 'google'`).run(
-      familyId,
-      memberId
-    );
+    db.prepare(`
+      UPDATE calendars
+      SET sync_enabled = 0
+      WHERE family_id = ? AND (google_account_id = ? OR member_id = ?) AND source = 'google'
+    `).run(familyId, targetAccountId, memberId || null);
   } else {
+    db.prepare('DELETE FROM google_accounts WHERE family_id = ?').run(familyId);
     db.prepare(`
       UPDATE events
       SET sync_status = 'local_only', google_event_id = NULL
@@ -711,22 +872,28 @@ export function resolveGoogleCalendarForEvent(
   familyId: string,
   calendarId: string,
   assignedMemberIds?: string[]
-): { googleCalendarId: string; calendarId: string } | null {
+): { googleCalendarId: string; calendarId: string; googleAccountId?: string | null; isReadOnly?: number } | null {
   // 1. Direct calendar check: check if the event's calendar is a synced Google calendar
   const cal = db.prepare(`
-    SELECT id, source, google_calendar_id, sync_enabled, is_read_only
+    SELECT id, source, google_calendar_id, google_account_id, sync_enabled, is_read_only
     FROM calendars
     WHERE id = ? AND family_id = ?
   `).get(calendarId, familyId) as {
     id: string;
     source: string;
     google_calendar_id?: string;
+    google_account_id?: string | null;
     sync_enabled: number;
     is_read_only: number;
   } | undefined;
 
-  if (cal && cal.source === 'google' && cal.google_calendar_id && cal.sync_enabled === 1 && cal.is_read_only === 0) {
-    return { googleCalendarId: cal.google_calendar_id, calendarId: cal.id };
+  if (cal && cal.source === 'google' && cal.google_calendar_id && cal.sync_enabled === 1) {
+    return {
+      googleCalendarId: cal.google_calendar_id,
+      calendarId: cal.id,
+      googleAccountId: cal.google_account_id,
+      isReadOnly: cal.is_read_only,
+    };
   }
 
   // 2. Member assignment check: if event is assigned to a member who has an active Google calendar
@@ -734,20 +901,20 @@ export function resolveGoogleCalendarForEvent(
     for (const memberId of assignedMemberIds) {
       if (!memberId) continue;
       const memberCal = db.prepare(`
-        SELECT id, google_calendar_id FROM calendars
-        WHERE family_id = ? AND source = 'google' AND sync_enabled = 1 AND is_read_only = 0 AND member_id = ? AND google_calendar_id IS NOT NULL
+        SELECT id, google_calendar_id, google_account_id, is_read_only FROM calendars
+        WHERE family_id = ? AND source = 'google' AND sync_enabled = 1 AND member_id = ? AND google_calendar_id IS NOT NULL
         LIMIT 1
-      `).get(familyId, memberId) as { id: string; google_calendar_id: string } | undefined;
+      `).get(familyId, memberId) as { id: string; google_calendar_id: string; google_account_id?: string | null; is_read_only: number } | undefined;
 
       if (memberCal) {
-        return { googleCalendarId: memberCal.google_calendar_id, calendarId: memberCal.id };
+        return {
+          googleCalendarId: memberCal.google_calendar_id,
+          calendarId: memberCal.id,
+          googleAccountId: memberCal.google_account_id,
+          isReadOnly: memberCal.is_read_only,
+        };
       }
     }
-  }
-
-  // 3. If the calendar itself is marked as 'google' and has a google_calendar_id
-  if (cal && cal.source === 'google' && cal.google_calendar_id && cal.sync_enabled === 1 && cal.is_read_only === 0) {
-    return { googleCalendarId: cal.google_calendar_id, calendarId: cal.id };
   }
 
   return null;
@@ -765,72 +932,105 @@ export async function syncSingleEventToGoogle(params: {
 }): Promise<void> {
   const { eventId, familyId, previousGoogleCalendarId, previousGoogleEventId } = params;
 
-  // 1. Fetch current event from database
-  const evt = db.prepare('SELECT * FROM events WHERE id = ? AND family_id = ?').get(eventId, familyId) as any;
-  if (!evt) {
-    // Event was deleted before sync fired
+  if (!eventId) {
     return;
   }
 
-  // Parse assigned members
-  let memberIds: string[] = [];
+  // Concurrency guard: avoid duplicate concurrent creation/updates for the same event
+  if (activeEventSyncs.has(eventId)) {
+    return;
+  }
+  activeEventSyncs.add(eventId);
+
   try {
-    memberIds = JSON.parse(evt.assigned_member_ids || '[]');
-  } catch {
-    memberIds = [];
-  }
-
-  // 2. Resolve destination Google calendar
-  const target = resolveGoogleCalendarForEvent(familyId, evt.calendar_id, memberIds);
-
-  // 3. Find connected Google account for this family
-  const account = db.prepare(`
-    SELECT id FROM google_accounts
-    WHERE family_id = ? AND sync_status != 'disconnected'
-    ORDER BY updated_at DESC LIMIT 1
-  `).get(familyId) as { id: string } | undefined;
-
-  if (!account) {
-    // No connected Google account; if target was desired, keep pending for later sync
-    if (target) {
-      db.prepare("UPDATE events SET sync_status = 'pending' WHERE id = ?").run(eventId);
-    } else {
-      db.prepare("UPDATE events SET sync_status = 'local_only' WHERE id = ?").run(eventId);
+    // 1. Fetch current event from database
+    const evt = db.prepare('SELECT * FROM events WHERE id = ? AND family_id = ?').get(eventId, familyId) as any;
+    if (!evt) {
+      // Event was deleted before sync fired
+      return;
     }
-    return;
-  }
 
-  // CASE 1: Event does not belong to a synced Google calendar (or was unassigned)
-  if (!target) {
-    const oldCalId = previousGoogleCalendarId || evt.google_calendar_id;
-    const oldEvtId = previousGoogleEventId || evt.google_event_id;
+    // Parse assigned members
+    let memberIds: string[] = [];
+    try {
+      memberIds = JSON.parse(evt.assigned_member_ids || '[]');
+    } catch {
+      memberIds = [];
+    }
 
-    if (oldCalId && oldEvtId) {
-      try {
-        const accessToken = await getValidAccessToken(account.id);
-        await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(oldCalId)}/events/${encodeURIComponent(oldEvtId)}`,
-          {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${accessToken}` },
-          }
-        );
-      } catch (err: any) {
-        console.warn(`[GoogleSync] Event ${eventId} cleanup warning:`, err?.message || err);
+    // 2. Resolve destination Google calendar
+    const target = resolveGoogleCalendarForEvent(familyId, evt.calendar_id, memberIds);
+
+    // 3. Resolve destination Google account strictly for this calendar
+    let targetAccountId: string | null = null;
+    if (target?.googleAccountId) {
+      targetAccountId = target.googleAccountId;
+    } else if (target?.calendarId) {
+      const calRow = db.prepare('SELECT google_account_id, member_id FROM calendars WHERE id = ?').get(target.calendarId) as any;
+      if (calRow?.google_account_id) {
+        targetAccountId = calRow.google_account_id;
+      } else if (calRow?.member_id) {
+        const acc = db.prepare('SELECT id FROM google_accounts WHERE family_id = ? AND member_id = ? AND sync_status != "disconnected" LIMIT 1').get(familyId, calRow.member_id) as any;
+        if (acc?.id) targetAccountId = acc.id;
       }
     }
 
-    db.prepare(`
-      UPDATE events
-      SET google_event_id = NULL, google_calendar_id = NULL, etag = NULL, sync_status = 'local_only', updated_at = ?
-      WHERE id = ?
-    `).run(new Date().toISOString(), eventId);
-    return;
-  }
+    if (!targetAccountId) {
+      const defaultAcc = db.prepare(`
+        SELECT id FROM google_accounts
+        WHERE family_id = ? AND sync_status != 'disconnected'
+        ORDER BY updated_at DESC LIMIT 1
+      `).get(familyId) as { id: string } | undefined;
+      targetAccountId = defaultAcc?.id || null;
+    }
 
-  // CASE 2: Event belongs to a target Google calendar
-  try {
-    const accessToken = await getValidAccessToken(account.id);
+    if (!targetAccountId) {
+      // No connected Google account; if target was desired, keep pending for later sync
+      if (target) {
+        db.prepare("UPDATE events SET sync_status = 'pending' WHERE id = ?").run(eventId);
+      } else {
+        db.prepare("UPDATE events SET sync_status = 'local_only' WHERE id = ?").run(eventId);
+      }
+      return;
+    }
+
+    // CASE 1: Event does not belong to a synced Google calendar (or was unassigned)
+    if (!target) {
+      const oldCalId = previousGoogleCalendarId || evt.google_calendar_id;
+      const oldEvtId = previousGoogleEventId || evt.google_event_id;
+
+      if (oldCalId && oldEvtId) {
+        try {
+          const accessToken = await getValidAccessToken(targetAccountId);
+          await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(oldCalId)}/events/${encodeURIComponent(oldEvtId)}`,
+            {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${accessToken}` },
+            }
+          );
+        } catch (err: any) {
+          console.warn(`[GoogleSync] Event ${eventId} cleanup warning:`, sanitizeLog(err?.message || err));
+        }
+      }
+
+      db.prepare(`
+        UPDATE events
+        SET google_event_id = NULL, google_calendar_id = NULL, etag = NULL, sync_status = 'local_only', updated_at = ?
+        WHERE id = ?
+      `).run(new Date().toISOString(), eventId);
+      return;
+    }
+
+    // Guard: Read-only calendar check
+    if (target.isReadOnly === 1) {
+      console.log(`[GoogleSync] Event ${eventId} targets read-only Google calendar ${target.googleCalendarId}; skipping write.`);
+      db.prepare("UPDATE events SET sync_status = 'local_only' WHERE id = ?").run(eventId);
+      return;
+    }
+
+    // CASE 2: Event belongs to a target Google calendar
+    const accessToken = await getValidAccessToken(targetAccountId);
     const now = new Date().toISOString();
 
     const gBody: any = {
@@ -845,6 +1045,11 @@ export async function syncSingleEventToGoogle(params: {
     } else {
       gBody.start = { dateTime: evt.start_time };
       gBody.end = { dateTime: evt.end_time };
+    }
+
+    const recurrence = formatGoogleRecurrence(evt.recurring_rule, evt.recurring_until);
+    if (recurrence) {
+      gBody.recurrence = recurrence;
     }
 
     const currentGoogleEventId = evt.google_event_id || previousGoogleEventId;
@@ -921,7 +1126,7 @@ export async function syncSingleEventToGoogle(params: {
 
           if (!postRes.ok) {
             const errText = await postRes.text();
-            throw new Error(`Google Calendar create after move failed: ${errText}`);
+            throw new Error(`Google Calendar create after move failed: ${sanitizeLog(errText)}`);
           }
 
           const postData = (await postRes.json()) as { id: string; etag?: string };
@@ -949,32 +1154,14 @@ export async function syncSingleEventToGoogle(params: {
         );
 
         if (patchRes.status === 404 || patchRes.status === 410) {
-          // Event was removed from Google Calendar; recreate it
-          const recreateRes = await fetch(
-            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(target.googleCalendarId)}/events`,
-            {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(gBody),
-            }
-          );
-          if (recreateRes.ok) {
-            const recData = (await recreateRes.json()) as { id: string; etag?: string };
-            db.prepare(`
-              UPDATE events
-              SET google_event_id = ?, google_calendar_id = ?, etag = ?, sync_status = 'synced', updated_at = ?
-              WHERE id = ?
-            `).run(recData.id, target.googleCalendarId, recData.etag || null, now, eventId);
-            return;
-          }
+          // Event was deleted in Google Calendar. Do NOT resurrect! Delete locally.
+          db.prepare('DELETE FROM events WHERE id = ?').run(eventId);
+          return;
         }
 
         if (!patchRes.ok) {
           const errText = await patchRes.text();
-          throw new Error(`Google Calendar PATCH failed: ${errText}`);
+          throw new Error(`Google Calendar PATCH failed: ${sanitizeLog(errText)}`);
         }
 
         const resData = (await patchRes.json()) as { etag?: string };
@@ -1001,20 +1188,26 @@ export async function syncSingleEventToGoogle(params: {
 
       if (!postRes.ok) {
         const errText = await postRes.text();
-        throw new Error(`Google Calendar POST failed: ${errText}`);
+        throw new Error(`Google Calendar POST failed: ${sanitizeLog(errText)}`);
       }
 
-      const postData = (await postRes.json()) as { id: string; etag?: string };
-      db.prepare(`
-        UPDATE events
-        SET google_event_id = ?, google_calendar_id = ?, etag = ?, sync_status = 'synced', updated_at = ?
-        WHERE id = ?
-      `).run(postData.id, target.googleCalendarId, postData.etag || null, now, eventId);
+      const postData = (await postRes.json()) as { id?: string; etag?: string };
+      if (postData.id) {
+        db.prepare(`
+          UPDATE events
+          SET google_event_id = ?, google_calendar_id = ?, etag = ?, sync_status = 'synced', updated_at = ?
+          WHERE id = ?
+        `).run(postData.id, target.googleCalendarId, postData.etag || null, now, eventId);
+      }
     }
   } catch (err: any) {
-    const cleanMsg = err?.message || String(err);
+    const cleanMsg = sanitizeLog(err?.message || String(err));
     console.error(`[GoogleSync] Event-triggered Google sync failed for event ${eventId}: ${cleanMsg}`);
-    db.prepare("UPDATE events SET sync_status = 'pending' WHERE id = ?").run(eventId);
+    if (eventId) {
+      db.prepare("UPDATE events SET sync_status = 'pending' WHERE id = ?").run(eventId);
+    }
+  } finally {
+    activeEventSyncs.delete(eventId);
   }
 }
 
@@ -1025,22 +1218,38 @@ export async function deleteSingleEventFromGoogle(params: {
   familyId: string;
   googleCalendarId: string;
   googleEventId: string;
+  googleAccountId?: string | null;
 }): Promise<void> {
-  const { familyId, googleCalendarId, googleEventId } = params;
+  const { familyId, googleCalendarId, googleEventId, googleAccountId } = params;
 
-  const account = db.prepare(`
-    SELECT id FROM google_accounts
-    WHERE family_id = ? AND sync_status != 'disconnected'
-    ORDER BY updated_at DESC LIMIT 1
-  `).get(familyId) as { id: string } | undefined;
+  let accountId = googleAccountId || null;
+  if (!accountId) {
+    const cal = db.prepare(`
+      SELECT google_account_id FROM calendars
+      WHERE family_id = ? AND google_calendar_id = ?
+    `).get(familyId, googleCalendarId) as { google_account_id?: string | null } | undefined;
 
-  if (!account) {
+    if (cal?.google_account_id) {
+      accountId = cal.google_account_id;
+    }
+  }
+
+  if (!accountId) {
+    const account = db.prepare(`
+      SELECT id FROM google_accounts
+      WHERE family_id = ? AND sync_status != 'disconnected'
+      ORDER BY updated_at DESC LIMIT 1
+    `).get(familyId) as { id: string } | undefined;
+    accountId = account?.id || null;
+  }
+
+  if (!accountId) {
     // Cannot reach Google; pending_google_deletions table keeps the tombstone for periodic reconciliation
     return;
   }
 
   try {
-    const accessToken = await getValidAccessToken(account.id);
+    const accessToken = await getValidAccessToken(accountId);
     const res = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
         googleCalendarId
@@ -1058,10 +1267,10 @@ export async function deleteSingleEventFromGoogle(params: {
       );
     } else {
       const errText = await res.text();
-      console.warn(`[GoogleSync] Delete returned status ${res.status}: ${errText}`);
+      console.warn(`[GoogleSync] Delete returned status ${res.status}: ${sanitizeLog(errText)}`);
     }
   } catch (err: any) {
-    console.error(`[GoogleSync] Event deletion from Google failed for ${googleEventId}: ${err?.message || err}`);
+    console.error(`[GoogleSync] Event deletion from Google failed for ${googleEventId}: ${sanitizeLog(err?.message || err)}`);
   }
 }
 
@@ -1079,7 +1288,7 @@ export function triggerEventSync(params: {
     try {
       await syncSingleEventToGoogle(params);
     } catch (err: any) {
-      console.error(`[GoogleSync] Background sync error for ${params.eventId}:`, err?.message || err);
+      console.error(`[GoogleSync] Background sync error for ${params.eventId}:`, sanitizeLog(err?.message || err));
     }
   });
 }
@@ -1091,12 +1300,13 @@ export function triggerGoogleDelete(params: {
   familyId: string;
   googleCalendarId: string;
   googleEventId: string;
+  googleAccountId?: string | null;
 }): void {
   setImmediate(async () => {
     try {
       await deleteSingleEventFromGoogle(params);
     } catch (err: any) {
-      console.error(`[GoogleSync] Background delete error for ${params.googleEventId}:`, err?.message || err);
+      console.error(`[GoogleSync] Background delete error for ${params.googleEventId}:`, sanitizeLog(err?.message || err));
     }
   });
 }

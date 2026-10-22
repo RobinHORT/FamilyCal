@@ -94,12 +94,14 @@ export function initDatabase() {
       is_default INTEGER DEFAULT 0,
       source TEXT DEFAULT 'yimly', -- 'yimly' | 'google'
       google_calendar_id TEXT,
+      google_account_id TEXT,
       is_read_only INTEGER DEFAULT 0,
       sync_enabled INTEGER DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
-      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE SET NULL
+      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE SET NULL,
+      FOREIGN KEY (google_account_id) REFERENCES google_accounts(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS events (
@@ -236,6 +238,7 @@ export function initDatabase() {
       family_id TEXT NOT NULL,
       google_calendar_id TEXT NOT NULL,
       google_event_id TEXT NOT NULL,
+      google_account_id TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
     );
@@ -390,7 +393,7 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_reward_exchanges_family ON reward_exchanges(family_id, status);
   `);
 
-  // Safe startup migration: Ensure member_id column exists on calendars in existing databases
+  // Safe startup migration: Ensure member_id and google_account_id columns exist on calendars in existing databases
   try {
     const calendarCols = db.prepare(`PRAGMA table_info(calendars);`).all() as Array<{ name: string }>;
     const hasMemberId = calendarCols.some((col) => col.name === 'member_id');
@@ -398,8 +401,26 @@ export function initDatabase() {
       db.prepare(`ALTER TABLE calendars ADD COLUMN member_id TEXT REFERENCES family_members(id) ON DELETE SET NULL;`).run();
       console.log('Migration applied: added member_id column to calendars table.');
     }
+    const hasGoogleAccountId = calendarCols.some((col) => col.name === 'google_account_id');
+    if (!hasGoogleAccountId) {
+      db.prepare(`ALTER TABLE calendars ADD COLUMN google_account_id TEXT REFERENCES google_accounts(id) ON DELETE SET NULL;`).run();
+      console.log('Migration applied: added google_account_id column to calendars table.');
+    }
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_calendars_google_account ON calendars(google_account_id);`).run();
   } catch (migErr) {
-    console.warn('Calendar member_id migration check warning:', migErr);
+    console.warn('Calendar member_id/google_account_id migration check warning:', migErr);
+  }
+
+  // Safe startup migration: Ensure google_account_id column exists on pending_google_deletions
+  try {
+    const pendingDelCols = db.prepare(`PRAGMA table_info(pending_google_deletions);`).all() as Array<{ name: string }>;
+    if (!pendingDelCols.some((col) => col.name === 'google_account_id')) {
+      db.prepare(`ALTER TABLE pending_google_deletions ADD COLUMN google_account_id TEXT;`).run();
+      console.log('Migration applied: added google_account_id column to pending_google_deletions table.');
+    }
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_pending_del_account ON pending_google_deletions(google_account_id);`).run();
+  } catch (migErr) {
+    console.warn('pending_google_deletions google_account_id migration check warning:', migErr);
   }
 
   // Safe startup migration: Ensure member_id column exists on google_accounts and oauth_states

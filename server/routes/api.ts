@@ -1676,14 +1676,23 @@ router.delete('/events/:id', authenticateToken, (req: AuthRequest, res: Response
 
     // If linked to Google, record tombstone in pending_google_deletions to prevent accidental resurrection
     if (existing.google_event_id && existing.google_calendar_id) {
+      let googleAccountId: string | null = null;
+      try {
+        const cal = db.prepare('SELECT google_account_id FROM calendars WHERE id = ?').get(existing.calendar_id) as any;
+        if (cal?.google_account_id) {
+          googleAccountId = cal.google_account_id;
+        }
+      } catch {}
+
       db.prepare(`
-        INSERT OR REPLACE INTO pending_google_deletions (id, family_id, google_calendar_id, google_event_id, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO pending_google_deletions (id, family_id, google_calendar_id, google_event_id, google_account_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
       `).run(
         'del_' + uuidv4().slice(0, 8),
         req.user!.family_id,
         existing.google_calendar_id,
         existing.google_event_id,
+        googleAccountId,
         new Date().toISOString()
       );
     }
@@ -1693,10 +1702,19 @@ router.delete('/events/:id', authenticateToken, (req: AuthRequest, res: Response
 
     // Non-blocking immediate Google Calendar deletion
     if (existing.google_event_id && existing.google_calendar_id) {
+      let googleAccountId: string | undefined;
+      try {
+        const cal = db.prepare('SELECT google_account_id FROM calendars WHERE id = ?').get(existing.calendar_id) as any;
+        if (cal?.google_account_id) {
+          googleAccountId = cal.google_account_id;
+        }
+      } catch {}
+
       triggerGoogleDelete({
         familyId: req.user!.family_id,
         googleCalendarId: existing.google_calendar_id,
         googleEventId: existing.google_event_id,
+        googleAccountId,
       });
     }
   } catch (err: any) {
